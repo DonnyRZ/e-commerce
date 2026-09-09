@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { useI18n } from "@/i18n";
 
-const ITEMS = ["nav.newArrivals", "nav.bestSellers", "nav.sale", "page.title.shop"];
+const ITEMS = ["nav.newArrivals", "nav.bestSellers", "nav.sale"];
 
 export default function SecondaryNav() {
   const { t } = useI18n();

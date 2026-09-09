@@ -1,0 +1,71 @@
+{
+  "summary": "Milestone 1.2 FINAL VISUAL GATE — PASS. Verified section rhythm, trimmed secondary nav (3 items), new EditorialSection with 4 cards + CTAs + localized labels/titles/descriptions across 4 locales, category & editorial images all loaded (naturalWidth>0 after lazy scroll), product badges NEW/SALE, Rp price prefix (no IDR), strikethrough compareAt, 8-color swatches on p1, mega menu open/close via nav-uniqlo-products + search-entry / X / Esc, PLP at 1440 and 375 with no overflow (4-col desktop, 2-col mobile), mobile 375 stacks cleanly (editorial 1-col), tablet 768 editorial 2-col, RU persistence via mc_locale, zero console errors, backend /api/v1/health 200 db:up.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verified": {
+    "backend_smoke": {"/api/v1/health": "200 {status:ok, db:up}"},
+    "homepage_rhythm_1440": ["announcement-bar","site-header","secondary-nav","home-hero","home-categories","home-new-arrivals","home-departments","home-best-sellers","home-editorial","site-footer"],
+    "department_nav": ["nav-women-muslimah","nav-uniqlo-products","nav-tropical-halal-skincare"],
+    "secondary_nav": {"count": 3, "items": ["secondary-nav-newArrivals","secondary-nav-bestSellers","secondary-nav-sale"], "no_shop_item": true},
+    "hero_ctas": ["hero-cta-shop","hero-cta-departments"],
+    "department_tiles": ["department-tile-women-muslimah","department-tile-uniqlo-products","department-tile-tropical-halal-skincare"],
+    "editorial_section": {
+      "cards": ["editorial-card-modest-styling-guide","editorial-card-hijab-styling-guide","editorial-card-tropical-halal-skincare-routine","editorial-card-new-season-muslimah-edit"],
+      "ctas_present": true,
+      "images_natural_width_after_scroll": [900, 900, 900, 900],
+      "labels_uppercase_emerald": true
+    },
+    "category_strip_images_nw": [800,800,800,800,800,800,800,800],
+    "product_cards": {
+      "p1_badge_new": "NEW",
+      "p4_badge_sale": "SALE",
+      "p4_has_strikethrough_compareAt": true,
+      "p1_price_sample": "Rp 499,000",
+      "no_IDR_prefix": true,
+      "p1_swatches_count": 8
+    },
+    "mega_menu": {
+      "opens_from_nav_uniqlo_products": true,
+      "tabs_count": 3,
+      "uniqlo_apparel_keywords_present": true,
+      "opens_from_search_entry": true,
+      "search_input_visible": true,
+      "closes_via_search_overlay_close_X": true,
+      "closes_via_Esc": true
+    },
+    "i18n": {
+      "options": ["id","en","uz","ru"],
+      "ru": {"newArrivals":"Новинки","bestSellers":"Бестселлеры","sale":"Распродажа","heroShop":"Купить сейчас","editorialTitle":"Истории и гиды","firstCardTitle":"Гид по скромному стилю","firstCardCta":"Подробнее","overflow": false},
+      "uz_editorial_title": "Hikoyalar va qo'llanmalar",
+      "id_editorial": {"title":"Cerita & Panduan","cta":"Pelajari Lebih Lanjut"},
+      "ru_persist_after_reload": true
+    },
+    "plp": {
+      "1440": {"shop-page":true,"plp-breadcrumb":true,"plp-results":"Results: 10 items","plp-sort":true,"plp-filter":true,"category-strip":true,"products":10,"overflow":false},
+      "375": {"products":10,"cols_row1":2,"overflow":false}
+    },
+    "responsive": {
+      "home_375_overflow": false,
+      "home_375_editorial_cols": 1,
+      "home_768_overflow": false,
+      "home_768_editorial_cols": 2,
+      "home_1440_overflow": false
+    },
+    "console_errors": 0
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Editorial images use loading='lazy' (correct). Automated visual tests must scroll to trigger load before asserting naturalWidth — noted for future regression tests.",
+    "All 4 editorial cards use identical Link target '/shop' — expected placeholder per M1.2 scope; will need dedicated /stories/:slug routes in later milestone.",
+    "SecondaryNav hard-codes the 'active' underline on index 0 regardless of route — cosmetic-only; when PLP filters land, this should reflect actual state."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "N/A — no auth in this milestone",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Milestone 1.2 visual gate fully passes. Homepage rhythm, editorial section, i18n across 4 locales, PLP responsive layouts all verified with data-testid based selectors. Search overlay close button testid is 'search-overlay-close' (not 'search-close'). Language option testids: language-option-{id|en|uz|ru}. Product badge testids: badge-{new|sale}-{productId}. Swatches container: swatches-{productId}. Editorial images are lazy-loaded — scroll before asserting naturalWidth.",
+  "rca of the issue": "N/A — no issues found"
+}

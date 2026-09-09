@@ -42,6 +42,12 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
   - Footer: grouped pipe-separated SHOP/HELP/ACCOUNT/ABOUT, promo line, copyright + socials + language selector.
   - Demo placeholder data with localized names: src/data/demo.js (3 departments, 17 categories, 10 demo products incl. required Gray Sweat Oversized Full-Zip Hoodie). Neutral Unsplash placeholders — IP-safe.
   - i18n extended: t(key, {params}) interpolation; ~30 new keys × 4 locales. Verified by testing agent (iteration_2.json): 100% pass, all viewports, all languages, zero console errors.
+- 2026-09-09: Milestone 1.2 — Final Frontend Visual Gate. Status: PASS. FRONTEND FOUNDATION APPROVED for Prompt #3.
+  - Muslimah image compliance: replaced non-modest/incoherent placeholders (shorts/streetwear models, skincare tubes in apparel categories). Departments now visually distinct: modest fashion portraits (Women Muslimah), neutral folded/hanging apparel (UNIQLO Products), clean beauty shots (Skincare).
+  - SecondaryNav trimmed to New Arrivals/Best Sellers/Sale (redundant Shop removed).
+  - New reusable EditorialSection ("Stories & Guides"): 4 localized cards (Modest Styling, Hijab Styling, Skincare Routine, New Season Edit) — image/label/title/desc/Learn More.
+  - Homepage rhythm final: promo bar > header > secondary nav > hero > categories > new arrivals > dept tiles > best sellers > editorial > footer.
+  - Verified by testing agent (iteration_3.json): 100% pass, 0 console errors, all images load, 4-locale regression incl. RU persistence, responsive 375/768/1440 clean.
 
 ## Backlog (prioritized, from Master Context V3)
 - P0: Milestone 1 foundation (responsive shell, design tokens #145A46 emerald accent, 4-language i18n), taxonomy seed, catalog/PLP/PDP, search/filter/sort, auth+RBAC, cart, wishlist, checkout+mock payment, orders w/ idempotency + atomic inventory, seller isolation, admin core, security hardening.
@@ -49,7 +55,6 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
 - P2 (deferred): AI features, multiple payment/shipping providers, live FX, loyalty, native apps, microservices.
 
 ## Next Tasks
-1. Milestone 1.2 — final mandatory UNIQLO reference screenshot review before frontend foundation approval (user announced).
-2. Milestone 2 — Catalog (taxonomy seed, categories, products/variants, real PLP wiring) — only on explicit next prompt.
-3. Known tracked issue: dev CORS_ORIGINS="*" — fix during security hardening milestone.
-4. Replace demo.js placeholder data with real catalog API when Milestone 2 lands.
+1. Prompt #3 / Milestone 2 — Catalog (taxonomy seed, categories, products/variants backend, real PLP wiring) — only on explicit next prompt. Frontend foundation is FINAL-APPROVED.
+2. Known tracked issue: dev CORS_ORIGINS="*" — fix during security hardening milestone.
+3. Replace demo.js placeholder data with real catalog API; add /stories/:slug routes later; SecondaryNav active underline should reflect route state once PLP lands.

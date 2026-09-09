@@ -8,6 +8,7 @@ import {
   localizedName,
 } from "@/data/demo";
 import CategoryStrip from "@/components/common/CategoryStrip";
+import EditorialSection from "@/components/common/EditorialSection";
 import ProductGrid from "@/components/common/ProductGrid";
 
 export default function HomePage() {
@@ -121,6 +122,8 @@ export default function HomePage() {
           testId="best-sellers-grid"
         />
       </section>
+
+      <EditorialSection />
     </div>
   );
 }
