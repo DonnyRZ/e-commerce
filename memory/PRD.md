@@ -69,6 +69,13 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
   - Gallery (multi-image + thumbnails + lazy load), purchase panel (badges, brand, localized title, live SKU, PriceDisplay base/override/sale/compare-at), flexible variant system generated from actual option_values dimensions (color+size / color+material / volume / size-only) with cross-dimension auto-resolution (impossible combos snap to valid variant instead of deadlocking — dev bug fixed), stock messaging (in/low/out), quantity capped at min(stock,10), Size Guide dialog apparel-only, integration-ready Add to Cart (validates, disabled on OOS, toast only — no fake persistence), visual wishlist, accordion info sections (Description/Features/Material&Care/Ingredients/Benefits/How to Use/Details/Delivery/Returns), loading/404/error states, document.title.
   - Seed enriched: hoodie/hijab/serum 2 images each; apparel care; skincare ingredients/benefits/directions. ~30 pdp.* keys × 4 locales.
   - Verified: iteration_6.json 100% (hoodie Gray/M, Gray/XS low-stock qty cap 2, Black/XXL OOS disabled, Navy/L, XXL override Rp 519,000, hijab maroon auto-resolve OOS, skincare 50ml override Rp 49,000, no apparel controls on skincare, RU/UZ/ID PDP, 390px no overflow, PLP/search/home regression clean). GitHub milestone-4-pdp NOT saved (no remote).
+- 2026-09-09: Milestone 5 — Authentication + RBAC + Customer Account (Prompt #6). Status: PASS.
+  - Auth architecture (PostgreSQL-only, VPS-portable, no Emergent auth/email): bcrypt hashing, JWT access(15m)+refresh(7d) in HttpOnly Secure SameSite=lax cookies, CSRF double-submit (csrf_token cookie vs X-CSRF-Token header) on authenticated mutations, token_version session invalidation, password reset via sha256-hashed single-use 1h tokens + mock email provider (dev logs link), brute-force lockout (5/15min ip+email), reset throttle (5/15min/email), register rate limit (10/15min/IP).
+  - Alembic migration b9d10da3471c: users +first_name/+last_name/+token_version; new tables user_addresses, password_reset_tokens, login_attempts, password_reset_requests.
+  - Endpoints: /api/v1/auth/{register,login,logout,refresh,me(PATCH),forgot-password,reset-password,seller/ping,admin/ping}, /api/v1/account/addresses CRUD (ownership-scoped, single-default invariant). Mass-assignment blocked (role never client-settable). no-store middleware on auth paths.
+  - Frontend: /login /register /forgot-password /reset-password /account (profile + addresses + placeholders), AuthContext (react-query), CSRF interceptor in api.js, ~45 auth keys ×4 locales.
+  - Seeded accounts (see memory/test_credentials.md): admin bmulyanto@gmail.com, seller partner-uniqlo@muslimahcantik.id, customer customer.demo@muslimahcantik.id. Testing playbook: /app/auth_testing.md.
+  - Verified: 46/46 pytest (incl. new test_auth_m5.py), iteration_7 + iteration_8 retest 100% — RBAC matrix, CSRF 403, mass-assignment, reset E2E, rate limits (psql-verified), 4-locale auth UI, responsive. Fixed post-test: missing common.edit/delete keys, stale-locale profile toast. GitHub milestone-5-auth NOT saved (no remote).
 
 ## Backlog (prioritized, from Master Context V3)
 - P0: Milestone 1 foundation (responsive shell, design tokens #145A46 emerald accent, 4-language i18n), taxonomy seed, catalog/PLP/PDP, search/filter/sort, auth+RBAC, cart, wishlist, checkout+mock payment, orders w/ idempotency + atomic inventory, seller isolation, admin core, security hardening.
@@ -76,8 +83,8 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
 - P2 (deferred): AI features, multiple payment/shipping providers, live FX, loyalty, native apps, microservices.
 
 ## Next Tasks
-1. Milestone 5 — Authentication + RBAC + Customer Account — only on explicit next prompt.
-2. Milestone 6+ — Cart persistence (PDP Add-to-Cart integration point ready: validates variant, qty, stock).
-3. Known tracked issue: dev CORS_ORIGINS="*" — fix during security hardening milestone.
-4. Dev ops note: `service postgresql start` needed after pod restart.
-5. Minor: PDP main image is a container bg-image (testability note from iteration_6; non-blocking).
+1. Milestone 6 — Cart + Wishlist — only on explicit next prompt.
+2. Known tracked issue: preview ingress rewrites SameSite to None (CHIPS Partitioned) — origin sends lax; re-verify on VPS Nginx. CORS_ORIGINS now allowlisted (no wildcard) — set production origins on VPS.
+3. Dev ops note: `service postgresql start` needed after pod restart.
+4. Later: decouple UI locale from persisted preferred_locale for logged-in browsing (iteration_8 note); partial-PATCH semantics for addresses (optional).
+5. Cart integration point ready on PDP (variant validation + toast).

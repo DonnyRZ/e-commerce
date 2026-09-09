@@ -10,6 +10,8 @@ from config import CORS_ORIGINS
 from db.models import StatusCheck
 from db.session import SessionLocal, engine
 from routers.catalog import router as catalog_router
+from routers.auth import router as auth_router
+from routers.account import router as account_router
 
 # Create the main app without a prefix
 app = FastAPI(title="MUSLIMAH CANTIK API")
@@ -73,6 +75,16 @@ async def get_status_checks():
 # Include the router in the main app
 app.include_router(api_router)
 app.include_router(catalog_router)
+app.include_router(auth_router)
+app.include_router(account_router)
+
+
+@app.middleware("http")
+async def no_store_auth_responses(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith(("/api/v1/auth", "/api/v1/account")):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 app.add_middleware(
     CORSMiddleware,

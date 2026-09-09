@@ -6,6 +6,19 @@ const api = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
+const getCookie = (name) => {
+  const row = document.cookie.split("; ").find((r) => r.startsWith(`${name}=`));
+  return row ? decodeURIComponent(row.split("=").slice(1).join("=")) : null;
+};
+
+api.interceptors.request.use((config) => {
+  if (["post", "put", "patch", "delete"].includes(config.method)) {
+    const csrf = getCookie("csrf_token");
+    if (csrf) config.headers["X-CSRF-Token"] = csrf;
+  }
+  return config;
+});
+
 const clean = (params = {}) =>
   Object.fromEntries(
     Object.entries(params).filter(
@@ -32,5 +45,51 @@ export const getProduct = (slug) =>
 
 export const getFilters = (params = {}) =>
   api.get("/v1/catalog/filters", { params: clean(params) }).then((r) => r.data);
+
+export const authLogin = (email, password) =>
+  api.post("/v1/auth/login", { email, password }).then((r) => r.data);
+
+export const authRegister = (data) =>
+  api.post("/v1/auth/register", data).then((r) => r.data);
+
+export const authLogout = () => api.post("/v1/auth/logout").then((r) => r.data);
+
+export const authMe = () => api.get("/v1/auth/me").then((r) => r.data);
+
+export const updateProfile = (data) =>
+  api.patch("/v1/auth/me", data).then((r) => r.data);
+
+export const forgotPassword = (email) =>
+  api.post("/v1/auth/forgot-password", { email }).then((r) => r.data);
+
+export const resetPassword = (token, password) =>
+  api.post("/v1/auth/reset-password", { token, password }).then((r) => r.data);
+
+export const getAddresses = () =>
+  api.get("/v1/account/addresses").then((r) => r.data);
+
+export const createAddress = (data) =>
+  api.post("/v1/account/addresses", data).then((r) => r.data);
+
+export const updateAddress = (id, data) =>
+  api.patch(`/v1/account/addresses/${id}`, data).then((r) => r.data);
+
+export const deleteAddress = (id) =>
+  api.delete(`/v1/account/addresses/${id}`).then((r) => r.data);
+
+export const authErrorKey = (error) => {
+  const detail = error?.response?.data?.detail;
+  const code = typeof detail === "string" ? detail : Array.isArray(detail) ? "validation" : "";
+  const map = {
+    invalid_credentials: "auth.invalidCredentials",
+    email_exists: "auth.emailExists",
+    too_many_attempts: "auth.tooMany",
+    too_many_requests: "auth.tooMany",
+    invalid_or_expired_token: "auth.invalidReset",
+    csrf_failed: "auth.genericError",
+    not_authenticated: "auth.loginRequired",
+  };
+  return map[code] || "auth.genericError";
+};
 
 export default api;

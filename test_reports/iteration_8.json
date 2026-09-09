@@ -1,0 +1,39 @@
+{
+  "summary": "Focused retest of the two i18n bug fixes from iteration_7 (Milestone 5 Auth). Both fixes verified in the live preview environment. Backend regression clean (46/46).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_fixes": [
+    {
+      "bug": "Address list Edit/Delete rendered raw i18n keys (common.edit/common.delete)",
+      "verification": "Logged in as customer, added a new address; buttons render 'Edit'/'Delete' in EN, 'Ubah'/'Hapus' in ID, and 'Изменить'/'Удалить' in RU. No 'common.' prefix leak anywhere.",
+      "status": "PASS"
+    },
+    {
+      "bug": "Profile-save success toast stayed in English after switching preferred locale",
+      "verification": "Set profile-locale=ru → save → toast 'Профиль обновлён.' shown (no 'Profile updated.' leak). Set profile-locale=id → save → toast 'Profil diperbarui.' shown (no EN leak).",
+      "status": "PASS"
+    }
+  ],
+  "regression": {
+    "backend_pytest": "46/46 passed (pytest /app/backend/tests -q)",
+    "homepage_load": "OK",
+    "shop_load": "OK"
+  },
+  "test_report_links": ["/app/backend/tests"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Header language-selector state is overridden on any /account reload by the server-side preferred_locale (i18n bootstraps from user.preferred_locale after auth hydration). Not a bug for this milestone, but worth noting: users cannot temporarily browse in a different locale while logged in — the selector effectively becomes a shortcut to change preferred_locale. Consider decoupling UI locale from persisted preferred_locale for anonymous-like browsing."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "customer.demo@muslimahcantik.id / MC-Cust0mer-9d2m48Lw-2026 (working)",
+  "seed_data_creation": "Created one address during test; deleted at end via UI cleanup.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration_7 M5 auth was 46/46 backend + only 2 i18n bugs; iteration_8 verified those two fixes are live. Note that /account UI locale follows server-side preferred_locale on load (header language-selector is overridden on reload for logged-in users). Address form testids are label / recipient-name / phone / address-line-1 / address-line-2 / city / state-province / postal-code / country-code (kebab-case of Python snake_case field names) with the testPrefix 'address-form-new'.",
+  "rca of the issue": "N/A - both bugs from iteration_7 confirmed fixed."
+}

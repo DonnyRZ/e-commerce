@@ -1,0 +1,42 @@
+{
+  "summary": "Milestone 5 (Auth + RBAC + Customer Account) end-to-end validation. Backend: 34/34 catalog regression pass (test_catalog.py + test_m3_filters.py) + 12/12 new auth suite pass (test_auth_m5.py) covering register-forces-customer-role & no password_hash leak, duplicate 409, wrong-password 401 generic, login→me→logout cookie cycle (me→401 after logout), CSRF header required on PATCH /me (403 without), mass-assignment role blocked (role stays customer), RBAC matrix customer/seller/admin × seller/admin ping (403/403, 200/403, 200/200), unauth 401, addresses CRUD + default-handling (only one default after adding second with is_default=true), cross-user ownership 404 on PATCH/DELETE, forgot-password generic 200 parity registered vs unregistered. Password reset E2E validated via Python: forgot→log token→reset→old pw 401→new pw 200→token reuse 400 invalid_or_expired. Rate limit: 6th forgot-password within 15min stored only 5 rows in password_reset_requests and 5 rows in password_reset_tokens (verified via psql); all 6 responses generic 200. Frontend: /login /register /forgot-password /reset-password /account render in the approved design system; register lands on /account with customer role; duplicate email shows translated 'An account with this email already exists.'; wrong password shows 'Invalid email or password.'; logout redirects to /login; unauthenticated /account → /login guard works; header account-entry link points to /account (guard triggers redirect); session persists across reload; profile update saves and locale switches (id→ru live UI switches to Russian, persists after re-login, then switched back to id); addresses UI add/edit/delete/default-swap works and preserves data-testids address-edit-{uuid}, address-delete-{uuid}, address-form-new-*. Responsive: /login /register at 390px and 768px have no horizontal overflow. Regression: /, /shop, /search?q=abaya, /product/gray-sweat-oversized-full-zip-hoodie all still load without errors (PDP title correct). No password_hash / SEED_* / JWT_SECRET strings found in the frontend bundle.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AccountPage — address list actions", "issue": "Buttons render raw i18n keys 'common.edit' and 'common.delete' in ALL locales because the keys are missing from /app/frontend/src/i18n/translations.js (only common.save/cancel/close/etc exist). Reproduce: log into /account with any locale, add an address, list shows 'common.edit' 'common.delete' as visible text.", "selector": "[data-testid^='address-edit-'], [data-testid^='address-delete-']", "priority": "HIGH"},
+      {"component": "AccountPage — profile save toast", "issue": "Success toast text is 'Profile updated.' in English even after switching preferred_locale to Russian and saving (spec asks for 'Профиль обновлён.'). Toast key likely rendered before the newly-applied locale takes effect, or the toast message is hard-coded/uses default namespace.", "selector": "toast success alert on /account after profile-save", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_m5.py",
+    "/app/backend/tests/test_catalog.py",
+    "/app/backend/tests/test_m3_filters.py",
+    "/app/test_reports/pytest/iteration_7_auth.xml",
+    "/app/test_reports/pytest/iteration_7_regression.xml"
+  ],
+  "action_items": [
+    "Add 'common.edit' and 'common.delete' translation keys to all four locales (en/id/uz/ru) in /app/frontend/src/i18n/translations.js so address action buttons render translated text instead of raw keys.",
+    "Ensure the 'account.profileUpdated' (or equivalent) toast message is translated when locale changes on save — either delay the toast until the i18n switch settles, or use the newly-selected locale key when firing the success toast so RU users see 'Профиль обновлён.'",
+    "OPTIONAL / code-review: PATCH /api/v1/account/addresses/{id} currently requires the FULL AddressIn body (all fields). Partial-update semantics are more RESTful — consider changing payload to Optional[str] on each field and only updating provided keys. Non-blocking; frontend already sends full payload."
+  ],
+  "critical_code_review_comments": [
+    "auth cookie/CSRF flow correctly implemented: HttpOnly access_token/refresh_token cookies + non-HttpOnly csrf_token double-submit; CSRF verified 403 when header missing on PATCH /me.",
+    "Mass-assignment protection: RegisterIn/ProfileUpdateIn whitelisting works — POST /register with role:'admin' and PATCH /me with role:'admin' both leave user.role=customer.",
+    "Password reset: SHA-256 hashed single-use 1h tokens working; old password invalidated after reset (token_version bump); token reuse returns 400 invalid_or_expired_token; rate-limit table password_reset_requests correctly caps at 5/15min per email while still returning generic 200.",
+    "No password_hash exposed in any inspected API response (me / register); no secrets in frontend bundle.",
+    "PATCH /api/v1/account/addresses/{id} accepts full AddressIn (not partial) — see action_items OPTIONAL.",
+    "Console 401 from /api/v1/auth/me on unauthenticated pages is expected (silent probe by AuthContext) but is noisy in devtools — consider swallowing/suppressing 401 logging in the api client on the /me endpoint only."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth_m5.py (new — 12 tests, all pass)"
+  ],
+  "success_rate": {"backend": "100% (46/46: 34 regression + 12 new auth)", "frontend": "~95% (2 i18n bugs on account page, all functional flows work)"},
+  "test_credentials": "Used seeded admin/seller/customer accounts from /app/memory/test_credentials.md; created throwaway addrtest+*/uixtest+*/uitest+*/resettest+*/rltest+* accounts for register/reset/rate-limit tests.",
+  "seed_data_creation": "None — used only ephemeral throwaway emails; existing seeded accounts untouched (no seller/admin passwords changed).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "M5 auth is functionally green. Two localization bugs remain on /account: (1) address Edit/Delete buttons render 'common.edit' / 'common.delete' raw keys — add them to all 4 locales in i18n/translations.js; (2) profile-save success toast stays in English after switching to a new locale — likely a stale-t() reference in AccountPage handleSaveProfile. Address form data-testids follow pattern address-form-new-{field-kebab-case}, edit form uses address-edit-{uuid} / address-delete-{uuid}. Auth data-testids: register-{first-name|last-name|email|password}, login-{email|password}? (login page not explicitly probed for testids — use type=email/type=password/button[type=submit] fallback), account-{entry|page|logout|profile}, profile-{first-name|last-name|locale|save}, forgot-{email|submit|back-login}. When re-testing, prefer to re-run: pytest /app/backend/tests -v (should stay 46/46) and just retest the two toast/i18n fixes in Playwright.",
+  "rca of the issue": "1) Missing i18n keys 'common.edit' and 'common.delete' — grep of /app/frontend/src/i18n/translations.js confirms these keys are not defined in any of the 4 locale blocks (only common.save/cancel/close/loading/error/retry/empty/comingSoon/back/submit exist). AccountPage.jsx lines 312/320 call t('common.edit') / t('common.delete') so they fall back to the key itself. Fix: add \"common.edit\" and \"common.delete\" translations to en, id, uz, ru sections. 2) Profile-updated toast stays English after locale switch — likely because handleSaveProfile fires the toast using the previous i18n instance before the new preferred_locale is applied to i18next, or the toast message is hard-coded. Fix: read the localized message after refetchMe() completes / after i18n.changeLanguage, or use a stable key like account.profileUpdated and ensure it exists in all locales."
+}

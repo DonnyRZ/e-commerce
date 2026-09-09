@@ -40,6 +40,9 @@ class User(TimestampMixin, Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(255), default="")
+    first_name: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    last_name: Mapped[str] = mapped_column(String(120), default="", server_default="")
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     role: Mapped[str] = mapped_column(String(20), default="customer")
     preferred_locale: Mapped[str] = mapped_column(String(5), default="id")
     password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -283,4 +286,60 @@ class StatusCheck(Base):
     client_name: Mapped[str] = mapped_column(String(120))
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow
+    )
+
+
+class UserAddress(TimestampMixin, Base):
+    __tablename__ = "user_addresses"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    label: Mapped[str] = mapped_column(String(80), default="")
+    recipient_name: Mapped[str] = mapped_column(String(255), default="")
+    phone: Mapped[str] = mapped_column(String(40), default="")
+    address_line_1: Mapped[str] = mapped_column(String(255), default="")
+    address_line_2: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    city: Mapped[str] = mapped_column(String(120), default="")
+    state_province: Mapped[str] = mapped_column(String(120), default="")
+    postal_code: Mapped[str] = mapped_column(String(20), default="")
+    country_code: Mapped[str] = mapped_column(String(2), default="ID")
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class LoginAttempt(Base):
+    __tablename__ = "login_attempts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    identifier: Mapped[str] = mapped_column(String(300), index=True)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+
+
+class PasswordResetRequest(Base):
+    __tablename__ = "password_reset_requests"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
     )
