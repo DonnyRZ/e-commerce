@@ -40,8 +40,16 @@ export function I18nProvider({ children }) {
   }, [locale]);
 
   const value = useMemo(() => {
-    const t = (key) =>
-      translations[locale]?.[key] ?? translations[DEFAULT_LOCALE][key] ?? key;
+    const t = (key, params) => {
+      let str =
+        translations[locale]?.[key] ?? translations[DEFAULT_LOCALE][key] ?? key;
+      if (params) {
+        Object.entries(params).forEach(([k, v]) => {
+          str = str.replaceAll(`{${k}}`, String(v));
+        });
+      }
+      return str;
+    };
     return { locale, setLocale, t };
   }, [locale]);
 

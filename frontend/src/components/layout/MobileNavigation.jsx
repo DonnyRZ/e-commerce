@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { LOCALE_LABELS, SUPPORTED_LOCALES, useI18n } from "@/i18n";
+import { DEPARTMENTS, localizedName } from "@/data/demo";
 import {
   Sheet,
   SheetClose,
@@ -10,7 +11,18 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 
-const NAV_KEYS = ["nav.home", "nav.womenMuslimah", "nav.apparel", "nav.skincare"];
+const QUICK_LINKS = [
+  { key: "nav.newArrivals", to: "/shop" },
+  { key: "nav.bestSellers", to: "/shop" },
+  { key: "nav.sale", to: "/shop" },
+];
+
+const ACCOUNT_LINKS = [
+  { key: "header.searchPlaceholder", to: "/search" },
+  { key: "header.wishlist", to: "/wishlist" },
+  { key: "header.cart", to: "/cart" },
+  { key: "header.account", to: "/account" },
+];
 
 export default function MobileNavigation() {
   const { locale, setLocale, t } = useI18n();
@@ -27,10 +39,10 @@ export default function MobileNavigation() {
           <Menu className="h-5 w-5" aria-hidden="true" />
         </Button>
       </SheetTrigger>
-      <SheetContent side="left" className="w-72 p-0" data-testid="mobile-menu">
+      <SheetContent side="left" className="w-72 overflow-y-auto p-0" data-testid="mobile-menu">
         <SheetTitle className="sr-only">{t("brand.name")}</SheetTitle>
         <div className="flex items-center justify-between border-b px-4 py-3">
-          <span className="text-sm font-bold tracking-wide">{t("brand.name")}</span>
+          <span className="text-sm font-extrabold tracking-widest">{t("brand.name")}</span>
           <SheetClose asChild>
             <Button
               variant="ghost"
@@ -42,20 +54,46 @@ export default function MobileNavigation() {
             </Button>
           </SheetClose>
         </div>
-        <nav className="flex flex-col px-4 py-2" aria-label="Mobile">
-          {NAV_KEYS.map((key) => (
-            <SheetClose asChild key={key}>
+        <nav className="flex flex-col px-4 py-2" aria-label="Departments">
+          {DEPARTMENTS.map((dept) => (
+            <SheetClose asChild key={dept.id}>
               <Link
-                to="/"
-                data-testid={`mobile-nav-${key.split(".")[1]}`}
-                className="border-b border-border py-3 text-sm font-medium hover:text-primary"
+                to="/shop"
+                data-testid={`mobile-nav-${dept.slug}`}
+                className="border-b border-border py-3 text-sm font-semibold hover:text-primary"
               >
-                {t(key)}
+                {localizedName(dept, locale)}
               </Link>
             </SheetClose>
           ))}
         </nav>
-        <div className="px-4 pt-4">
+        <nav className="flex flex-col px-4 py-2" aria-label="Quick links">
+          {QUICK_LINKS.map((item) => (
+            <SheetClose asChild key={item.key}>
+              <Link
+                to={item.to}
+                data-testid={`mobile-nav-${item.key.split(".")[1]}`}
+                className="border-b border-border py-3 text-sm font-medium text-muted-foreground hover:text-primary"
+              >
+                {t(item.key)}
+              </Link>
+            </SheetClose>
+          ))}
+        </nav>
+        <nav className="flex flex-col px-4 py-2" aria-label="Account">
+          {ACCOUNT_LINKS.map((item) => (
+            <SheetClose asChild key={item.key}>
+              <Link
+                to={item.to}
+                data-testid={`mobile-nav-${item.key.split(".")[1]}`}
+                className="border-b border-border py-3 text-sm font-medium text-muted-foreground hover:text-primary"
+              >
+                {t(item.key)}
+              </Link>
+            </SheetClose>
+          ))}
+        </nav>
+        <div className="px-4 py-4">
           <p className="mb-2 text-xs uppercase text-muted-foreground">
             {t("header.language")}
           </p>

@@ -1,0 +1,66 @@
+import { Link } from "react-router-dom";
+import { Heart } from "lucide-react";
+import { useI18n } from "@/i18n";
+import PriceDisplay from "./PriceDisplay";
+
+export default function ProductCard({ product }) {
+  const { t } = useI18n();
+  return (
+    <article data-testid={`product-card-${product.id}`} className="group">
+      <div className="relative overflow-hidden bg-secondary">
+        <Link to="/shop" aria-label={product.name}>
+          <img
+            src={product.image}
+            alt={product.name}
+            loading="lazy"
+            className="aspect-[3/4] w-full object-cover"
+          />
+        </Link>
+        {product.badge ? (
+          <span
+            data-testid={`badge-${product.badge}-${product.id}`}
+            className={`absolute left-2 top-2 px-2 py-0.5 text-[11px] font-semibold tracking-wide ${
+              product.badge === "sale"
+                ? "bg-primary text-primary-foreground"
+                : "bg-foreground text-background"
+            }`}
+          >
+            {t(`product.${product.badge}`)}
+          </span>
+        ) : null}
+      </div>
+      <div className="mt-2 flex items-center justify-between">
+        <div className="flex items-center gap-1.5" data-testid={`swatches-${product.id}`}>
+          {product.colors.map((color) => (
+            <span
+              key={color}
+              className="h-3.5 w-3.5 rounded-full border border-border"
+              style={{ backgroundColor: color }}
+            />
+          ))}
+        </div>
+        <button
+          type="button"
+          data-testid={`wishlist-${product.id}`}
+          aria-label={t("product.wishlist")}
+          className="inline-flex h-8 w-8 items-center justify-center text-foreground transition-colors hover:text-primary"
+        >
+          <Heart className="h-[18px] w-[18px]" aria-hidden="true" />
+        </button>
+      </div>
+      <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+        {product.meta}
+      </p>
+      <h3 className="mt-0.5 text-sm font-medium leading-snug">
+        <Link to="/shop" className="hover:underline">
+          {product.name}
+        </Link>
+      </h3>
+      <PriceDisplay
+        amount={product.price}
+        compareAt={product.compareAt}
+        className="mt-1"
+      />
+    </article>
+  );
+}

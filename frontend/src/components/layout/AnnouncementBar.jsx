@@ -5,7 +5,7 @@ export default function AnnouncementBar() {
   return (
     <div
       data-testid="announcement-bar"
-      className="bg-primary text-primary-foreground text-center text-xs sm:text-sm py-2 px-4"
+      className="bg-neutral-950 px-4 py-2 text-center text-xs tracking-wide text-white sm:text-[13px]"
     >
       {t("announcement.text")}
     </div>

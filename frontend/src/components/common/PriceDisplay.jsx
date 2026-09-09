@@ -14,6 +14,7 @@ export default function PriceDisplay({
     new Intl.NumberFormat(tag, {
       style: "currency",
       currency,
+      currencyDisplay: "narrowSymbol",
       maximumFractionDigits: 0,
     }).format(value);
 

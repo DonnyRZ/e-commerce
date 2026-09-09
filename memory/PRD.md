@@ -34,6 +34,14 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
   - API client: `src/lib/api.js` axios instance (baseURL from REACT_APP_BACKEND_URL, withCredentials).
   - Route shell placeholders: /, /search, /cart, /wishlist, /account, /checkout, /seller, /admin (+404).
   - Verified by testing agent (iteration_1.json): 100% backend + frontend, all 4 languages, persistence, 375/768/1440 no overflow, mobile drawer open/close, zero console errors. Announcement-bar translation concern disproven (RU/UZ verified via screenshot).
+- 2026-09-09: Milestone 1.1 — Frontend Visual Foundation / UNIQLO UX Calibration. Status: PASS.
+  - Rebuilt sparse M1 shell into retail-grade foundation: black promo bar, premium header (3 department nav buttons opening mega overlay, utility icons), SecondaryNav strip, SearchOverlay (search input + dept tabs + image category grid, Esc/X close, scroll lock).
+  - Homepage: full-bleed visual hero (restrained overlay + 2 pill CTAs), Shop-by-Category image strip, New Arrivals + Best Sellers product grids, 3 department tiles.
+  - ProductCard foundation: aspect-[3/4] image-dominant, swatches, wishlist heart, uppercase metadata, name, Rp narrowSymbol price, NEW/SALE badges, zero card chrome. ProductGrid 2/3/4 cols.
+  - PLP visual foundation at /shop: breadcrumb, title, Results: {count} items (i18n interpolation), Sort/Filter buttons (visual only), category strip, 10-card grid.
+  - Footer: grouped pipe-separated SHOP/HELP/ACCOUNT/ABOUT, promo line, copyright + socials + language selector.
+  - Demo placeholder data with localized names: src/data/demo.js (3 departments, 17 categories, 10 demo products incl. required Gray Sweat Oversized Full-Zip Hoodie). Neutral Unsplash placeholders — IP-safe.
+  - i18n extended: t(key, {params}) interpolation; ~30 new keys × 4 locales. Verified by testing agent (iteration_2.json): 100% pass, all viewports, all languages, zero console errors.
 
 ## Backlog (prioritized, from Master Context V3)
 - P0: Milestone 1 foundation (responsive shell, design tokens #145A46 emerald accent, 4-language i18n), taxonomy seed, catalog/PLP/PDP, search/filter/sort, auth+RBAC, cart, wishlist, checkout+mock payment, orders w/ idempotency + atomic inventory, seller isolation, admin core, security hardening.
@@ -41,6 +49,7 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
 - P2 (deferred): AI features, multiple payment/shipping providers, live FX, loyalty, native apps, microservices.
 
 ## Next Tasks
-1. Milestone 2 — Catalog (taxonomy seed, categories, products/variants, PLP) — only on explicit next prompt.
-2. Known tracked issue: dev CORS_ORIGINS="*" — fix during security hardening milestone (Prompt #2 explicitly deferred this).
-3. Wire header nav links to real category routes once catalog routes exist.
+1. Milestone 1.2 — final mandatory UNIQLO reference screenshot review before frontend foundation approval (user announced).
+2. Milestone 2 — Catalog (taxonomy seed, categories, products/variants, real PLP wiring) — only on explicit next prompt.
+3. Known tracked issue: dev CORS_ORIGINS="*" — fix during security hardening milestone.
+4. Replace demo.js placeholder data with real catalog API when Milestone 2 lands.
