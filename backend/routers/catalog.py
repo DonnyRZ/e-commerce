@@ -416,7 +416,20 @@ async def product_detail(slug: str, session: AsyncSession = Depends(get_session)
             .where(Category.id == product.category_id)
         )
     ).scalar_one_or_none()
-    out["category"] = _category_out(cat) if cat else None
+    if cat:
+        cat_out = _category_out(cat)
+        if cat.parent_id:
+            dept = (
+                await session.execute(
+                    select(Category)
+                    .options(selectinload(Category.translations))
+                    .where(Category.id == cat.parent_id)
+                )
+            ).scalar_one_or_none()
+            cat_out["department"] = _category_out(dept) if dept else None
+        out["category"] = cat_out
+    else:
+        out["category"] = None
     return out
 
 

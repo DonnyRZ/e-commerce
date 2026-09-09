@@ -64,6 +64,11 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
   - Catalog API extended: /filters endpoint (colors/sizes/volumes/price bounds per scope), product list params min_price/max_price/color/size/availability, sort=featured|newest|price_asc|price_desc, q covers slug/brand/tags/translation names/SKU.
   - Storefront Discovery wired to real API: homepage (categories, new arrivals, best sellers, dept tiles), header dept nav → /shop?department=, secondary nav → badge=, mega menu real taxonomy + submit → /search?q=, full PLP (URL-state filters desktop sidebar + mobile sheet, sort select, server pagination), SearchPage (loading/empty/error), ProductCard real data + stock messages + /product/:slug placeholder. demo.js reduced to hero + editorials.
   - Verified: pytest 34/34 (test_catalog.py 20 + test_m3_filters.py 14), iteration_5.json 100% pass, all 4 locales incl. Cyrillic API content, 375/768/1440 clean, zero console errors (React key nit fixed post-test).
+- 2026-09-09: Milestone 4 — Product Detail Page (Prompt #5). Status: PASS.
+  - Real PDP at /product/:slug wired to PostgreSQL API (product detail now includes category.department for breadcrumbs). No schema migration needed (attributes JSONB reused).
+  - Gallery (multi-image + thumbnails + lazy load), purchase panel (badges, brand, localized title, live SKU, PriceDisplay base/override/sale/compare-at), flexible variant system generated from actual option_values dimensions (color+size / color+material / volume / size-only) with cross-dimension auto-resolution (impossible combos snap to valid variant instead of deadlocking — dev bug fixed), stock messaging (in/low/out), quantity capped at min(stock,10), Size Guide dialog apparel-only, integration-ready Add to Cart (validates, disabled on OOS, toast only — no fake persistence), visual wishlist, accordion info sections (Description/Features/Material&Care/Ingredients/Benefits/How to Use/Details/Delivery/Returns), loading/404/error states, document.title.
+  - Seed enriched: hoodie/hijab/serum 2 images each; apparel care; skincare ingredients/benefits/directions. ~30 pdp.* keys × 4 locales.
+  - Verified: iteration_6.json 100% (hoodie Gray/M, Gray/XS low-stock qty cap 2, Black/XXL OOS disabled, Navy/L, XXL override Rp 519,000, hijab maroon auto-resolve OOS, skincare 50ml override Rp 49,000, no apparel controls on skincare, RU/UZ/ID PDP, 390px no overflow, PLP/search/home regression clean). GitHub milestone-4-pdp NOT saved (no remote).
 
 ## Backlog (prioritized, from Master Context V3)
 - P0: Milestone 1 foundation (responsive shell, design tokens #145A46 emerald accent, 4-language i18n), taxonomy seed, catalog/PLP/PDP, search/filter/sort, auth+RBAC, cart, wishlist, checkout+mock payment, orders w/ idempotency + atomic inventory, seller isolation, admin core, security hardening.
@@ -71,7 +76,8 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
 - P2 (deferred): AI features, multiple payment/shipping providers, live FX, loyalty, native apps, microservices.
 
 ## Next Tasks
-1. Milestone 4 — Product Detail Page / Product Experience — only on explicit next prompt. /product/:slug placeholder route ready.
-2. Known tracked issue: dev CORS_ORIGINS="*" — fix during security hardening milestone.
-3. Production ops note: PostgreSQL must be provisioned on VPS (docker-compose / systemd); dev container runs local PG15 via `service postgresql start` (restart needed after pod restart).
-4. Wishlist persistence, auth, cart, checkout remain forbidden until their prompts.
+1. Milestone 5 — Authentication + RBAC + Customer Account — only on explicit next prompt.
+2. Milestone 6+ — Cart persistence (PDP Add-to-Cart integration point ready: validates variant, qty, stock).
+3. Known tracked issue: dev CORS_ORIGINS="*" — fix during security hardening milestone.
+4. Dev ops note: `service postgresql start` needed after pod restart.
+5. Minor: PDP main image is a container bg-image (testability note from iteration_6; non-blocking).
