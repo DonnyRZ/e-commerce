@@ -1,0 +1,20 @@
+{
+  "summary": "Milestone 2 (catalog backend) — full pytest suite (20/20 pass) against external URL covering health, departments (3), category counts (17/8/5), category & product detail (BUG FIX for ObjectId parent/category lookup verified — both now return department/category objects and non-null product_count), hoodie 24 variants with correct pricing/stock (base 499000, XXL price_override 519000, GSOZH-BLK-XXL stock 0, GSOZH-GRY-XS stock 2, seller_id present), flexible variants (chiffon hijab color+material, facial-wash volume 50ml @49000 override, kids-set size-only), stock states (moist-cream out_of_stock), badges (new=4, bestseller=4, sale>=1 all with compare_at_price), pagination (total=12/pages=3), sort=price_asc first=halal-gentle-facial-wash, q=hoodie returns single hoodie, 404s. Full localization (id/en/uz/ru) on hoodie and hijab-kerudung verified. Frontend smoke regression: homepage renders with 3 dept nav (nav-women-muslimah/uniqlo-products/tropical-halal-skincare), secondary nav (3), hero+2 CTAs, category-strip, new-arrivals-grid, best-sellers-grid, editorial cards, footer with social links. Search overlay opens (search-entry -> browse UI). Language switch to Russian via language-option-ru works and PERSISTS after reload (mc_locale=ru in localStorage; hero text remains Cyrillic after full reload). No horizontal overflow at 375/390/768/1440. Zero console errors. NO regressions detected on Milestone 1.2 visual foundation.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_catalog.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ObjectId conversion fix in catalog.py (category_detail ~L81, product_detail ~L155) is verified working; recommend adding a small helper `to_object_id(str_or_oid)` used consistently in any future join query to prevent regression.",
+    "Product list endpoint returns items with stock_state computed at product level; ensure this is documented since low_stock/out_of_stock decisions depend on aggregate of variants.",
+    "Consider adding a unit/integration test in the repo CI (this pytest file /app/backend/tests/test_catalog.py can serve as the regression baseline for M2)."
+  ],
+  "updated_files": ["/app/backend/tests/test_catalog.py"],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "100% smoke"},
+  "test_credentials": "N/A (no auth in this milestone; /app/memory/test_credentials.md not present)",
+  "seed_data_creation": "None created by tests; used existing seeded catalog (3 depts / 30 cats / 12 products / 69 variants).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend catalog M2 is fully green. External URL https://muslimah-shop.preview.emergentagent.com used for both API + UI. Reuse /app/backend/tests/test_catalog.py as regression. Two initial expectations from the request needed adjustment during testing: (1) SKU naming for hoodie uses GSOZH- prefix (GSOZH-BLK-XXL, GSOZH-GRY-XS) — not shorthand BLK-XXL/GRY-XS; (2) premium-chiffon-hijab has 4 variants with mixed materials (Voal + Chiffon), not Voal-only — tests now assert combo (Black,Voal) present. Language persistence uses localStorage key `mc_locale`. Language-selector is a Radix DropdownMenu button; menu items expose data-testid `language-option-{id|en|uz|ru}`.",
+  "rca of the issue": "Milestone 2 dev bug (already fixed by main agent): category_detail and product_detail joined by parent_id/category_id using raw strings against Mongo _id ObjectId, returning None. Fix: convert to ObjectId before find_one. Verified: /api/v1/catalog/categories/hijab-kerudung now returns department.slug=women-muslimah; /api/v1/catalog/products/gray-sweat-oversized-full-zip-hoodie returns category.slug=sweatshirts-hoodies with 24 variants."
+}

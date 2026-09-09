@@ -48,6 +48,13 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
   - New reusable EditorialSection ("Stories & Guides"): 4 localized cards (Modest Styling, Hijab Styling, Skincare Routine, New Season Edit) — image/label/title/desc/Learn More.
   - Homepage rhythm final: promo bar > header > secondary nav > hero > categories > new arrivals > dept tiles > best sellers > editorial > footer.
   - Verified by testing agent (iteration_3.json): 100% pass, 0 console errors, all images load, 4-locale regression incl. RU persistence, responsive 375/768/1440 clean.
+- 2026-09-09: Milestone 2 — Database + Catalog + Product Variants (Prompt #3). Status: PASS.
+  - Models extended: Category(kind department|category, parent_id, image_url), Product(currency), ProductVariant(inventory→stock_quantity, sale_price_override). Flexible option_values dict (color+size / color+material / volume / size-only).
+  - Catalog API `backend/routers/catalog.py` under /api/v1/catalog: departments, categories(?department), categories/{slug} (+department+product_count), products (department/category/q/badge/sort/page/limit), products/{slug} (+variants+category+stock_state), products/{slug}/variants. Stock states: in_stock/low_stock(<=5)/out_of_stock.
+  - Seed `backend/seed_catalog.py` (idempotent upserts): 3 departments, 30 categories (17 Muslimah incl. busana-muslimah-anak subcategory, 8 UNIQLO, 5 skincare), 3 sellers, 12 products, 69 variants. Required Gray Sweat Oversized Full-Zip Hoodie: 24 variants (4 colors × 6 sizes), XXL override 519000, mixed stock incl. 0 and 2.
+  - Indexes: categories.slug unique, parent_id; products.slug unique, category_id, seller_id, status, new_arrival; product_variants.sku unique, product_id.
+  - Bug fixed: ObjectId vs string _id joins in category/product detail (catalog.py L81/L155). Regression suite: /app/backend/tests/test_catalog.py (20/20 pass, iteration_4.json). Frontend untouched, smoke-verified.
+  - GitHub checkpoint milestone-2-catalog NOT saved: no git remote/gh CLI available.
 
 ## Backlog (prioritized, from Master Context V3)
 - P0: Milestone 1 foundation (responsive shell, design tokens #145A46 emerald accent, 4-language i18n), taxonomy seed, catalog/PLP/PDP, search/filter/sort, auth+RBAC, cart, wishlist, checkout+mock payment, orders w/ idempotency + atomic inventory, seller isolation, admin core, security hardening.
@@ -55,6 +62,7 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
 - P2 (deferred): AI features, multiple payment/shipping providers, live FX, loyalty, native apps, microservices.
 
 ## Next Tasks
-1. Prompt #3 / Milestone 2 — Catalog (taxonomy seed, categories, products/variants backend, real PLP wiring) — only on explicit next prompt. Frontend foundation is FINAL-APPROVED.
-2. Known tracked issue: dev CORS_ORIGINS="*" — fix during security hardening milestone.
-3. Replace demo.js placeholder data with real catalog API; add /stories/:slug routes later; SecondaryNav active underline should reflect route state once PLP lands.
+1. Milestone 3 — Storefront Discovery (wire real catalog API into approved frontend: PLP/PDP/search) — only on explicit next prompt.
+2. Replace demo.js placeholder data with /api/v1/catalog responses during Milestone 3.
+3. Known tracked issue: dev CORS_ORIGINS="*" — fix during security hardening milestone.
+4. Consider to_object_id() helper for future join queries (testing-agent recommendation); /stories/:slug routes later.

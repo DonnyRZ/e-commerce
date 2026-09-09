@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from config import CORS_ORIGINS
 from database import client, db
+from routers.catalog import router as catalog_router
 
 # Create the main app without a prefix
 app = FastAPI(title="MUSLIMAH CANTIK API")
@@ -73,6 +74,7 @@ async def get_status_checks():
 
 # Include the router in the main app
 app.include_router(api_router)
+app.include_router(catalog_router)
 
 app.add_middleware(
     CORSMiddleware,

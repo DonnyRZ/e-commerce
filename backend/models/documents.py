@@ -31,10 +31,12 @@ class User(BaseDocument):
 
 
 class Category(BaseDocument):
-    department: str
+    kind: Literal["department", "category"] = "category"
+    department: str = ""
     slug: str
     translations: LocalizedContent = Field(default_factory=dict)
     parent_id: Optional[PyObjectId] = None
+    image_url: Optional[str] = None
     sort_order: int = 0
     is_active: bool = True
 
@@ -54,6 +56,7 @@ class Product(BaseDocument):
     brand: str = ""
     base_price: int = 0
     compare_at_price: Optional[int] = None
+    currency: str = "IDR"
     attributes: Dict[str, Any] = Field(default_factory=dict)
     tags: List[str] = Field(default_factory=list)
     media: List[Dict[str, Any]] = Field(default_factory=list)
@@ -67,8 +70,9 @@ class ProductVariant(BaseDocument):
     product_id: PyObjectId
     sku: str
     option_values: Dict[str, str] = Field(default_factory=dict)
-    inventory: int = 0
+    stock_quantity: int = 0
     price_override: Optional[int] = None
+    sale_price_override: Optional[int] = None
     image_url: Optional[str] = None
     is_active: bool = True
 
