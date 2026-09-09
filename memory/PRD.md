@@ -1,5 +1,10 @@
 # MUSLIMAH CANTIK — PRD / Project Memory
 
+## Architecture Overrides (highest priority)
+- Production DB: PostgreSQL (never MongoDB). Stack: SQLAlchemy 2.x async + asyncpg + Alembic.
+- Deployment: self-hosted VPS (Linux + Nginx + FastAPI + PostgreSQL + React build). NO Emergent runtime/hosting/auth/storage/payment dependencies in production.
+- Payments: CLICK provider via provider abstraction (MockClickProvider/ClickProvider), CLICK_MODE=mock|test|production (default mock, never invent credentials), Prepare/Complete protocol with MD5 signature over raw form strings, strict idempotency, payment currency UZS (BASE_CURRENCY override from IDR), integer money only. Reference: CLICK_INTEGRATION_REFERENCE_FOR_EMERGENT.md (authoritative for payments).
+
 ## Original Problem Statement
 Execute Controlled Execution Prompt V3 #1 — Repository Audit + Architecture Foundation only, per
 01_EXECUTION_BOOTSTRAP.md and 02_MASTER_CONTEXT_V3.md (project constitution). No marketplace features.
