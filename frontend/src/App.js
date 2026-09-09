@@ -5,6 +5,7 @@ import { I18nProvider } from "@/i18n";
 import AppShell from "@/components/layout/AppShell";
 import HomePage from "@/pages/HomePage";
 import ShopPage from "@/pages/ShopPage";
+import SearchPage from "@/pages/SearchPage";
 import PlaceholderPage from "@/pages/PlaceholderPage";
 
 function App() {
@@ -15,7 +16,8 @@ function App() {
           <Route element={<AppShell />}>
             <Route path="/" element={<HomePage />} />
             <Route path="/shop" element={<ShopPage />} />
-            <Route path="/search" element={<PlaceholderPage titleKey="page.title.search" />} />
+            <Route path="/search" element={<SearchPage />} />
+            <Route path="/product/:slug" element={<PlaceholderPage titleKey="page.title.product" />} />
             <Route path="/cart" element={<PlaceholderPage titleKey="page.title.cart" />} />
             <Route path="/wishlist" element={<PlaceholderPage titleKey="page.title.wishlist" />} />
             <Route path="/account" element={<PlaceholderPage titleKey="page.title.account" />} />

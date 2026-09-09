@@ -5,10 +5,11 @@ import PriceDisplay from "./PriceDisplay";
 
 export default function ProductCard({ product }) {
   const { t } = useI18n();
+  const href = product.href || "/shop";
   return (
-    <article data-testid={`product-card-${product.id}`} className="group">
+    <article data-testid={`product-card-${product.slug || product.id}`} className="group">
       <div className="relative overflow-hidden bg-secondary">
-        <Link to="/shop" aria-label={product.name}>
+        <Link to={href} aria-label={product.name}>
           <img
             src={product.image}
             alt={product.name}
@@ -18,7 +19,7 @@ export default function ProductCard({ product }) {
         </Link>
         {product.badge ? (
           <span
-            data-testid={`badge-${product.badge}-${product.id}`}
+            data-testid={`badge-${product.badge}-${product.slug || product.id}`}
             className={`absolute left-2 top-2 px-2 py-0.5 text-[11px] font-semibold tracking-wide ${
               product.badge === "sale"
                 ? "bg-primary text-primary-foreground"
@@ -30,7 +31,7 @@ export default function ProductCard({ product }) {
         ) : null}
       </div>
       <div className="mt-2 flex items-center justify-between">
-        <div className="flex items-center gap-1.5" data-testid={`swatches-${product.id}`}>
+        <div className="flex items-center gap-1.5" data-testid={`swatches-${product.slug || product.id}`}>
           {product.colors.map((color) => (
             <span
               key={color}
@@ -41,7 +42,7 @@ export default function ProductCard({ product }) {
         </div>
         <button
           type="button"
-          data-testid={`wishlist-${product.id}`}
+          data-testid={`wishlist-${product.slug || product.id}`}
           aria-label={t("product.wishlist")}
           className="inline-flex h-8 w-8 items-center justify-center text-foreground transition-colors hover:text-primary"
         >
@@ -52,7 +53,7 @@ export default function ProductCard({ product }) {
         {product.meta}
       </p>
       <h3 className="mt-0.5 text-sm font-medium leading-snug">
-        <Link to="/shop" className="hover:underline">
+        <Link to={href} className="hover:underline">
           {product.name}
         </Link>
       </h3>
@@ -61,6 +62,21 @@ export default function ProductCard({ product }) {
         compareAt={product.compareAt}
         className="mt-1"
       />
+      {product.stockState === "out_of_stock" ? (
+        <p
+          data-testid={`stock-out-${product.slug || product.id}`}
+          className="mt-1 text-xs font-medium text-destructive"
+        >
+          {t("product.outOfStock")}
+        </p>
+      ) : product.stockState === "low_stock" ? (
+        <p
+          data-testid={`stock-low-${product.slug || product.id}`}
+          className="mt-1 text-xs font-medium text-primary"
+        >
+          {t("product.lowStock")}
+        </p>
+      ) : null}
     </article>
   );
 }

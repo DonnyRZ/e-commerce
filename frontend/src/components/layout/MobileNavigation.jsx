@@ -1,7 +1,9 @@
 import { Link } from "react-router-dom";
 import { Menu, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { LOCALE_LABELS, SUPPORTED_LOCALES, useI18n } from "@/i18n";
-import { DEPARTMENTS, localizedName } from "@/data/demo";
+import { getDepartments } from "@/lib/api";
+import { pickLocalized } from "@/lib/localize";
 import {
   Sheet,
   SheetClose,
@@ -12,9 +14,9 @@ import {
 import { Button } from "@/components/ui/button";
 
 const QUICK_LINKS = [
-  { key: "nav.newArrivals", to: "/shop" },
-  { key: "nav.bestSellers", to: "/shop" },
-  { key: "nav.sale", to: "/shop" },
+  { key: "nav.newArrivals", to: "/shop?badge=new" },
+  { key: "nav.bestSellers", to: "/shop?badge=bestseller" },
+  { key: "nav.sale", to: "/shop?badge=sale" },
 ];
 
 const ACCOUNT_LINKS = [
@@ -26,6 +28,12 @@ const ACCOUNT_LINKS = [
 
 export default function MobileNavigation() {
   const { locale, setLocale, t } = useI18n();
+  const { data: departments = [] } = useQuery({
+    queryKey: ["departments"],
+    queryFn: getDepartments,
+    staleTime: 5 * 60 * 1000,
+  });
+
   return (
     <Sheet>
       <SheetTrigger asChild>
@@ -55,14 +63,14 @@ export default function MobileNavigation() {
           </SheetClose>
         </div>
         <nav className="flex flex-col px-4 py-2" aria-label="Departments">
-          {DEPARTMENTS.map((dept) => (
+          {departments.map((dept) => (
             <SheetClose asChild key={dept.id}>
               <Link
-                to="/shop"
+                to={`/shop?department=${dept.slug}`}
                 data-testid={`mobile-nav-${dept.slug}`}
                 className="border-b border-border py-3 text-sm font-semibold hover:text-primary"
               >
-                {localizedName(dept, locale)}
+                {pickLocalized(dept.translations, locale)}
               </Link>
             </SheetClose>
           ))}

@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 export default function CategoryCard({ category, name, onNavigate }) {
   return (
     <Link
-      to="/shop"
+      to={`/shop?category=${category.slug}`}
       onClick={onNavigate}
       data-testid={`category-card-${category.slug}`}
       className="group block"

@@ -1,16 +1,34 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Search, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
-import { CATEGORIES, DEPARTMENTS, localizedName } from "@/data/demo";
+import { getCategories, getDepartments } from "@/lib/api";
+import { pickLocalized, toCardCategory } from "@/lib/localize";
 import CategoryCard from "@/components/common/CategoryCard";
 
 export default function SearchOverlay({ open, initialDept, onClose }) {
   const { locale, t } = useI18n();
-  const [dept, setDept] = useState(initialDept || DEPARTMENTS[0].id);
+  const navigate = useNavigate();
+  const [dept, setDept] = useState(initialDept || null);
+  const [query, setQuery] = useState("");
+
+  const { data: departments = [] } = useQuery({
+    queryKey: ["departments"],
+    queryFn: getDepartments,
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: allCategories = [] } = useQuery({
+    queryKey: ["categories", "all"],
+    queryFn: () => getCategories(),
+    staleTime: 5 * 60 * 1000,
+  });
 
   useEffect(() => {
-    if (open) setDept(initialDept || DEPARTMENTS[0].id);
+    if (open) {
+      setDept(initialDept || null);
+      setQuery("");
+    }
   }, [open, initialDept]);
 
   useEffect(() => {
@@ -26,7 +44,16 @@ export default function SearchOverlay({ open, initialDept, onClose }) {
 
   if (!open) return null;
 
-  const cats = CATEGORIES.filter((c) => c.departmentId === dept);
+  const activeDept = dept || departments[0]?.slug;
+  const cats = allCategories.filter((c) => c.department === activeDept);
+
+  const submitSearch = (e) => {
+    e.preventDefault();
+    const q = query.trim();
+    if (!q) return;
+    onClose();
+    navigate(`/search?q=${encodeURIComponent(q)}`);
+  };
 
   return (
     <div
@@ -57,39 +84,45 @@ export default function SearchOverlay({ open, initialDept, onClose }) {
       </div>
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1200px] px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
-          <div className="relative">
+          <form onSubmit={submitSearch} className="relative">
             <input
               type="search"
               data-testid="search-input"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
               placeholder={t("header.searchPlaceholder")}
               aria-label={t("header.searchPlaceholder")}
               className="h-12 w-full rounded-full border border-border bg-background pl-5 pr-12 text-sm outline-none focus:border-foreground"
             />
-            <Search
-              className="pointer-events-none absolute right-5 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground"
-              aria-hidden="true"
-            />
-          </div>
+            <button
+              type="submit"
+              data-testid="search-submit"
+              aria-label={t("header.searchPlaceholder")}
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <Search className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </form>
           <div
             className="mt-6 flex gap-6 overflow-x-auto border-b border-border"
             role="tablist"
             data-testid="search-dept-tabs"
           >
-            {DEPARTMENTS.map((d) => (
+            {departments.map((d) => (
               <button
                 key={d.id}
                 type="button"
                 role="tab"
-                aria-selected={dept === d.id}
+                aria-selected={activeDept === d.slug}
                 data-testid={`search-tab-${d.slug}`}
-                onClick={() => setDept(d.id)}
+                onClick={() => setDept(d.slug)}
                 className={`whitespace-nowrap pb-2.5 text-sm transition-colors ${
-                  dept === d.id
+                  activeDept === d.slug
                     ? "border-b-2 border-foreground font-semibold text-foreground"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {localizedName(d, locale)}
+                {pickLocalized(d.translations, locale)}
               </button>
             ))}
           </div>
@@ -100,8 +133,8 @@ export default function SearchOverlay({ open, initialDept, onClose }) {
             {cats.map((c) => (
               <CategoryCard
                 key={c.id}
-                category={c}
-                name={localizedName(c, locale)}
+                category={toCardCategory(c, locale)}
+                name={toCardCategory(c, locale).name}
                 onNavigate={onClose}
               />
             ))}

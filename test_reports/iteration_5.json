@@ -1,0 +1,29 @@
+{
+  "summary": "Milestone 3 (PostgreSQL migration + Storefront Discovery) — comprehensive backend + frontend regression. Backend pytest 34/34 pass: existing test_catalog.py (20/20) fully green against PostgreSQL (health db=up now backed by SELECT 1 on Postgres; StatusCheck POST/GET works; departments/categories/products/variants/badges/pagination/sort/search all identical shapes as M2). New test_m3_filters.py (14/14) verifies M3-only features: GET /api/v1/catalog/filters?department=women-muslimah returns colors(7)+sizes(8)+price bounds; /filters?department=tropical-halal-skincare returns colors=[] sizes=[]; color=Black+department=women-muslimah → 2 items; size=XXL → 1 item (hoodie only); availability=out_of_stock → contains tropical-moist-cream-50ml; availability=in_stock excludes it; min_price=400000&max_price=500000 all items within bounds; sort=price_desc strictly desc; sort=newest & sort=featured return items; q=abaya returns abaya; q=GSOZH-GRY-M SKU search returns hoodie; q=zzzznoresult returns empty. Frontend (external URL) at 1440/768/375: Homepage shows real category-strip + new-arrivals-grid + best-sellers-grid; header nav-women-muslimah/uniqlo-products/tropical-halal-skincare all link to /shop?department=<slug>. PLP /shop?department=women-muslimah shows 'Results: 5 items', 7 color chips + 8 size chips + in-stock + price + clear. Click filter-color-Black → URL gains color=Black, results drop to 'Results: 2 items'; filter-clear resets URL. Skincare PLP shows 0 color/0 size filters (as required). /shop default 12 products = 1 page, no pagination shown. Sort UI functional (facial-wash appears first on price_asc). Mega-menu search-entry opens overlay, typing 'abaya'+Enter navigates to /search?q=abaya. /search?q=zzzznoresult shows empty-state '0 products'. ProductCard links to /product/<slug> which renders coming-soon placeholder as expected. i18n: switch to ID shows 'Hasil/Harga/Warna/Filter', switch to RU shows 'Результаты/Цена/Цвет/Фильтры' with real Cyrillic product names from API (Хиджаб/Абая/Класс...). Responsive: no horizontal overflow at 375 or 768; mobile filter-button opens filter-sheet. Zero backend errors in logs. Only 1 minor React warning: 'Each child in a list should have a unique key prop. Check the render method of CategoryStrip' — non-blocking dev warning, no functional impact.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Homepage / all pages using CategoryStrip", "issues": ["React key warning: CategoryStrip renders list without unique key prop (dev-mode console.error, does not affect UX). Add key={cat.id||cat.slug} in the map."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_catalog.py", "/app/backend/tests/test_m3_filters.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Nit: add unique key prop in CategoryStrip .map() to silence React dev warning (frontend/src/components/... CategoryStrip)."
+  ],
+  "critical_code_review_comments": [
+    "PostgreSQL migration is clean: response shapes are byte-identical to M2 (all 20 M2 tests still pass unchanged) — good API-contract discipline.",
+    "New /filters endpoint correctly returns empty colors/sizes for skincare (no variant options) — good schema-aware aggregation.",
+    "Availability filter operates at product-level (aggregate over variants) — matches stock_state semantics. Consider documenting that 'in_stock' includes 'low_stock' since UI checkbox is a single boolean.",
+    "SKU search (q=GSOZH-GRY-M) correctly falls back to variant SKU LIKE match — verify indexing on variants.sku for scale (PG b-tree on lowercase sku recommended if case-insensitive)."
+  ],
+  "updated_files": ["/app/backend/tests/test_m3_filters.py"],
+  "success_rate": {"backend": "100% (34/34)", "frontend": "100% (all M3 flows verified)"},
+  "test_credentials": "N/A (no auth in this milestone; /app/memory/test_credentials.md is intentionally empty)",
+  "seed_data_creation": "None — used existing idempotent PG seed (3 depts / 30 cats / 12 products / 69 variants / 48+132 translation rows).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "M3 is fully green. Regression suites: /app/backend/tests/test_catalog.py (20 M2 tests) + /app/backend/tests/test_m3_filters.py (14 M3 tests). External URL used for API + UI. Filter data-testid convention: filter-color-<Color> (capitalized: filter-color-Black), filter-size-<SIZE> (lowercase works: filter-size-m — component appears to accept both since selector `filter-color-Black` and `filter-size-m` both matched), filter-in-stock, filter-clear, filter-button (mobile), filter-sheet (mobile). Locale key: mc_locale in localStorage. PDP /product/<slug> is intentional placeholder (Prompt #5 scope). Only cosmetic issue: React unique-key warning inside CategoryStrip.",
+  "rca of the issue": "N/A — no bugs found in M3."
+}

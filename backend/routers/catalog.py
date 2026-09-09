@@ -1,20 +1,28 @@
 from typing import Optional
 
-from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import String, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from database import db
-from models import Category, Product, ProductVariant
+from db.models import (
+    Category,
+    Product,
+    ProductTranslation,
+    ProductVariant,
+)
+from db.session import get_session
 
 router = APIRouter(prefix="/api/v1/catalog", tags=["catalog"])
 
 LOW_STOCK_THRESHOLD = 5
 
 SORTS = {
-    "newest": ("created_at", -1),
-    "price_asc": ("base_price", 1),
-    "price_desc": ("base_price", -1),
-    "name": ("slug", 1),
+    "featured": (Product.featured.desc(), Product.created_at.desc()),
+    "newest": (Product.created_at.desc(),),
+    "price_asc": (Product.base_price.asc(),),
+    "price_desc": (Product.base_price.desc(),),
+    "name": (Product.slug.asc(),),
 }
 
 
@@ -26,65 +34,262 @@ def _stock_state(total_stock: int) -> str:
     return "in_stock"
 
 
-async def _variant_stats(product_id: str) -> dict:
-    total_stock = 0
-    count = 0
-    cursor = db.product_variants.find(
-        {"product_id": product_id, "is_active": True}, {"stock_quantity": 1}
-    )
-    async for v in cursor:
-        total_stock += v.get("stock_quantity", 0)
-        count += 1
+def _translations(obj) -> dict:
+    out = {}
+    for t in obj.translations:
+        entry = {"title": t.name}
+        if t.description:
+            entry["description"] = t.description
+        out[t.locale] = entry
+    return out
+
+
+def _category_out(c: Category) -> dict:
     return {
-        "variant_count": count,
-        "total_stock": total_stock,
-        "stock_state": _stock_state(total_stock) if count else "out_of_stock",
+        "id": c.id,
+        "kind": c.kind,
+        "department": c.department,
+        "slug": c.slug,
+        "parent_id": c.parent_id,
+        "image_url": c.image_url,
+        "sort_order": c.sort_order,
+        "is_active": c.is_active,
+        "translations": _translations(c),
+        "created_at": c.created_at,
+        "updated_at": c.updated_at,
     }
 
 
-async def _department_category_ids(dept_slug: str) -> list:
-    dept = await db.categories.find_one({"slug": dept_slug, "kind": "department"})
-    if not dept:
-        raise HTTPException(status_code=404, detail="Department not found")
-    ids = []
-    async for c in db.categories.find({"parent_id": str(dept["_id"])}, {"_id": 1}):
-        ids.append(str(c["_id"]))
-    return ids
+def _product_out(p: Product) -> dict:
+    return {
+        "id": p.id,
+        "seller_id": p.seller_id,
+        "category_id": p.category_id,
+        "product_type": p.product_type,
+        "slug": p.slug,
+        "brand": p.brand,
+        "base_price": p.base_price,
+        "compare_at_price": p.compare_at_price,
+        "currency": p.currency,
+        "attributes": p.attributes or {},
+        "tags": p.tags or [],
+        "media": p.media or [],
+        "status": p.status,
+        "featured": p.featured,
+        "bestseller": p.bestseller,
+        "new_arrival": p.new_arrival,
+        "translations": _translations(p),
+        "created_at": p.created_at,
+        "updated_at": p.updated_at,
+    }
+
+
+def _variant_out(v: ProductVariant) -> dict:
+    return {
+        "id": v.id,
+        "product_id": v.product_id,
+        "sku": v.sku,
+        "option_values": v.option_values or {},
+        "stock_quantity": v.stock_quantity,
+        "price_override": v.price_override,
+        "sale_price_override": v.sale_price_override,
+        "image_url": v.image_url,
+        "is_active": v.is_active,
+        "stock_state": _stock_state(v.stock_quantity) if v.is_active else "inactive",
+        "created_at": v.created_at,
+        "updated_at": v.updated_at,
+    }
+
+
+async def _variant_stats(session: AsyncSession, product_ids: list) -> dict:
+    if not product_ids:
+        return {}
+    stats_stmt = (
+        select(
+            ProductVariant.product_id,
+            func.count().label("cnt"),
+            func.coalesce(func.sum(ProductVariant.stock_quantity), 0).label("stock"),
+        )
+        .where(
+            ProductVariant.product_id.in_(product_ids),
+            ProductVariant.is_active.is_(True),
+        )
+        .group_by(ProductVariant.product_id)
+    )
+    colors_stmt = (
+        select(
+            ProductVariant.product_id,
+            ProductVariant.option_values["color"].astext.label("color"),
+        )
+        .where(
+            ProductVariant.product_id.in_(product_ids),
+            ProductVariant.is_active.is_(True),
+            ProductVariant.option_values.has_key("color"),
+        )
+        .distinct()
+    )
+    stats_rows = (await session.execute(stats_stmt)).all()
+    color_rows = (await session.execute(colors_stmt)).all()
+    colors_by_product: dict = {}
+    for pid, color in color_rows:
+        colors_by_product.setdefault(pid, set()).add(color)
+    result = {}
+    for pid, cnt, stock in stats_rows:
+        result[pid] = {
+            "variant_count": cnt,
+            "total_stock": int(stock),
+            "stock_state": _stock_state(int(stock)),
+            "colors": sorted(colors_by_product.get(pid, set())),
+        }
+    return result
+
+
+_EMPTY_STATS = {
+    "variant_count": 0,
+    "total_stock": 0,
+    "stock_state": "out_of_stock",
+    "colors": [],
+}
+
+
+async def _scope_filters(
+    session: AsyncSession,
+    department: Optional[str],
+    category: Optional[str],
+) -> list:
+    filters = [Product.status == "active"]
+    if category:
+        cat_id = await session.scalar(
+            select(Category.id).where(Category.slug == category)
+        )
+        if not cat_id:
+            raise HTTPException(status_code=404, detail="Category not found")
+        filters.append(Product.category_id == cat_id)
+    elif department:
+        dept = await session.scalar(
+            select(Category).where(
+                Category.slug == department, Category.kind == "department"
+            )
+        )
+        if not dept:
+            raise HTTPException(status_code=404, detail="Department not found")
+        filters.append(
+            Product.category_id.in_(
+                select(Category.id).where(Category.parent_id == dept.id)
+            )
+        )
+    return filters
+
+
+def _variant_exists_clause(**conditions):
+    stmt = select(ProductVariant.id).where(
+        ProductVariant.product_id == Product.id,
+        ProductVariant.is_active.is_(True),
+    )
+    for cond in conditions.values():
+        stmt = stmt.where(cond)
+    return stmt.exists()
 
 
 @router.get("/departments")
-async def list_departments():
-    cursor = db.categories.find({"kind": "department", "is_active": True}).sort(
-        "sort_order", 1
+async def list_departments(session: AsyncSession = Depends(get_session)):
+    stmt = (
+        select(Category)
+        .options(selectinload(Category.translations))
+        .where(Category.kind == "department", Category.is_active.is_(True))
+        .order_by(Category.sort_order)
     )
-    return [Category.from_mongo(d).model_dump() async for d in cursor]
+    rows = (await session.execute(stmt)).scalars().all()
+    return [_category_out(c) for c in rows]
 
 
 @router.get("/categories")
-async def list_categories(department: Optional[str] = None):
-    query = {"kind": "category", "is_active": True}
+async def list_categories(
+    department: Optional[str] = None,
+    session: AsyncSession = Depends(get_session),
+):
+    stmt = (
+        select(Category)
+        .options(selectinload(Category.translations))
+        .where(Category.kind == "category", Category.is_active.is_(True))
+        .order_by(Category.sort_order)
+    )
     if department:
-        dept = await db.categories.find_one({"slug": department, "kind": "department"})
+        dept = await session.scalar(
+            select(Category).where(
+                Category.slug == department, Category.kind == "department"
+            )
+        )
         if not dept:
             raise HTTPException(status_code=404, detail="Department not found")
-        query["parent_id"] = str(dept["_id"])
-    cursor = db.categories.find(query).sort("sort_order", 1)
-    return [Category.from_mongo(d).model_dump() async for d in cursor]
+        stmt = stmt.where(Category.parent_id == dept.id)
+    rows = (await session.execute(stmt)).scalars().all()
+    return [_category_out(c) for c in rows]
 
 
 @router.get("/categories/{slug}")
-async def category_detail(slug: str):
-    doc = await db.categories.find_one({"slug": slug, "is_active": True})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Category not found")
-    cat = Category.from_mongo(doc).model_dump()
-    if cat.get("parent_id"):
-        parent = await db.categories.find_one({"_id": ObjectId(cat["parent_id"])})
-        cat["department"] = Category.from_mongo(parent).model_dump() if parent else None
-    cat["product_count"] = await db.products.count_documents(
-        {"category_id": cat["id"], "status": "active"}
+async def category_detail(slug: str, session: AsyncSession = Depends(get_session)):
+    stmt = (
+        select(Category)
+        .options(selectinload(Category.translations))
+        .where(Category.slug == slug, Category.is_active.is_(True))
     )
-    return cat
+    cat = (await session.execute(stmt)).scalar_one_or_none()
+    if not cat:
+        raise HTTPException(status_code=404, detail="Category not found")
+    out = _category_out(cat)
+    if cat.parent_id:
+        parent_stmt = (
+            select(Category)
+            .options(selectinload(Category.translations))
+            .where(Category.id == cat.parent_id)
+        )
+        parent = (await session.execute(parent_stmt)).scalar_one_or_none()
+        out["department"] = _category_out(parent) if parent else None
+    out["product_count"] = await session.scalar(
+        select(func.count())
+        .select_from(Product)
+        .where(Product.category_id == cat.id, Product.status == "active")
+    )
+    return out
+
+
+@router.get("/filters")
+async def filter_metadata(
+    department: Optional[str] = None,
+    category: Optional[str] = None,
+    session: AsyncSession = Depends(get_session),
+):
+    filters = await _scope_filters(session, department, category)
+    pid_subq = select(Product.id).where(*filters).scalar_subquery()
+    price = (
+        await session.execute(
+            select(
+                func.coalesce(func.min(Product.base_price), 0),
+                func.coalesce(func.max(Product.base_price), 0),
+            ).where(*filters)
+        )
+    ).one()
+
+    async def distinct_option(key: str) -> list:
+        stmt = (
+            select(ProductVariant.option_values[key].astext)
+            .where(
+                ProductVariant.product_id.in_(pid_subq),
+                ProductVariant.is_active.is_(True),
+                ProductVariant.option_values.has_key(key),
+            )
+            .distinct()
+        )
+        rows = (await session.execute(stmt)).scalars().all()
+        return sorted(v for v in rows if v)
+
+    return {
+        "colors": await distinct_option("color"),
+        "sizes": await distinct_option("size"),
+        "volumes": await distinct_option("volume"),
+        "price": {"min": int(price[0]), "max": int(price[1])},
+    }
 
 
 @router.get("/products")
@@ -93,77 +298,139 @@ async def list_products(
     category: Optional[str] = None,
     q: Optional[str] = None,
     badge: Optional[str] = None,
-    sort: str = "newest",
+    min_price: Optional[int] = Query(None, ge=0),
+    max_price: Optional[int] = Query(None, ge=0),
+    color: Optional[str] = None,
+    size: Optional[str] = None,
+    availability: Optional[str] = None,
+    sort: str = "featured",
     page: int = Query(1, ge=1),
     limit: int = Query(12, ge=1, le=60),
+    session: AsyncSession = Depends(get_session),
 ):
-    query: dict = {"status": "active"}
-    if category:
-        cat = await db.categories.find_one({"slug": category})
-        if not cat:
-            raise HTTPException(status_code=404, detail="Category not found")
-        query["category_id"] = str(cat["_id"])
-    elif department:
-        query["category_id"] = {"$in": await _department_category_ids(department)}
-    if badge == "new":
-        query["new_arrival"] = True
-    elif badge == "bestseller":
-        query["bestseller"] = True
-    elif badge == "featured":
-        query["featured"] = True
-    elif badge == "sale":
-        query["compare_at_price"] = {"$gt": 0}
-    if q:
-        query["$or"] = [
-            {"slug": {"$regex": q, "$options": "i"}},
-            {"tags": {"$regex": q, "$options": "i"}},
-        ]
+    filters = await _scope_filters(session, department, category)
 
-    sort_field, sort_dir = SORTS.get(sort, SORTS["newest"])
-    total = await db.products.count_documents(query)
-    cursor = (
-        db.products.find(query)
-        .sort(sort_field, sort_dir)
-        .skip((page - 1) * limit)
+    if badge == "new":
+        filters.append(Product.new_arrival.is_(True))
+    elif badge == "bestseller":
+        filters.append(Product.bestseller.is_(True))
+    elif badge == "featured":
+        filters.append(Product.featured.is_(True))
+    elif badge == "sale":
+        filters.append(Product.compare_at_price.isnot(None))
+    if min_price is not None:
+        filters.append(Product.base_price >= min_price)
+    if max_price is not None:
+        filters.append(Product.base_price <= max_price)
+    if color:
+        filters.append(
+            _variant_exists_clause(
+                color=ProductVariant.option_values["color"].astext == color
+            )
+        )
+    if size:
+        filters.append(
+            _variant_exists_clause(
+                size=ProductVariant.option_values["size"].astext == size
+            )
+        )
+    if availability == "in_stock":
+        filters.append(
+            _variant_exists_clause(stock=ProductVariant.stock_quantity > 0)
+        )
+    elif availability == "out_of_stock":
+        filters.append(
+            ~_variant_exists_clause(stock=ProductVariant.stock_quantity > 0)
+        )
+    if q:
+        like = f"%{q}%"
+        filters.append(
+            or_(
+                Product.slug.ilike(like),
+                Product.brand.ilike(like),
+                func.cast(Product.tags, String).ilike(like),
+                Product.id.in_(
+                    select(ProductTranslation.product_id).where(
+                        ProductTranslation.name.ilike(like)
+                    )
+                ),
+                Product.id.in_(
+                    select(ProductVariant.product_id).where(
+                        ProductVariant.sku.ilike(like)
+                    )
+                ),
+            )
+        )
+
+    total = await session.scalar(select(func.count()).select_from(Product).where(*filters))
+    order = SORTS.get(sort, SORTS["featured"])
+    stmt = (
+        select(Product)
+        .options(selectinload(Product.translations))
+        .where(*filters)
+        .order_by(*order)
+        .offset((page - 1) * limit)
         .limit(limit)
     )
+    rows = (await session.execute(stmt)).scalars().all()
+    stats = await _variant_stats(session, [p.id for p in rows])
     items = []
-    async for doc in cursor:
-        product = Product.from_mongo(doc).model_dump()
-        product.update(await _variant_stats(product["id"]))
-        items.append(product)
+    for p in rows:
+        data = _product_out(p)
+        data.update(stats.get(p.id, _EMPTY_STATS))
+        items.append(data)
     return {
         "items": items,
-        "total": total,
+        "total": total or 0,
         "page": page,
         "limit": limit,
-        "pages": (total + limit - 1) // limit,
+        "pages": ((total or 0) + limit - 1) // limit,
     }
 
 
 @router.get("/products/{slug}")
-async def product_detail(slug: str):
-    doc = await db.products.find_one({"slug": slug, "status": "active"})
-    if not doc:
+async def product_detail(slug: str, session: AsyncSession = Depends(get_session)):
+    stmt = (
+        select(Product)
+        .options(
+            selectinload(Product.translations),
+            selectinload(Product.variants),
+        )
+        .where(Product.slug == slug, Product.status == "active")
+    )
+    product = (await session.execute(stmt)).scalar_one_or_none()
+    if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    product = Product.from_mongo(doc).model_dump()
-    variants = [
-        ProductVariant.from_mongo(v).model_dump()
-        async for v in db.product_variants.find({"product_id": product["id"]})
+    out = _product_out(product)
+    out["variants"] = [
+        _variant_out(v)
+        for v in sorted(product.variants, key=lambda v: (v.created_at, v.sku))
     ]
-    product["variants"] = variants
-    product.update(await _variant_stats(product["id"]))
-    cat = await db.categories.find_one({"_id": ObjectId(product["category_id"])})
-    product["category"] = Category.from_mongo(cat).model_dump() if cat else None
-    return product
+    out.update(
+        (await _variant_stats(session, [product.id])).get(product.id, _EMPTY_STATS)
+    )
+    cat = (
+        await session.execute(
+            select(Category)
+            .options(selectinload(Category.translations))
+            .where(Category.id == product.category_id)
+        )
+    ).scalar_one_or_none()
+    out["category"] = _category_out(cat) if cat else None
+    return out
 
 
 @router.get("/products/{slug}/variants")
-async def list_product_variants(slug: str):
-    doc = await db.products.find_one({"slug": slug}, {"_id": 1})
-    if not doc:
+async def list_product_variants(
+    slug: str, session: AsyncSession = Depends(get_session)
+):
+    product_id = await session.scalar(select(Product.id).where(Product.slug == slug))
+    if not product_id:
         raise HTTPException(status_code=404, detail="Product not found")
-    return [
-        ProductVariant.from_mongo(v).model_dump()
-        async for v in db.product_variants.find({"product_id": str(doc["_id"])})
-    ]
+    stmt = (
+        select(ProductVariant)
+        .where(ProductVariant.product_id == product_id)
+        .order_by(ProductVariant.created_at, ProductVariant.sku)
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return [_variant_out(v) for v in rows]

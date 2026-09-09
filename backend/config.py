@@ -7,8 +7,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 APP_ENV = os.environ.get("APP_ENV", "development")
-MONGO_URL = os.environ["MONGO_URL"]
-DB_NAME = os.environ["DB_NAME"]
+DATABASE_URL = os.environ["DATABASE_URL"]
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*").split(",")
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 

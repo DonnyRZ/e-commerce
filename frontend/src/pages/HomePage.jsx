@@ -1,26 +1,58 @@
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
-import {
-  CATEGORIES,
-  DEMO_PRODUCTS,
-  DEPARTMENTS,
-  HERO_IMAGE,
-  localizedName,
-} from "@/data/demo";
+import { getCategories, getDepartments, getProducts } from "@/lib/api";
+import { pickLocalized, toCardCategory, toCardProduct } from "@/lib/localize";
+import { HERO_IMAGE } from "@/data/demo";
 import CategoryStrip from "@/components/common/CategoryStrip";
 import EditorialSection from "@/components/common/EditorialSection";
 import ProductGrid from "@/components/common/ProductGrid";
+import { Skeleton } from "@/components/ui/skeleton";
+
+function GridSkeleton({ testId }) {
+  return (
+    <div data-testid={testId} className="grid grid-cols-2 gap-x-3 gap-y-8 md:grid-cols-3 lg:grid-cols-4 lg:gap-x-5">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i}>
+          <Skeleton className="aspect-[3/4] w-full" />
+          <Skeleton className="mt-3 h-4 w-3/4" />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function HomePage() {
   const { locale, t } = useI18n();
-  const nameOf = (obj) => localizedName(obj, locale);
+
+  const { data: departments = [] } = useQuery({
+    queryKey: ["departments"],
+    queryFn: getDepartments,
+    staleTime: 5 * 60 * 1000,
+  });
+  const { data: allCategories = [] } = useQuery({
+    queryKey: ["categories", "all"],
+    queryFn: () => getCategories(),
+    staleTime: 5 * 60 * 1000,
+  });
+  const newArrivals = useQuery({
+    queryKey: ["products", "home-new"],
+    queryFn: () => getProducts({ badge: "new", limit: 8 }),
+  });
+  const bestSellers = useQuery({
+    queryKey: ["products", "home-best"],
+    queryFn: () => getProducts({ badge: "bestseller", limit: 8 }),
+  });
+
+  const stripCategories = allCategories
+    .slice()
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .slice(0, 8)
+    .map((c) => toCardCategory(c, locale));
 
   return (
     <div data-testid="home-page">
-      <section
-        data-testid="home-hero"
-        className="relative -mx-4 sm:-mx-6 lg:-mx-10"
-      >
+      <section data-testid="home-hero" className="relative -mx-4 sm:-mx-6 lg:-mx-10">
         <img
           src={HERO_IMAGE}
           alt={t("page.home.heroTitle")}
@@ -59,42 +91,57 @@ export default function HomePage() {
         <h2 className="mb-5 text-lg font-semibold lg:text-xl">
           {t("home.shopByCategory")}
         </h2>
-        <CategoryStrip categories={CATEGORIES.slice(0, 8)} nameOf={nameOf} />
+        {stripCategories.length ? (
+          <CategoryStrip categories={stripCategories} nameOf={(c) => c.name} />
+        ) : (
+          <div className="flex gap-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="aspect-[3/4] w-36 shrink-0 sm:w-44 lg:w-48" />
+            ))}
+          </div>
+        )}
       </section>
 
       <section data-testid="home-new-arrivals" className="py-4 lg:py-6">
         <div className="mb-5 flex items-end justify-between">
-          <h2 className="text-lg font-semibold lg:text-xl">
-            {t("home.newArrivals")}
-          </h2>
+          <h2 className="text-lg font-semibold lg:text-xl">{t("home.newArrivals")}</h2>
           <Link
-            to="/shop"
+            to="/shop?badge=new"
             data-testid="new-arrivals-view-all"
             className="text-sm font-medium text-foreground underline-offset-4 hover:underline"
           >
             {t("home.viewAll")}
           </Link>
         </div>
-        <ProductGrid products={DEMO_PRODUCTS.slice(0, 8)} testId="new-arrivals-grid" />
+        {newArrivals.isLoading ? (
+          <GridSkeleton testId="new-arrivals-loading" />
+        ) : (
+          <ProductGrid
+            products={(newArrivals.data?.items || []).map((p) => toCardProduct(p, locale))}
+            testId="new-arrivals-grid"
+          />
+        )}
       </section>
 
       <section data-testid="home-departments" className="py-10 lg:py-14">
         <div className="grid gap-4 sm:grid-cols-3 lg:gap-5">
-          {DEPARTMENTS.map((dept) => (
+          {departments.map((dept) => (
             <Link
               key={dept.id}
-              to="/shop"
+              to={`/shop?department=${dept.slug}`}
               data-testid={`department-tile-${dept.slug}`}
               className="group relative block overflow-hidden bg-secondary"
             >
               <img
-                src={dept.image}
-                alt={nameOf(dept)}
+                src={dept.image_url}
+                alt={pickLocalized(dept.translations, locale)}
                 loading="lazy"
                 className="aspect-[4/5] w-full object-cover transition-transform duration-300 group-hover:scale-105"
               />
               <div className="absolute inset-x-0 bottom-0 flex items-center justify-between p-4 text-white [background:linear-gradient(to_top,rgba(0,0,0,0.55),transparent)]">
-                <span className="text-sm font-semibold">{nameOf(dept)}</span>
+                <span className="text-sm font-semibold">
+                  {pickLocalized(dept.translations, locale)}
+                </span>
                 <span className="text-xs underline underline-offset-4">
                   {t("home.deptCta")}
                 </span>
@@ -106,21 +153,23 @@ export default function HomePage() {
 
       <section data-testid="home-best-sellers" className="pb-12 pt-2 lg:pb-16">
         <div className="mb-5 flex items-end justify-between">
-          <h2 className="text-lg font-semibold lg:text-xl">
-            {t("home.bestSellers")}
-          </h2>
+          <h2 className="text-lg font-semibold lg:text-xl">{t("home.bestSellers")}</h2>
           <Link
-            to="/shop"
+            to="/shop?badge=bestseller"
             data-testid="best-sellers-view-all"
             className="text-sm font-medium text-foreground underline-offset-4 hover:underline"
           >
             {t("home.viewAll")}
           </Link>
         </div>
-        <ProductGrid
-          products={[...DEMO_PRODUCTS.slice(2), ...DEMO_PRODUCTS.slice(0, 2)]}
-          testId="best-sellers-grid"
-        />
+        {bestSellers.isLoading ? (
+          <GridSkeleton testId="best-sellers-loading" />
+        ) : (
+          <ProductGrid
+            products={(bestSellers.data?.items || []).map((p) => toCardProduct(p, locale))}
+            testId="best-sellers-grid"
+          />
+        )}
       </section>
 
       <EditorialSection />

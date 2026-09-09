@@ -55,6 +55,15 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
   - Indexes: categories.slug unique, parent_id; products.slug unique, category_id, seller_id, status, new_arrival; product_variants.sku unique, product_id.
   - Bug fixed: ObjectId vs string _id joins in category/product detail (catalog.py L81/L155). Regression suite: /app/backend/tests/test_catalog.py (20/20 pass, iteration_4.json). Frontend untouched, smoke-verified.
   - GitHub checkpoint milestone-2-catalog NOT saved: no git remote/gh CLI available.
+- 2026-09-09: Milestone 3 — PostgreSQL Migration + Storefront Discovery (Prompt #4 + DB override). Status: PASS.
+  - ARCHITECTURE OVERRIDE APPLIED: MongoDB → PostgreSQL 15 (SQLAlchemy 2.0 async + asyncpg + Alembic). Self-hosted VPS portability — no Emergent runtime/deployment dependencies. DATABASE_URL env-driven.
+  - Relational schema (15 tables): users, seller_profiles, categories (+parent_id self-FK), category_translations (category_id,locale unique), products (seller_id/category_id FKs), product_translations (product_id,locale unique), product_variants (sku unique), carts, cart_items, wishlists, wishlist_items, orders, order_items (snapshot fields), marketplace_settings, status_checks. JSONB only for flexible bags: product attributes/tags/media, variant option_values, order snapshots, settings.
+  - Alembic autogen migration 3005c7693e5b: clean-DB apply verified, repeatable, `alembic check` clean.
+  - MongoDB coupling REMOVED: motor/pymongo uninstalled, models/ + database.py deleted, .env uses DATABASE_URL. API contracts byte-identical (20/20 M2 tests pass unchanged).
+  - Seed (idempotent, PG): 3 depts / 30 cats / 3 sellers / 12 products / 69 variants / 48 product + 132 category translations. Categories+departments now carry image_url.
+  - Catalog API extended: /filters endpoint (colors/sizes/volumes/price bounds per scope), product list params min_price/max_price/color/size/availability, sort=featured|newest|price_asc|price_desc, q covers slug/brand/tags/translation names/SKU.
+  - Storefront Discovery wired to real API: homepage (categories, new arrivals, best sellers, dept tiles), header dept nav → /shop?department=, secondary nav → badge=, mega menu real taxonomy + submit → /search?q=, full PLP (URL-state filters desktop sidebar + mobile sheet, sort select, server pagination), SearchPage (loading/empty/error), ProductCard real data + stock messages + /product/:slug placeholder. demo.js reduced to hero + editorials.
+  - Verified: pytest 34/34 (test_catalog.py 20 + test_m3_filters.py 14), iteration_5.json 100% pass, all 4 locales incl. Cyrillic API content, 375/768/1440 clean, zero console errors (React key nit fixed post-test).
 
 ## Backlog (prioritized, from Master Context V3)
 - P0: Milestone 1 foundation (responsive shell, design tokens #145A46 emerald accent, 4-language i18n), taxonomy seed, catalog/PLP/PDP, search/filter/sort, auth+RBAC, cart, wishlist, checkout+mock payment, orders w/ idempotency + atomic inventory, seller isolation, admin core, security hardening.
@@ -62,7 +71,7 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
 - P2 (deferred): AI features, multiple payment/shipping providers, live FX, loyalty, native apps, microservices.
 
 ## Next Tasks
-1. Milestone 3 — Storefront Discovery (wire real catalog API into approved frontend: PLP/PDP/search) — only on explicit next prompt.
-2. Replace demo.js placeholder data with /api/v1/catalog responses during Milestone 3.
-3. Known tracked issue: dev CORS_ORIGINS="*" — fix during security hardening milestone.
-4. Consider to_object_id() helper for future join queries (testing-agent recommendation); /stories/:slug routes later.
+1. Milestone 4 — Product Detail Page / Product Experience — only on explicit next prompt. /product/:slug placeholder route ready.
+2. Known tracked issue: dev CORS_ORIGINS="*" — fix during security hardening milestone.
+3. Production ops note: PostgreSQL must be provisioned on VPS (docker-compose / systemd); dev container runs local PG15 via `service postgresql start` (restart needed after pod restart).
+4. Wishlist persistence, auth, cart, checkout remain forbidden until their prompts.

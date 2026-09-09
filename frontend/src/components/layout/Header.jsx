@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Heart, Search, ShoppingBag, User } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
-import { DEPARTMENTS, localizedName } from "@/data/demo";
+import { getDepartments } from "@/lib/api";
+import { pickLocalized } from "@/lib/localize";
 import LanguageSelector from "./LanguageSelector";
 import MobileNavigation from "./MobileNavigation";
 import SecondaryNav from "./SecondaryNav";
@@ -17,8 +19,11 @@ const UTILITY_LINKS = [
 export default function Header() {
   const { locale, t } = useI18n();
   const [overlay, setOverlay] = useState({ open: false, dept: null });
-  const openOverlay = (dept = null) => setOverlay({ open: true, dept });
-  const closeOverlay = () => setOverlay({ open: false, dept: null });
+  const { data: departments = [] } = useQuery({
+    queryKey: ["departments"],
+    queryFn: getDepartments,
+    staleTime: 5 * 60 * 1000,
+  });
 
   return (
     <>
@@ -38,16 +43,15 @@ export default function Header() {
               aria-label="Primary"
               data-testid="desktop-nav"
             >
-              {DEPARTMENTS.map((dept) => (
-                <button
+              {departments.map((dept) => (
+                <Link
                   key={dept.id}
-                  type="button"
+                  to={`/shop?department=${dept.slug}`}
                   data-testid={`nav-${dept.slug}`}
-                  onClick={() => openOverlay(dept.id)}
                   className="text-sm font-semibold tracking-wide text-foreground transition-colors hover:text-primary"
                 >
-                  {localizedName(dept, locale)}
-                </button>
+                  {pickLocalized(dept.translations, locale)}
+                </Link>
               ))}
             </nav>
             <div className="ml-auto flex items-center gap-0.5">
@@ -55,7 +59,7 @@ export default function Header() {
                 type="button"
                 data-testid="search-entry"
                 aria-label={t("header.searchPlaceholder")}
-                onClick={() => openOverlay()}
+                onClick={() => setOverlay({ open: true, dept: null })}
                 className="inline-flex h-9 w-9 items-center justify-center text-foreground transition-colors hover:text-primary"
               >
                 <Search className="h-5 w-5" aria-hidden="true" />
@@ -80,7 +84,7 @@ export default function Header() {
       <SearchOverlay
         open={overlay.open}
         initialDept={overlay.dept}
-        onClose={closeOverlay}
+        onClose={() => setOverlay({ open: false, dept: null })}
       />
     </>
   );
