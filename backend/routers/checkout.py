@@ -29,7 +29,7 @@ from shipping.factory import get_shipping_provider
 
 router = APIRouter(prefix="/api/v1/checkout", tags=["checkout"])
 
-ORDER_RATE_LIMIT = 30
+ORDER_RATE_LIMIT = 60
 ORDER_RATE_WINDOW = 15 * 60
 _order_hits: dict = {}
 

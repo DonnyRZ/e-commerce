@@ -28,6 +28,7 @@ from db.models import (
     Product,
     ProductTranslation,
     ProductVariant,
+    SellerOrderFulfillment,
     User,
 )
 from shipping.factory import get_shipping_provider
@@ -231,6 +232,9 @@ async def create_order(
                 expires_at=expires_at,
             )
         )
+    # one seller-scoped fulfillment row per participating seller
+    for seller_id in sorted({item["product"].seller_id for item in totals["items"]}):
+        session.add(SellerOrderFulfillment(order_id=order.id, seller_id=seller_id))
     await session.flush()
     return order, True
 

@@ -1,6 +1,11 @@
 export const pickLocalized = (translations, locale, field = "title") =>
   translations?.[locale]?.[field] ?? translations?.en?.[field] ?? "";
 
+export const mediaUrl = (url) => {
+  if (!url) return "";
+  return url.startsWith("/") ? `${process.env.REACT_APP_BACKEND_URL}${url}` : url;
+};
+
 const COLOR_HEX = {
   gray: "#8A8A8A",
   black: "#1A1A1A",

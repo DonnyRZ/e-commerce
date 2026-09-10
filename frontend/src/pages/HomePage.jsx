@@ -1,8 +1,8 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
-import { getCategories, getDepartments, getProducts } from "@/lib/api";
-import { pickLocalized, toCardCategory, toCardProduct } from "@/lib/localize";
+import { getCategories, getCmsBundle, getDepartments, getProducts } from "@/lib/api";
+import { mediaUrl, pickLocalized, toCardCategory, toCardProduct } from "@/lib/localize";
 import { HERO_IMAGE } from "@/data/demo";
 import CategoryStrip from "@/components/common/CategoryStrip";
 import EditorialSection from "@/components/common/EditorialSection";
@@ -43,6 +43,25 @@ export default function HomePage() {
     queryKey: ["products", "home-best"],
     queryFn: () => getProducts({ badge: "bestseller", limit: 8 }),
   });
+  const { data: cmsBundle } = useQuery({
+    queryKey: ["cms", "bundle"],
+    queryFn: getCmsBundle,
+    staleTime: 60_000,
+  });
+
+  const hero = cmsBundle?.hero;
+  const heroImage = mediaUrl(hero?.image_url) || HERO_IMAGE;
+  const heroEyebrow = pickLocalized(hero?.translations, locale, "eyebrow") || t("brand.tagline");
+  const heroTitle = pickLocalized(hero?.translations, locale) || t("page.home.heroTitle");
+  const heroSubtitle = pickLocalized(hero?.translations, locale, "subtitle") || t("page.home.heroSubtitle");
+  const heroPrimary = {
+    label: pickLocalized(hero?.translations, locale, "cta_label") || t("home.shopNow"),
+    to: hero?.cta_url || "/shop",
+  };
+  const heroSecondary = {
+    label: pickLocalized(hero?.translations, locale, "secondary_cta_label") || t("home.allDepartments"),
+    to: hero?.secondary_cta_url || "/shop",
+  };
 
   const stripCategories = allCategories
     .slice()
@@ -54,34 +73,34 @@ export default function HomePage() {
     <div data-testid="home-page">
       <section data-testid="home-hero" className="relative -mx-4 sm:-mx-6 lg:-mx-10">
         <img
-          src={HERO_IMAGE}
-          alt={t("page.home.heroTitle")}
+          src={heroImage}
+          alt={heroTitle}
           className="h-[60vh] w-full object-cover lg:h-[72vh]"
         />
         <div className="absolute inset-x-0 bottom-0 pb-8 pt-24 text-center text-white [background:linear-gradient(to_top,rgba(0,0,0,0.55),transparent)] lg:pb-12">
           <p className="text-[11px] font-medium uppercase tracking-[0.2em] sm:text-xs">
-            {t("brand.tagline")}
+            {heroEyebrow}
           </p>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl lg:text-4xl">
-            {t("page.home.heroTitle")}
+            {heroTitle}
           </h1>
           <p className="mx-auto mt-2 max-w-xl px-4 text-sm text-white/85">
-            {t("page.home.heroSubtitle")}
+            {heroSubtitle}
           </p>
           <div className="mt-5 flex items-center justify-center gap-3">
             <Link
-              to="/shop"
+              to={heroPrimary.to}
               data-testid="hero-cta-shop"
               className="rounded-full bg-background px-6 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary"
             >
-              {t("home.shopNow")}
+              {heroPrimary.label}
             </Link>
             <Link
-              to="/shop"
+              to={heroSecondary.to}
               data-testid="hero-cta-departments"
               className="rounded-full border border-white/70 px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/10"
             >
-              {t("home.allDepartments")}
+              {heroSecondary.label}
             </Link>
           </div>
         </div>
@@ -172,7 +191,7 @@ export default function HomePage() {
         )}
       </section>
 
-      <EditorialSection />
+      <EditorialSection stories={cmsBundle?.stories} />
     </div>
   );
 }

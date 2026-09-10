@@ -22,6 +22,19 @@ import MockPaymentPage from "@/pages/MockPaymentPage";
 import OrderConfirmationPage from "@/pages/OrderConfirmationPage";
 import OrdersPage from "@/pages/OrdersPage";
 import OrderDetailPage from "@/pages/OrderDetailPage";
+import AdminLayout from "@/layouts/AdminLayout";
+import AdminDashboardPage from "@/pages/admin/AdminDashboardPage";
+import AdminProductsPage from "@/pages/admin/AdminProductsPage";
+import AdminProductEditPage from "@/pages/admin/AdminProductEditPage";
+import AdminCategoriesPage from "@/pages/admin/AdminCategoriesPage";
+import AdminOrdersPage from "@/pages/admin/AdminOrdersPage";
+import AdminOrderDetailPage from "@/pages/admin/AdminOrderDetailPage";
+import AdminCustomersPage from "@/pages/admin/AdminCustomersPage";
+import AdminPaymentsPage from "@/pages/admin/AdminPaymentsPage";
+import CmsContentPage from "@/pages/admin/CmsContentPage";
+import CmsContentEditPage from "@/pages/admin/CmsContentEditPage";
+import CmsMediaPage from "@/pages/admin/CmsMediaPage";
+import AdminSettingsPage from "@/pages/admin/AdminSettingsPage";
 
 function App() {
   return (
@@ -30,6 +43,22 @@ function App() {
         <ShopProvider>
           <BrowserRouter>
           <Routes>
+            <Route path="/admin" element={<AdminLayout />}>
+              <Route index element={<AdminDashboardPage />} />
+              <Route path="products" element={<AdminProductsPage />} />
+              <Route path="products/new" element={<AdminProductEditPage />} />
+              <Route path="products/:productId" element={<AdminProductEditPage />} />
+              <Route path="categories" element={<AdminCategoriesPage />} />
+              <Route path="orders" element={<AdminOrdersPage />} />
+              <Route path="orders/:orderNumber" element={<AdminOrderDetailPage />} />
+              <Route path="customers" element={<AdminCustomersPage />} />
+              <Route path="payments" element={<AdminPaymentsPage />} />
+              <Route path="cms" element={<CmsContentPage />} />
+              <Route path="cms/new" element={<CmsContentEditPage />} />
+              <Route path="cms/:entryId" element={<CmsContentEditPage />} />
+              <Route path="media" element={<CmsMediaPage />} />
+              <Route path="settings" element={<AdminSettingsPage />} />
+            </Route>
             <Route element={<AppShell />}>
               <Route path="/" element={<HomePage />} />
               <Route path="/shop" element={<ShopPage />} />
@@ -47,8 +76,6 @@ function App() {
               <Route path="/checkout" element={<CheckoutPage />} />
               <Route path="/checkout/payment/mock" element={<MockPaymentPage />} />
               <Route path="/order-confirmation" element={<OrderConfirmationPage />} />
-              <Route path="/seller" element={<PlaceholderPage titleKey="page.title.seller" />} />
-              <Route path="/admin" element={<PlaceholderPage titleKey="page.title.admin" />} />
               <Route path="*" element={<PlaceholderPage titleKey="errors.notFound" />} />
             </Route>
           </Routes>

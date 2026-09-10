@@ -1,0 +1,112 @@
+"""Public CMS API — published content only (drafts never leak), plus
+HMAC-signed time-limited draft preview and media file serving."""
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from cms import service as cms
+from db.models import CmsContentEntry, CmsMediaAsset
+from db.session import get_session
+from storage import get_media_storage
+
+router = APIRouter(prefix="/api/v1/cms", tags=["cms"])
+
+
+async def _published(session: AsyncSession, content_type: str) -> list:
+    rows = (
+        await session.execute(
+            select(CmsContentEntry)
+            .where(
+                CmsContentEntry.content_type == content_type,
+                CmsContentEntry.status == "published",
+                CmsContentEntry.is_visible == True
+            )
+            .order_by(CmsContentEntry.sort_order, CmsContentEntry.created_at)
+        )
+    ).scalars().all()
+    return [await cms.public_entry(session, r) for r in rows]
+
+
+@router.get("/public/bundle")
+async def public_bundle(session: AsyncSession = Depends(get_session)):
+    sections = await _published(session, "homepage_section")
+    heroes = await _published(session, "hero")
+    announcements = await _published(session, "announcement")
+    return {
+        "sections": [
+            {"key": s["slug"], "sort_order": s["sort_order"]} for s in sections
+        ],
+        "hero": heroes[0] if heroes else None,
+        "announcement": announcements[0] if announcements else None,
+        "stories": await _published(session, "story"),
+        "banners": await _published(session, "banner"),
+        "department_visuals": await _published(session, "department_visual"),
+    }
+
+
+@router.get("/public/footer")
+async def public_footer(session: AsyncSession = Depends(get_session)):
+    groups = await _published(session, "footer_group")
+    items = await _published(session, "footer_item")
+    texts = await _published(session, "footer_text")
+    out_groups = []
+    for g in groups:
+        g_items = [
+            i for i in items if (i["payload"] or {}).get("group") == g["slug"]
+        ]
+        out_groups.append({**g, "items": g_items})
+    return {"groups": out_groups, "promo": texts[0] if texts else None}
+
+
+@router.get("/public/navigation")
+async def public_navigation(session: AsyncSession = Depends(get_session)):
+    return {"items": await _published(session, "nav_item")}
+
+
+@router.get("/public/pages/{slug}")
+async def public_page(slug: str, session: AsyncSession = Depends(get_session)):
+    entry = await session.scalar(
+        select(CmsContentEntry).where(
+            CmsContentEntry.content_type == "page",
+            CmsContentEntry.slug == slug,
+            CmsContentEntry.status == "published",
+            CmsContentEntry.is_visible == True,
+        )
+    )
+    if not entry:
+        raise HTTPException(status_code=404, detail="page_not_found")
+    return await cms.public_entry(session, entry)
+
+
+@router.get("/public/faq")
+async def public_faq(session: AsyncSession = Depends(get_session)):
+    return {"items": await _published(session, "faq_item")}
+
+
+@router.get("/preview/{token}")
+async def preview_entry(token: str, session: AsyncSession = Depends(get_session)):
+    entry_id = cms.verify_preview_token(token)
+    entry = await session.get(CmsContentEntry, entry_id) if entry_id else None
+    if not entry:
+        raise HTTPException(status_code=404, detail="preview_not_found")
+    return await cms.public_entry(session, entry)
+
+
+@router.get("/media/file/{key}")
+async def media_file(key: str, session: AsyncSession = Depends(get_session)):
+    asset = await session.scalar(
+        select(CmsMediaAsset).where(CmsMediaAsset.storage_key == key)
+    )
+    if not asset:
+        raise HTTPException(status_code=404, detail="media_not_found")
+    storage = get_media_storage()
+    return FileResponse(
+        storage.resolve_path(asset.storage_key),
+        media_type=asset.mime_type,
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "public, max-age=31536000, immutable",
+        },
+    )

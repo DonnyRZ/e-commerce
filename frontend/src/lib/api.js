@@ -121,6 +121,140 @@ export const getMyOrders = () =>
 export const getMyOrder = (orderNumber) =>
   api.get(`/v1/account/orders/${orderNumber}`).then((r) => r.data);
 
+// ---------------- Seller ----------------
+export const getSellerDashboard = () =>
+  api.get("/v1/seller/dashboard").then((r) => r.data);
+
+export const getSellerProducts = (params) =>
+  api.get("/v1/seller/products", { params }).then((r) => r.data);
+
+export const createSellerProduct = (data) =>
+  api.post("/v1/seller/products", data).then((r) => r.data);
+
+export const getSellerProduct = (id) =>
+  api.get(`/v1/seller/products/${id}`).then((r) => r.data);
+
+export const updateSellerProduct = (id, data) =>
+  api.patch(`/v1/seller/products/${id}`, data).then((r) => r.data);
+
+export const createSellerVariant = (productId, data) =>
+  api.post(`/v1/seller/products/${productId}/variants`, data).then((r) => r.data);
+
+export const updateSellerVariant = (id, data) =>
+  api.patch(`/v1/seller/variants/${id}`, data).then((r) => r.data);
+
+export const updateSellerInventory = (id, stockQuantity) =>
+  api
+    .patch(`/v1/seller/variants/${id}/inventory`, { stock_quantity: stockQuantity })
+    .then((r) => r.data);
+
+export const getSellerOrders = (params) =>
+  api.get("/v1/seller/orders", { params }).then((r) => r.data);
+
+export const getSellerOrder = (orderNumber) =>
+  api.get(`/v1/seller/orders/${orderNumber}`).then((r) => r.data);
+
+export const updateSellerFulfillment = (orderNumber, data) =>
+  api.patch(`/v1/seller/orders/${orderNumber}/fulfillment`, data).then((r) => r.data);
+
+export const getSellerProfile = () =>
+  api.get("/v1/seller/profile").then((r) => r.data);
+
+export const updateSellerProfile = (data) =>
+  api.patch("/v1/seller/profile", data).then((r) => r.data);
+
+export const getCatalogCategories = () =>
+  api.get("/v1/catalog/categories").then((r) => r.data);
+
+// ---------------- Admin ----------------
+export const getAdminDashboard = () =>
+  api.get("/v1/admin/dashboard").then((r) => r.data);
+export const getAdminProducts = (params) =>
+  api.get("/v1/admin/products", { params }).then((r) => r.data);
+export const createAdminProduct = (data) =>
+  api.post("/v1/admin/products", data).then((r) => r.data);
+export const getAdminProduct = (id) =>
+  api.get(`/v1/admin/products/${id}`).then((r) => r.data);
+export const updateAdminProduct = (id, data) =>
+  api.patch(`/v1/admin/products/${id}`, data).then((r) => r.data);
+export const createAdminVariant = (productId, data) =>
+  api.post(`/v1/admin/products/${productId}/variants`, data).then((r) => r.data);
+export const updateAdminVariant = (id, data) =>
+  api.patch(`/v1/admin/variants/${id}`, data).then((r) => r.data);
+export const updateAdminInventory = (id, stockQuantity) =>
+  api.patch(`/v1/admin/variants/${id}/inventory`, { stock_quantity: stockQuantity }).then((r) => r.data);
+export const getAdminCategories = () =>
+  api.get("/v1/admin/categories").then((r) => r.data);
+export const createAdminCategory = (data) =>
+  api.post("/v1/admin/categories", data).then((r) => r.data);
+export const updateAdminCategory = (id, data) =>
+  api.patch(`/v1/admin/categories/${id}`, data).then((r) => r.data);
+export const deleteAdminCategory = (id) =>
+  api.delete(`/v1/admin/categories/${id}`).then((r) => r.data);
+export const getAdminOrders = (params) =>
+  api.get("/v1/admin/orders", { params }).then((r) => r.data);
+export const getAdminOrder = (orderNumber) =>
+  api.get(`/v1/admin/orders/${orderNumber}`).then((r) => r.data);
+export const updateAdminOrderStatus = (orderNumber, status) =>
+  api.patch(`/v1/admin/orders/${orderNumber}/status`, { status }).then((r) => r.data);
+export const getAdminCustomers = (params) =>
+  api.get("/v1/admin/customers", { params }).then((r) => r.data);
+export const getAdminCustomer = (id) =>
+  api.get(`/v1/admin/customers/${id}`).then((r) => r.data);
+export const getAdminPaymentsReview = () =>
+  api.get("/v1/admin/payments/review").then((r) => r.data);
+export const addAdminReviewNote = (paymentId, note) =>
+  api.post(`/v1/admin/payments/${paymentId}/review-note`, { note }).then((r) => r.data);
+export const adminMockRefund = (paymentId) =>
+  api.post(`/v1/admin/payments/${paymentId}/mock-refund`).then((r) => r.data);
+export const getAdminAudit = (params) =>
+  api.get("/v1/admin/audit", { params }).then((r) => r.data);
+export const getAdminSettings = () =>
+  api.get("/v1/admin/settings").then((r) => r.data);
+
+// ---------------- CMS admin ----------------
+export const getCmsContent = (params) =>
+  api.get("/v1/admin/cms/content", { params }).then((r) => r.data);
+export const createCmsContent = (data) =>
+  api.post("/v1/admin/cms/content", data).then((r) => r.data);
+export const getCmsContentEntry = (id) =>
+  api.get(`/v1/admin/cms/content/${id}`).then((r) => r.data);
+export const updateCmsContent = (id, data) =>
+  api.patch(`/v1/admin/cms/content/${id}`, data).then((r) => r.data);
+export const setCmsContentStatus = (id, action) =>
+  api.post(`/v1/admin/cms/content/${id}/status`, { action }).then((r) => r.data);
+export const getCmsPreviewToken = (id) =>
+  api.post(`/v1/admin/cms/content/${id}/preview-token`).then((r) => r.data);
+export const getCmsRevisions = (id) =>
+  api.get(`/v1/admin/cms/content/${id}/revisions`).then((r) => r.data);
+export const restoreCmsRevision = (id, revisionId) =>
+  api.post(`/v1/admin/cms/content/${id}/restore/${revisionId}`).then((r) => r.data);
+export const getCmsMedia = (params) =>
+  api.get("/v1/admin/cms/media", { params }).then((r) => r.data);
+export const uploadCmsMedia = (file) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api
+    .post("/v1/admin/cms/media", fd, { headers: { "Content-Type": undefined } })
+    .then((r) => r.data);
+};
+export const updateCmsMedia = (id, data) =>
+  api.patch(`/v1/admin/cms/media/${id}`, data).then((r) => r.data);
+export const deleteCmsMedia = (id) =>
+  api.delete(`/v1/admin/cms/media/${id}`).then((r) => r.data);
+
+// ---------------- CMS public ----------------
+export const getCmsBundle = () =>
+  api.get("/v1/cms/public/bundle").then((r) => r.data);
+export const getCmsFooter = () =>
+  api.get("/v1/cms/public/footer").then((r) => r.data);
+export const getCmsNavigation = () =>
+  api.get("/v1/cms/public/navigation").then((r) => r.data);
+export const getCmsPage = (slug) =>
+  api.get(`/v1/cms/public/pages/${slug}`).then((r) => r.data);
+export const getCmsFaq = () =>
+  api.get("/v1/cms/public/faq").then((r) => r.data);
+
 export const authErrorKey = (error) => {
   const detail = error?.response?.data?.detail;
   const code = typeof detail === "string" ? detail : Array.isArray(detail) ? "validation" : "";

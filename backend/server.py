@@ -16,6 +16,10 @@ from payments.routes import router as payments_router
 from routers.shop import router as shop_router
 from routers.checkout import router as checkout_router
 from routers.orders import router as orders_router
+from routers.seller import router as seller_router
+from routers.admin import router as admin_router
+from routers.cms_admin import router as cms_admin_router
+from routers.cms_public import router as cms_public_router
 
 # Create the main app without a prefix
 app = FastAPI(title="MUSLIMAH CANTIK API")
@@ -85,6 +89,10 @@ app.include_router(payments_router)
 app.include_router(shop_router)
 app.include_router(checkout_router)
 app.include_router(orders_router)
+app.include_router(seller_router)
+app.include_router(admin_router)
+app.include_router(cms_admin_router)
+app.include_router(cms_public_router)
 
 
 @app.middleware("http")

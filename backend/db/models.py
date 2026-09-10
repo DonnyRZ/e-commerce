@@ -62,6 +62,8 @@ class SellerProfile(TimestampMixin, Base):
     )
     store_name: Mapped[str] = mapped_column(String(255), default="")
     slug: Mapped[str] = mapped_column(String(120), unique=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     user: Mapped[User] = relationship(back_populates="seller_profile")
@@ -327,6 +329,10 @@ class Payment(TimestampMixin, Base):
     failure_note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # admin payment-review bookkeeping (Admin Core, M9)
+    review_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     events: Mapped[list["PaymentEvent"]] = relationship(
         back_populates="payment", cascade="all, delete-orphan"
@@ -363,6 +369,142 @@ class InventoryReservation(Base):
     # expired/released reservation (the original row stays untouched)
     reacquired_from: Mapped[Optional[str]] = mapped_column(
         String(32), ForeignKey("inventory_reservations.id"), nullable=True
+    )
+
+
+class SellerOrderFulfillment(TimestampMixin, Base):
+    __tablename__ = "seller_order_fulfillments"
+    __table_args__ = (UniqueConstraint("order_id", "seller_id"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    order_id: Mapped[str] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"), index=True
+    )
+    seller_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id"), index=True
+    )
+    # pending | processing | shipped | delivered | cancelled
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    tracking_number: Mapped[Optional[str]] = mapped_column(
+        String(120), nullable=True
+    )
+    shipping_carrier: Mapped[Optional[str]] = mapped_column(
+        String(80), nullable=True
+    )
+    shipped_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class CmsMediaAsset(TimestampMixin, Base):
+    __tablename__ = "cms_media_assets"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    storage_provider: Mapped[str] = mapped_column(String(20), default="local")
+    storage_key: Mapped[str] = mapped_column(String(160), unique=True)
+    original_filename: Mapped[str] = mapped_column(String(255), default="")
+    mime_type: Mapped[str] = mapped_column(String(80), default="")
+    file_size: Mapped[int] = mapped_column(Integer, default=0)
+    width: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    checksum: Mapped[str] = mapped_column(String(64), default="")
+    created_by: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+
+class CmsMediaTranslation(Base):
+    __tablename__ = "cms_media_translations"
+    __table_args__ = (UniqueConstraint("media_id", "locale"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    media_id: Mapped[str] = mapped_column(
+        ForeignKey("cms_media_assets.id", ondelete="CASCADE"), index=True
+    )
+    locale: Mapped[str] = mapped_column(String(5))
+    alt_text: Mapped[str] = mapped_column(String(255), default="")
+    caption: Mapped[str] = mapped_column(String(500), default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class CmsContentEntry(TimestampMixin, Base):
+    __tablename__ = "cms_content_entries"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    # hero | announcement | banner | story | page | faq_item | nav_item |
+    # footer_group | footer_item | homepage_section | department_visual
+    content_type: Mapped[str] = mapped_column(String(40), index=True)
+    internal_name: Mapped[str] = mapped_column(String(255), default="")
+    slug: Mapped[str] = mapped_column(String(160), default="", index=True)
+    # draft | published | archived
+    status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
+    placement: Mapped[str] = mapped_column(String(80), default="")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_visible: Mapped[bool] = mapped_column(Boolean, default=True)
+    media_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("cms_media_assets.id", ondelete="SET NULL"), nullable=True
+    )
+    cta_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    secondary_cta_url: Mapped[Optional[str]] = mapped_column(
+        String(500), nullable=True
+    )
+    payload: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    published_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_by: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+
+class CmsContentTranslation(TimestampMixin, Base):
+    __tablename__ = "cms_content_translations"
+    __table_args__ = (UniqueConstraint("entry_id", "locale"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    entry_id: Mapped[str] = mapped_column(
+        ForeignKey("cms_content_entries.id", ondelete="CASCADE"), index=True
+    )
+    locale: Mapped[str] = mapped_column(String(5))
+    title: Mapped[str] = mapped_column(String(500), default="")
+    eyebrow: Mapped[str] = mapped_column(String(255), default="")
+    subtitle: Mapped[str] = mapped_column(String(500), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    cta_label: Mapped[str] = mapped_column(String(120), default="")
+    secondary_cta_label: Mapped[str] = mapped_column(String(120), default="")
+    alt_text: Mapped[str] = mapped_column(String(255), default="")
+
+
+class CmsRevision(Base):
+    __tablename__ = "cms_revisions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    content_type: Mapped[str] = mapped_column(String(40), index=True)
+    content_id: Mapped[str] = mapped_column(String(32), index=True)
+    version_number: Mapped[int] = mapped_column(Integer, default=1)
+    # created | saved_draft | published | unpublished | archived | restored
+    action: Mapped[str] = mapped_column(String(20))
+    snapshot: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class CmsAuditLog(Base):
+    __tablename__ = "cms_audit_logs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    actor_user_id: Mapped[Optional[str]] = mapped_column(String(32), index=True)
+    action: Mapped[str] = mapped_column(String(60), index=True)
+    target_type: Mapped[str] = mapped_column(String(40), default="")
+    target_id: Mapped[str] = mapped_column(String(40), default="")
+    safe_metadata: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
     )
 
 
