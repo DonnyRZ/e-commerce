@@ -77,6 +77,29 @@ export const updateAddress = (id, data) =>
 export const deleteAddress = (id) =>
   api.delete(`/v1/account/addresses/${id}`).then((r) => r.data);
 
+export const getCart = () => api.get("/v1/cart").then((r) => r.data);
+
+export const addCartItem = (data) =>
+  api.post("/v1/cart/items", data).then((r) => r.data);
+
+export const updateCartItem = (id, quantity) =>
+  api.patch(`/v1/cart/items/${id}`, { quantity }).then((r) => r.data);
+
+export const removeCartItem = (id) =>
+  api.delete(`/v1/cart/items/${id}`).then((r) => r.data);
+
+export const clearCart = () => api.delete("/v1/cart").then((r) => r.data);
+
+export const mergeCart = () => api.post("/v1/cart/merge").then((r) => r.data);
+
+export const getWishlist = () => api.get("/v1/wishlist").then((r) => r.data);
+
+export const addWishlistItem = (productId) =>
+  api.post("/v1/wishlist/items", { product_id: productId }).then((r) => r.data);
+
+export const removeWishlistItem = (productId) =>
+  api.delete(`/v1/wishlist/items/${productId}`).then((r) => r.data);
+
 export const authErrorKey = (error) => {
   const detail = error?.response?.data?.detail;
   const code = typeof detail === "string" ? detail : Array.isArray(detail) ? "validation" : "";

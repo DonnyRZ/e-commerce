@@ -1,11 +1,28 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Heart } from "lucide-react";
+import { toast } from "sonner";
 import { useI18n } from "@/i18n";
+import { useShop } from "@/lib/ShopContext";
 import PriceDisplay from "./PriceDisplay";
 
 export default function ProductCard({ product }) {
   const { t } = useI18n();
+  const { toggleWishlist, wishlistIds } = useShop();
+  const navigate = useNavigate();
   const href = product.href || "/shop";
+  const wished = wishlistIds.has(product.id);
+
+  const handleWishlist = async () => {
+    const result = await toggleWishlist(product.id);
+    if (result === "auth_required") {
+      toast.info(t("wishlist.loginRequired"));
+      navigate("/login");
+    } else if (result === "added") {
+      toast.success(t("wishlist.added"));
+    } else if (result === "removed") {
+      toast.success(t("wishlist.removed"));
+    }
+  };
   return (
     <article data-testid={`product-card-${product.slug || product.id}`} className="group">
       <div className="relative overflow-hidden bg-secondary">
@@ -44,9 +61,17 @@ export default function ProductCard({ product }) {
           type="button"
           data-testid={`wishlist-${product.slug || product.id}`}
           aria-label={t("product.wishlist")}
-          className="inline-flex h-8 w-8 items-center justify-center text-foreground transition-colors hover:text-primary"
+          aria-pressed={wished}
+          onClick={handleWishlist}
+          className={`inline-flex h-8 w-8 items-center justify-center transition-colors hover:text-primary ${
+            wished ? "text-primary" : "text-foreground"
+          }`}
         >
-          <Heart className="h-[18px] w-[18px]" aria-hidden="true" />
+          <Heart
+            className="h-[18px] w-[18px]"
+            fill={wished ? "currentColor" : "none"}
+            aria-hidden="true"
+          />
         </button>
       </div>
       <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">

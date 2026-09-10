@@ -1,9 +1,28 @@
 import { createContext, useContext, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
-import { authLogin, authLogout, authMe, authRegister } from "./api";
+import { authLogin, authLogout, authMe, authRegister, mergeCart } from "./api";
+import { translations } from "@/i18n/translations";
+import { toast } from "sonner";
 
 const AuthContext = createContext(null);
+
+async function mergeGuestCart(queryClient) {
+  try {
+    const result = await mergeCart();
+    queryClient.invalidateQueries({ queryKey: ["cart"] });
+    queryClient.invalidateQueries({ queryKey: ["wishlist"] });
+    if (result.adjustments?.length) {
+      const loc = window.localStorage.getItem("mc_locale") || "en";
+      toast.info(
+        translations[loc]?.["cart.mergeAdjusted"] ??
+          translations.en["cart.mergeAdjusted"]
+      );
+    }
+  } catch {
+    /* guest-cart merge is best-effort */
+  }
+}
 
 export function AuthProvider({ children }) {
   const queryClient = useQueryClient();
@@ -26,11 +45,13 @@ export function AuthProvider({ children }) {
     async login(email, password) {
       const u = await authLogin(email, password);
       queryClient.setQueryData(["auth", "me"], u);
+      await mergeGuestCart(queryClient);
       return u;
     },
     async register(data) {
       const u = await authRegister(data);
       queryClient.setQueryData(["auth", "me"], u);
+      await mergeGuestCart(queryClient);
       return u;
     },
     async logout() {

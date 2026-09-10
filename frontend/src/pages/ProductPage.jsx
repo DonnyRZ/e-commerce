@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Heart, Minus, Plus, ShoppingBag } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { getProduct } from "@/lib/api";
+import { useShop } from "@/lib/ShopContext";
 import { colorHex, pickLocalized } from "@/lib/localize";
 import EmptyState from "@/components/common/EmptyState";
 import ErrorState from "@/components/common/ErrorState";
@@ -36,6 +37,8 @@ function PdpSkeleton() {
 export default function ProductPage() {
   const { slug } = useParams();
   const { locale, t } = useI18n();
+  const navigate = useNavigate();
+  const { addToCart: addCartItem, toggleWishlist, wishlistIds } = useShop();
   const [selected, setSelected] = useState({});
   const [imageIndex, setImageIndex] = useState(0);
   const [quantity, setQuantity] = useState(1);
@@ -169,11 +172,36 @@ export default function ProductPage() {
   const category = product.category;
   const department = category?.department;
 
-  const addToCart = () => {
+  const addToCart = async () => {
     if (!selectedVariant || outOfStock) return;
-    toast.success(t("pdp.selectionReady"), {
-      description: `${name} — ${selectedVariant.sku} × ${quantity}`,
-    });
+    try {
+      await addCartItem({
+        product_id: product.id,
+        variant_id: selectedVariant.id,
+        quantity,
+      });
+      toast.success(t("cart.added"), {
+        description: `${name} — ${selectedVariant.sku} × ${quantity}`,
+      });
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      if (d?.error === "insufficient_stock") {
+        toast.error(t("cart.exceedsStock", { count: d.available }));
+      } else {
+        toast.error(t("errors.generic"));
+      }
+    }
+  };
+
+  const wished = wishlistIds.has(product.id);
+  const handleWishlist = async () => {
+    const result = await toggleWishlist(product.id);
+    if (result === "auth_required") {
+      toast.info(t("wishlist.loginRequired"));
+      navigate("/login");
+    } else {
+      toast.success(t(result === "added" ? "wishlist.added" : "wishlist.removed"));
+    }
   };
 
   const infoSections = [
@@ -438,9 +466,13 @@ export default function ProductPage() {
               type="button"
               data-testid="pdp-add-to-wishlist"
               aria-label={t("pdp.addToWishlist")}
-              className="inline-flex h-12 w-12 items-center justify-center border border-border text-foreground transition-colors hover:border-primary hover:text-primary"
+              aria-pressed={wished}
+              onClick={handleWishlist}
+              className={`inline-flex h-12 w-12 items-center justify-center border transition-colors hover:border-primary hover:text-primary ${
+                wished ? "border-primary text-primary" : "border-border text-foreground"
+              }`}
             >
-              <Heart className="h-5 w-5" aria-hidden="true" />
+              <Heart className="h-5 w-5" fill={wished ? "currentColor" : "none"} aria-hidden="true" />
             </button>
           </div>
 

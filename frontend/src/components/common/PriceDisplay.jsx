@@ -7,6 +7,7 @@ export default function PriceDisplay({
   compareAt,
   currency = BASE_CURRENCY,
   className = "",
+  "data-testid": dataTestId,
 }) {
   const { locale } = useI18n();
   const tag = LOCALE_TAGS[locale] || "en-US";
@@ -20,7 +21,7 @@ export default function PriceDisplay({
 
   return (
     <span
-      data-testid="price-display"
+      data-testid={dataTestId || "price-display"}
       className={`inline-flex items-baseline gap-2 ${className}`}
     >
       <span className={compareAt ? "font-semibold text-primary" : "font-semibold"}>

@@ -4,6 +4,7 @@ import { Heart, Search, ShoppingBag, User } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { getDepartments } from "@/lib/api";
+import { useShop } from "@/lib/ShopContext";
 import { pickLocalized } from "@/lib/localize";
 import LanguageSelector from "./LanguageSelector";
 import MobileNavigation from "./MobileNavigation";
@@ -18,12 +19,14 @@ const UTILITY_LINKS = [
 
 export default function Header() {
   const { locale, t } = useI18n();
+  const { cartCount, wishlistCount } = useShop();
   const [overlay, setOverlay] = useState({ open: false, dept: null });
   const { data: departments = [] } = useQuery({
     queryKey: ["departments"],
     queryFn: getDepartments,
     staleTime: 5 * 60 * 1000,
   });
+  const counts = { "cart-entry": cartCount, "wishlist-entry": wishlistCount };
 
   return (
     <>
@@ -70,9 +73,17 @@ export default function Header() {
                   to={to}
                   data-testid={testId}
                   aria-label={t(key)}
-                  className="inline-flex h-9 w-9 items-center justify-center text-foreground transition-colors hover:text-primary"
+                  className="relative inline-flex h-9 w-9 items-center justify-center text-foreground transition-colors hover:text-primary"
                 >
                   <Icon className="h-5 w-5" aria-hidden="true" />
+                  {counts[testId] > 0 ? (
+                    <span
+                      data-testid={`${testId}-count`}
+                      className="absolute -right-0.5 -top-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold leading-none text-primary-foreground"
+                    >
+                      {counts[testId]}
+                    </span>
+                  ) : null}
                 </Link>
               ))}
               <LanguageSelector />
