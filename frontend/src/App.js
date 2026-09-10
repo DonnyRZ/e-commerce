@@ -17,6 +17,11 @@ import ResetPasswordPage from "@/pages/ResetPasswordPage";
 import AccountPage from "@/pages/AccountPage";
 import CartPage from "@/pages/CartPage";
 import WishlistPage from "@/pages/WishlistPage";
+import CheckoutPage from "@/pages/CheckoutPage";
+import MockPaymentPage from "@/pages/MockPaymentPage";
+import OrderConfirmationPage from "@/pages/OrderConfirmationPage";
+import OrdersPage from "@/pages/OrdersPage";
+import OrderDetailPage from "@/pages/OrderDetailPage";
 
 function App() {
   return (
@@ -37,8 +42,11 @@ function App() {
               <Route path="/account" element={<AccountPage />} />
               <Route path="/cart" element={<CartPage />} />
               <Route path="/wishlist" element={<WishlistPage />} />
-              <Route path="/orders" element={<PlaceholderPage titleKey="footer.link.orders" />} />
-              <Route path="/checkout" element={<PlaceholderPage titleKey="page.title.checkout" />} />
+              <Route path="/orders" element={<OrdersPage />} />
+              <Route path="/orders/:orderNumber" element={<OrderDetailPage />} />
+              <Route path="/checkout" element={<CheckoutPage />} />
+              <Route path="/checkout/payment/mock" element={<MockPaymentPage />} />
+              <Route path="/order-confirmation" element={<OrderConfirmationPage />} />
               <Route path="/seller" element={<PlaceholderPage titleKey="page.title.seller" />} />
               <Route path="/admin" element={<PlaceholderPage titleKey="page.title.admin" />} />
               <Route path="*" element={<PlaceholderPage titleKey="errors.notFound" />} />

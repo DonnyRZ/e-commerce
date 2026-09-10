@@ -245,6 +245,12 @@ class Order(TimestampMixin, Base):
     idempotency_key: Mapped[Optional[str]] = mapped_column(
         String(80), unique=True, nullable=True
     )
+    # opaque token required (with order_number) for guest order lookup
+    guest_access_token: Mapped[Optional[str]] = mapped_column(
+        String(80), unique=True, nullable=True
+    )
+    # cart that produced this order — exactly-once cart clearing on payment
+    cart_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
@@ -259,6 +265,8 @@ class OrderItem(Base):
         ForeignKey("orders.id", ondelete="CASCADE"), index=True
     )
     product_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # snapshot only — intentionally no FK to mutable catalog rows
+    variant_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     seller_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     sku: Mapped[str] = mapped_column(String(80), default="")
     product_name: Mapped[str] = mapped_column(String(255), default="")
@@ -326,6 +334,31 @@ class Payment(TimestampMixin, Base):
 
 
 PaymentEvent.payment = relationship("Payment", back_populates="events")
+
+
+class InventoryReservation(Base):
+    __tablename__ = "inventory_reservations"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    order_id: Mapped[str] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"), index=True
+    )
+    product_variant_id: Mapped[str] = mapped_column(
+        ForeignKey("product_variants.id"), index=True
+    )
+    quantity: Mapped[int] = mapped_column(Integer)
+    # active | committed | released | expired
+    status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    committed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    released_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class StatusCheck(Base):

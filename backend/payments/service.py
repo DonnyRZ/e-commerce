@@ -14,7 +14,9 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from checkout import service as checkout_service
 from db.models import Order, Payment, PaymentEvent
+from notifications import notify
 from payments import errors
 from payments.errors import ClickProtocolError
 from payments.signature import verify_signature
@@ -196,6 +198,12 @@ class PaymentService:
             payment.failure_note = raw.get("error_note", "")[:255]
             if cancelled:
                 payment.cancelled_at = datetime.now(timezone.utc)
+            await checkout_service.release_reservations(
+                self.session, payment.order_id
+            )
+            order = await self.session.get(Order, payment.order_id)
+            if order and order.status == "pending_payment":
+                order.status = "cancelled"
             await self._log_event(
                 payment, "COMPLETE", "failed",
                 click_trans_id=raw["click_trans_id"],
@@ -203,6 +211,15 @@ class PaymentService:
                 meta={"note": raw.get("error_note", "")[:120]},
             )
             await self.session.commit()
+            await notify(
+                "order.payment_failed",
+                {
+                    "merchant_trans_id": payment.merchant_trans_id,
+                    "amount": payment.amount,
+                    "currency": payment.currency,
+                    "status": payment.status,
+                },
+            )
             return self._complete_response(raw, payment, errors.SUCCESS, "Success")
 
         payment.status = "paid"
@@ -213,6 +230,15 @@ class PaymentService:
             payment, "COMPLETE", "ok", click_trans_id=raw["click_trans_id"]
         )
         await self.session.commit()
+        await notify(
+            "order.paid",
+            {
+                "merchant_trans_id": payment.merchant_trans_id,
+                "amount": payment.amount,
+                "currency": payment.currency,
+                "status": "paid",
+            },
+        )
         return self._complete_response(raw, payment, errors.SUCCESS, "Success")
 
     def _complete_response(self, raw, payment, code, note) -> dict:
@@ -227,18 +253,26 @@ class PaymentService:
     async def _on_payment_paid(self, payment: Payment) -> None:
         """Exactly-once payment -> order transition boundary.
 
-        Future Checkout effects (inventory commit, cart clearing) attach
-        here — behind this single service method, never in callbacks.
+        Checkout effects (inventory commit, cart clearing) attach here —
+        inside the paid-transition guard, never scattered in callbacks.
         """
         order = await self.session.get(Order, payment.order_id)
         if order and order.payment_state != "paid":
             order.payment_state = "paid"
             order.status = "paid"
+            await checkout_service.commit_reservations(self.session, order)
+            await checkout_service.clear_source_cart(self.session, order)
 
     async def expire(self, payment: Payment) -> Payment:
         locked = await self._locked_payment(payment.merchant_trans_id)
         if locked.status in ("pending", "prepared"):
             locked.status = "expired"
+            await checkout_service.release_reservations(
+                self.session, locked.order_id
+            )
+            order = await self.session.get(Order, locked.order_id)
+            if order and order.status == "pending_payment":
+                order.status = "cancelled"
             await self._log_event(locked, "EXPIRE", "ok")
             await self.session.commit()
         return locked

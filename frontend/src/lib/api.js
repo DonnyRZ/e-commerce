@@ -100,6 +100,27 @@ export const addWishlistItem = (productId) =>
 export const removeWishlistItem = (productId) =>
   api.delete(`/v1/wishlist/items/${productId}`).then((r) => r.data);
 
+export const getCheckoutOptions = () =>
+  api.get("/v1/checkout/options").then((r) => r.data);
+
+export const getCheckoutQuote = (shippingMethod) =>
+  api.post("/v1/checkout/quote", { shipping_method: shippingMethod }).then((r) => r.data);
+
+export const placeOrder = (data) =>
+  api.post("/v1/checkout/orders", data).then((r) => r.data);
+
+export const mockPay = (data) =>
+  api.post("/v1/payments/mock/pay", data).then((r) => r.data);
+
+export const trackOrder = (orderNumber, token) =>
+  api.get("/v1/orders/track", { params: { order_number: orderNumber, token } }).then((r) => r.data);
+
+export const getMyOrders = () =>
+  api.get("/v1/account/orders").then((r) => r.data);
+
+export const getMyOrder = (orderNumber) =>
+  api.get(`/v1/account/orders/${orderNumber}`).then((r) => r.data);
+
 export const authErrorKey = (error) => {
   const detail = error?.response?.data?.detail;
   const code = typeof detail === "string" ? detail : Array.isArray(detail) ? "validation" : "";

@@ -14,6 +14,8 @@ from routers.auth import router as auth_router
 from routers.account import router as account_router
 from payments.routes import router as payments_router
 from routers.shop import router as shop_router
+from routers.checkout import router as checkout_router
+from routers.orders import router as orders_router
 
 # Create the main app without a prefix
 app = FastAPI(title="MUSLIMAH CANTIK API")
@@ -81,12 +83,14 @@ app.include_router(auth_router)
 app.include_router(account_router)
 app.include_router(payments_router)
 app.include_router(shop_router)
+app.include_router(checkout_router)
+app.include_router(orders_router)
 
 
 @app.middleware("http")
 async def no_store_auth_responses(request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith(("/api/v1/auth", "/api/v1/account")):
+    if request.url.path.startswith(("/api/v1/auth", "/api/v1/account", "/api/v1/checkout", "/api/v1/orders")):
         response.headers["Cache-Control"] = "no-store"
     return response
 

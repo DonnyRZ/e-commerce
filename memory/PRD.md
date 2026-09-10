@@ -93,6 +93,15 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
   - Server-authoritative integer UZS pricing (sale_override → price_override → base_price). Auth-only wishlist (401 guest, idempotent add, isolated). Alembic d4e5f6a7b8c9 (uq_cart_items_cart_variant, uq_wishlists_user_id, uq_wishlist_items_wishlist_product).
   - Frontend: ShopContext (react-query), CartPage (stepper capped at stock, availability badges, UZS subtotal), WishlistPage (grid, guest redirect), PDP Add-to-Cart + heart wiring, header badge counts, ~15 keys ×4 locales.
   - Verified: 103/103 pytest (incl. 20 new test_shop_m6.py), iteration_10.json 12/12 E2E PASS (guest/auth/merge/wishlist/i18n/mobile/zero-console). Fixed: PriceDisplay data-testid forwarding. Harness note: register rate-limit is in-memory — restart backend to reset between full-suite runs.
+- 2026-09-10: Milestone 7 — Checkout + Orders + CLICK Mock Payment (Prompt #8). Status: PASS. Report: /app/memory/M7_REPORT.md.
+  - Guest + auth checkout at /checkout (contact/address/shipping left, server-quoted summary right, CLICK-only payment); auth saved-address picker with server ownership enforcement; immutable JSONB address snapshot.
+  - shipping/ package: ShippingProvider ABC + MockShippingProvider (Standard 30,000 UZS, free ≥550,000; Express 65,000; env-gated factory). Server-authoritative totals via POST /api/v1/checkout/quote; integer UZS only.
+  - Idempotent order creation (client idempotency_key + unique column + IntegrityError race handling); opaque order_number MC-XXXX; guest_access_token for privacy-safe guest lookup (/api/v1/orders/track, constant-time compare).
+  - inventory_reservations table (Alembic e7f8a9b0c1d2, clean replay 23 tables): reserve at checkout with row-locked availability (stock − active reservations), commit-on-paid with exactly-once stock decrement, release on failed/cancelled/expired, TTL 30min (INVENTORY_RESERVATION_TTL_MINUTES) with lazy sweep.
+  - PaymentService hooks (additive, M5.1 protocol untouched): _on_payment_paid → commit reservations + clear ONLY source cart (order.cart_id); failure/cancel/expire → release + order cancelled. TIMEOUT leaves payment prepared (never paid).
+  - Customer mock payment page /checkout/payment/mock (MOCK-labeled; SUCCESS/FAILURE/CANCEL/TIMEOUT via real Prepare→Complete; POST /api/v1/payments/mock/pay owner/token-authorized, mock-gated 404 otherwise; scenario runner extracted to payments/mock_runner.py shared with /mock/simulate).
+  - orders: GET /api/v1/account/orders + /{order_number} (ownership-scoped), frontend /orders + /orders/:orderNumber + /order-confirmation. notifications/ boundary (MockNotificationProvider, post-commit, non-blocking: order.placed/order.paid/order.payment_failed).
+  - Verified: 128/128 pytest (incl. 25 new test_checkout_m7.py — concurrency last-unit, dup Prepare/Complete, wrong-amount, bad-signature, cross-user 404s, snapshot immutability vs live price change), iteration_11.json 12/12 E2E PASS, yarn build PASS, alembic current+replay PASS. Rate limit: 30 orders/15min/IP (in-memory).
 
 ## Backlog (prioritized, from Master Context V3)
 - P0: Milestone 1 foundation (responsive shell, design tokens #145A46 emerald accent, 4-language i18n), taxonomy seed, catalog/PLP/PDP, search/filter/sort, auth+RBAC, cart, wishlist, checkout+mock payment, orders w/ idempotency + atomic inventory, seller isolation, admin core, security hardening.
@@ -100,7 +109,7 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
 - P2 (deferred): AI features, multiple payment/shipping providers, live FX, loyalty, native apps, microservices.
 
 ## Next Tasks
-1. Milestone 7 — Checkout + Orders + CLICK mock payment — on explicit user approval (user reviews M6 report first).
+1. Milestone 8 — Seller Marketplace — only on explicit next prompt (STOP after M7 per prompt).
 2. Known tracked issue: preview ingress rewrites SameSite to None (CHIPS Partitioned) — origin sends lax; re-verify on VPS Nginx. CORS_ORIGINS now allowlisted (no wildcard) — set production origins on VPS.
 3. Dev ops note: `service postgresql start` needed after pod restart (data dir ephemeral in dev pod; VPS uses persistent volumes).
 4. Payment foundation ready for checkout: PaymentService.create_payment(order) + provider.build_payment_url(); post-paid effects hook = PaymentService._on_payment_paid.
