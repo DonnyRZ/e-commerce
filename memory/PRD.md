@@ -102,6 +102,11 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
   - Customer mock payment page /checkout/payment/mock (MOCK-labeled; SUCCESS/FAILURE/CANCEL/TIMEOUT via real Prepare→Complete; POST /api/v1/payments/mock/pay owner/token-authorized, mock-gated 404 otherwise; scenario runner extracted to payments/mock_runner.py shared with /mock/simulate).
   - orders: GET /api/v1/account/orders + /{order_number} (ownership-scoped), frontend /orders + /orders/:orderNumber + /order-confirmation. notifications/ boundary (MockNotificationProvider, post-commit, non-blocking: order.placed/order.paid/order.payment_failed).
   - Verified: 128/128 pytest (incl. 25 new test_checkout_m7.py — concurrency last-unit, dup Prepare/Complete, wrong-amount, bad-signature, cross-user 404s, snapshot immutability vs live price change), iteration_11.json 12/12 E2E PASS, yarn build PASS, alembic current+replay PASS. Rate limit: 30 orders/15min/IP (in-memory).
+- 2026-09-10: Milestone 7.1 — Late Complete + Expired Reservation Safety (corrective). Status: PASS. Report: /app/memory/M7_1_REPORT.md.
+  - commit rule hardened: only status=active commits directly; expired/released rows never reactivated — atomic reconcile_paid_effects (locked payment+order+reservations+variants, check-then-apply); stock available → auditable replacement reservation (reacquired_from self-FK, original row untouched); unavailable → payment 'reconciliation_required' + order 'payment_review'/'review' + existing CLICK -7 UPDATE_FAILURE (no invented codes); retries from reconciliation_required re-attempt idempotently.
+  - Alembic f1a2b3c4d5e6 (reacquired_from) + a1b2c3d4e5f7 (payments.status 20→30 — StringDataRightTruncationError root-caused in testing). VPS cron entry point: python3 -m jobs.expire_reservations.
+  - Verified: 134/134 pytest (6 new test_checkout_m71.py incl. mandatory race test), iteration_12.json 36/36 independent assertions PASS, UI happy-path smoke PASS, yarn build PASS, alembic current+replay PASS.
+  - ENV NOTE: pod restarted mid-session → PostgreSQL cluster wiped; re-provisioned (user+db) + migrations replayed + seed_catalog.py + seed_accounts.py re-run. Harness note: order rate-limit (30/15min/IP, in-memory) throttles heavy test suites — restart backend to reset.
 
 ## Backlog (prioritized, from Master Context V3)
 - P0: Milestone 1 foundation (responsive shell, design tokens #145A46 emerald accent, 4-language i18n), taxonomy seed, catalog/PLP/PDP, search/filter/sort, auth+RBAC, cart, wishlist, checkout+mock payment, orders w/ idempotency + atomic inventory, seller isolation, admin core, security hardening.
@@ -109,7 +114,7 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
 - P2 (deferred): AI features, multiple payment/shipping providers, live FX, loyalty, native apps, microservices.
 
 ## Next Tasks
-1. Milestone 8 — Seller Marketplace — only on explicit next prompt (STOP after M7 per prompt).
+1. Milestone 8 — Seller Marketplace — only on explicit next prompt (STOP after M7.1 per prompt).
 2. Known tracked issue: preview ingress rewrites SameSite to None (CHIPS Partitioned) — origin sends lax; re-verify on VPS Nginx. CORS_ORIGINS now allowlisted (no wildcard) — set production origins on VPS.
 3. Dev ops note: `service postgresql start` needed after pod restart (data dir ephemeral in dev pod; VPS uses persistent volumes).
 4. Payment foundation ready for checkout: PaymentService.create_payment(order) + provider.build_payment_url(); post-paid effects hook = PaymentService._on_payment_paid.

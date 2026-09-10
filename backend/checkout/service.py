@@ -235,30 +235,87 @@ async def create_order(
     return order, True
 
 
-async def commit_reservations(session: AsyncSession, order: Order) -> None:
-    """Exactly-once: only non-terminal reservations commit; stock decrements once."""
+# Explicit reconciliation states (centralized — do not scatter raw strings)
+ORDER_STATUS_PAYMENT_REVIEW = "payment_review"
+ORDER_PAYMENT_STATE_REVIEW = "review"
+
+
+async def reconcile_paid_effects(session: AsyncSession, order: Order) -> bool:
+    """Commit inventory for a successfully Completed payment — atomically.
+
+    HARD RULE: only reservations still `active` commit directly.
+    Expired/released reservations are NEVER reactivated or committed;
+    instead stock is reacquired under row locks and an auditable
+    replacement reservation (reacquired_from -> original row) is created.
+    If any quantity cannot be reacquired, NOTHING is applied and False is
+    returned so the caller can route payment/order into explicit
+    reconciliation states instead of overselling.
+    """
     now = _now()
     reservations = (
         await session.execute(
             select(InventoryReservation)
-            .where(
-                InventoryReservation.order_id == order.id,
-                InventoryReservation.status.in_(("active", "expired")),
-            )
+            .where(InventoryReservation.order_id == order.id)
             .order_by(InventoryReservation.product_variant_id)
             .with_for_update()
         )
     ).scalars().all()
-    for reservation in reservations:
-        variant = await session.scalar(
+    to_commit = [r for r in reservations if r.status == "active"]
+    to_reacquire = [r for r in reservations if r.status in ("expired", "released")]
+
+    variant_ids = sorted({r.product_variant_id for r in to_commit + to_reacquire})
+    variants = {}
+    for vid in variant_ids:  # deterministic lock order
+        variants[vid] = await session.scalar(
             select(ProductVariant)
-            .where(ProductVariant.id == reservation.product_variant_id)
+            .where(ProductVariant.id == vid)
             .with_for_update()
         )
+
+    # Phase 1: feasibility check only — nothing mutates before this passes.
+    planned_reacq: dict = {}
+    for r in to_reacquire:
+        variant = variants.get(r.product_variant_id)
+        if not variant:
+            return False
+        active_reserved = await _reserved_quantities(session, [r.product_variant_id])
+        # active_reserved already includes this order's own active rows, which
+        # will also decrement stock — so only prior reacquisitions are extra.
+        available = (
+            variant.stock_quantity
+            - active_reserved.get(r.product_variant_id, 0)
+            - planned_reacq.get(r.product_variant_id, 0)
+        )
+        if r.quantity > available:
+            return False
+        planned_reacq[r.product_variant_id] = (
+            planned_reacq.get(r.product_variant_id, 0) + r.quantity
+        )
+
+    # Phase 2: apply. Committed rows are excluded from both lists on any
+    # retry, so repeated calls can never double-decrement.
+    for r in to_commit:
+        variant = variants.get(r.product_variant_id)
         if variant:
-            variant.stock_quantity -= reservation.quantity
-        reservation.status = "committed"
-        reservation.committed_at = now
+            variant.stock_quantity -= r.quantity
+        r.status = "committed"
+        r.committed_at = now
+    for r in to_reacquire:
+        variant = variants[r.product_variant_id]
+        variant.stock_quantity -= r.quantity
+        # historical expired/released row stays untouched — auditable trail
+        session.add(
+            InventoryReservation(
+                order_id=order.id,
+                product_variant_id=r.product_variant_id,
+                quantity=r.quantity,
+                status="committed",
+                expires_at=now,
+                committed_at=now,
+                reacquired_from=r.id,
+            )
+        )
+    return True
 
 
 async def release_reservations(session: AsyncSession, order_id: str) -> None:

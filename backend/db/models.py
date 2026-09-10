@@ -315,7 +315,7 @@ class Payment(TimestampMixin, Base):
     environment: Mapped[str] = mapped_column(String(12), default="mock")
     currency: Mapped[str] = mapped_column(String(3), default="UZS")
     amount: Mapped[int] = mapped_column(Integer)
-    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
     merchant_trans_id: Mapped[str] = mapped_column(String(80), unique=True)
     click_trans_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
     click_paydoc_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
@@ -358,6 +358,11 @@ class InventoryReservation(Base):
     )
     released_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    # auditable link: set when this row is a committed replacement for an
+    # expired/released reservation (the original row stays untouched)
+    reacquired_from: Mapped[Optional[str]] = mapped_column(
+        String(32), ForeignKey("inventory_reservations.id"), nullable=True
     )
 
 

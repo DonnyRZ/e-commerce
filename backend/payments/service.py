@@ -29,7 +29,7 @@ REQUIRED_COMPLETE = REQUIRED_PREPARE + ["merchant_prepare_id"]
 
 PAYMENT_STATUSES = (
     "pending", "prepared", "paid", "failed", "cancelled",
-    "expired", "reversed", "refunded",
+    "expired", "reversed", "refunded", "reconciliation_required",
 )
 
 
@@ -183,7 +183,7 @@ class PaymentService:
                 provider_error_code=str(errors.ALREADY_PAID),
             )
             raise ClickProtocolError(errors.ALREADY_PAID, "Already paid")
-        if payment.status != "prepared" or (
+        if payment.status not in ("prepared", "reconciliation_required") or (
             payment.merchant_prepare_id != raw["merchant_prepare_id"]
         ):
             raise ClickProtocolError(
@@ -202,7 +202,7 @@ class PaymentService:
                 self.session, payment.order_id
             )
             order = await self.session.get(Order, payment.order_id)
-            if order and order.status == "pending_payment":
+            if order and order.status in ("pending_payment", "payment_review"):
                 order.status = "cancelled"
             await self._log_event(
                 payment, "COMPLETE", "failed",
@@ -222,10 +222,26 @@ class PaymentService:
             )
             return self._complete_response(raw, payment, errors.SUCCESS, "Success")
 
+        paid_ok = await self._on_payment_paid(payment)
+        if not paid_ok:
+            # Late Complete whose stock can no longer be reacquired:
+            # explicit reconciliation state + existing CLICK code -7
+            # (UPDATE_FAILURE). No invented protocol codes, no fake success.
+            payment.status = "reconciliation_required"
+            await self._log_event(
+                payment, "COMPLETE", "reconciliation",
+                click_trans_id=raw["click_trans_id"],
+                meta={"reason": "inventory_unavailable"},
+            )
+            await self.session.commit()
+            return self._complete_response(
+                raw, payment, errors.UPDATE_FAILURE,
+                "Merchant inventory reconciliation required",
+            )
+
         payment.status = "paid"
         payment.paid_at = datetime.now(timezone.utc)
         payment.merchant_confirm_id = payment.id
-        await self._on_payment_paid(payment)
         await self._log_event(
             payment, "COMPLETE", "ok", click_trans_id=raw["click_trans_id"]
         )
@@ -250,18 +266,29 @@ class PaymentService:
             "error_note": note,
         }
 
-    async def _on_payment_paid(self, payment: Payment) -> None:
+    async def _on_payment_paid(self, payment: Payment) -> bool:
         """Exactly-once payment -> order transition boundary.
 
-        Checkout effects (inventory commit, cart clearing) attach here —
-        inside the paid-transition guard, never scattered in callbacks.
+        Returns True when paid effects were applied safely (normal commit
+        of active reservations, or auditable reacquisition for
+        expired/released ones). Returns False when inventory is
+        unavailable — the caller then routes payment/order into explicit
+        reconciliation states instead of pretending success.
         """
-        order = await self.session.get(Order, payment.order_id)
-        if order and order.payment_state != "paid":
-            order.payment_state = "paid"
-            order.status = "paid"
-            await checkout_service.commit_reservations(self.session, order)
-            await checkout_service.clear_source_cart(self.session, order)
+        order = await self.session.scalar(
+            select(Order).where(Order.id == payment.order_id).with_for_update()
+        )
+        if not order or order.payment_state == "paid":
+            return True  # effects already applied (idempotent replay)
+        ok = await checkout_service.reconcile_paid_effects(self.session, order)
+        if not ok:
+            order.payment_state = checkout_service.ORDER_PAYMENT_STATE_REVIEW
+            order.status = checkout_service.ORDER_STATUS_PAYMENT_REVIEW
+            return False
+        order.payment_state = "paid"
+        order.status = "paid"
+        await checkout_service.clear_source_cart(self.session, order)
+        return True
 
     async def expire(self, payment: Payment) -> Payment:
         locked = await self._locked_payment(payment.merchant_trans_id)

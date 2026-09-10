@@ -46,6 +46,8 @@ export default function MockPaymentPage() {
         );
       } else if (["prepared", "pending"].includes(res.payment_status)) {
         setOutcome("timeout");
+      } else if (res.payment_status === "reconciliation_required") {
+        setOutcome("review");
       } else {
         setOutcome("failed");
       }
@@ -119,6 +121,22 @@ export default function MockPaymentPage() {
                     to="/checkout"
                     data-testid="mockpay-back-checkout"
                     className="mt-4 inline-flex h-10 items-center bg-foreground px-6 text-sm font-semibold text-background hover:bg-primary"
+                  >
+                    {t("mockPay.backToCheckout")}
+                  </Link>
+                </div>
+              ) : outcome === "review" ? (
+                <div className="mt-6 border border-amber-300 bg-amber-50 p-4" data-testid="mockpay-result-review">
+                  <p className="text-sm font-semibold text-amber-800">
+                    {t("mockPay.reviewTitle")}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t("mockPay.reviewBody")}
+                  </p>
+                  <Link
+                    to="/checkout"
+                    data-testid="mockpay-review-back-checkout"
+                    className="mt-4 inline-flex h-10 items-center border border-border px-6 text-sm font-medium hover:border-foreground"
                   >
                     {t("mockPay.backToCheckout")}
                   </Link>
