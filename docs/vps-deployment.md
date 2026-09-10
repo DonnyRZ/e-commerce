@@ -29,7 +29,7 @@ production release.
 4. Restore `junix` to native PostgreSQL and verify its tables and application connection.
 5. Create a separate `marketplace` database and `marketplace` login role. Never run Marketplace migrations against `junix`.
 6. Allow PostgreSQL only from localhost and the Marketplace Docker subnet (`172.30.0.0/24`, after collision check). Do not open 5432 publicly.
-7. Deploy and validate Marketplace against native PostgreSQL on its alternate port first if needed.
+7. Deploy and validate Marketplace against native PostgreSQL on its alternate port first if needed. The Compose release pins `host.docker.internal` to the private Marketplace bridge gateway (`172.30.0.1`) because this VPS's default Docker bridge is link-down; PostgreSQL still accepts only the Marketplace subnet.
 8. During a maintenance window, stop the old container, move native PostgreSQL to 5432, update the env file, and restart only the Marketplace backend.
 9. Keep the old PostgreSQL container volume and verified backups until the rollback window has passed.
 

@@ -23,7 +23,9 @@ services:
       - /etc/marketplace/marketplace.env
     command: ["alembic", "upgrade", "head"]
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # The VPS default bridge (the host-gateway target) is link-down. The
+      # fixed private Marketplace bridge gateway is the host PostgreSQL hop.
+      - "host.docker.internal:172.30.0.1"
     volumes:
       - /var/lib/marketplace/media:/app/uploads
     depends_on:
@@ -45,7 +47,7 @@ services:
     expose:
       - "8000"
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "host.docker.internal:172.30.0.1"
     volumes:
       - /var/lib/marketplace/media:/app/uploads
     depends_on:
