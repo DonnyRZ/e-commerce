@@ -53,6 +53,9 @@ class MockClickProvider(PaymentProvider):
         # mock has no hosted page; this URL is a development stand-in only
         return f"mock://click/pay?merchant_trans_id={merchant_trans_id}&amount={amount}"
 
+    async def refund(self, click_payment_id: str) -> dict:
+        return {"error_code": 0, "payment_id": click_payment_id}
+
     def build_prepare_params(
         self,
         payment,

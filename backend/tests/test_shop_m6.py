@@ -6,7 +6,7 @@ Only true multi-user isolation tests register fresh accounts (2 total).
 """
 import os, uuid, requests, pytest
 
-BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://muslimah-shop.preview.emergentagent.com").rstrip("/")
+BASE = os.environ.get("REACT_APP_BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 API = f"{BASE}/api/v1"
 
 CUSTOMER = ("customer.demo@muslimahcantik.id", "MC-Cust0mer-9d2m48Lw-2026")

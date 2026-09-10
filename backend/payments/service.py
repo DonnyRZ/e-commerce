@@ -91,6 +91,19 @@ class PaymentService:
         )
         if existing:
             return existing
+        # A custom retry key must not create a second live provider
+        # transaction for the same order. Terminal historical attempts remain
+        # queryable, while pending/prepared/review attempts are reused.
+        active = await self.session.scalar(
+            select(Payment).where(
+                Payment.order_id == order.id,
+                Payment.status.not_in(
+                    ("failed", "cancelled", "expired", "refunded", "reversed")
+                ),
+            )
+        )
+        if active:
+            return active
         payment = Payment(
             order_id=order.id,
             provider=self.provider.name,
@@ -204,6 +217,8 @@ class PaymentService:
             order = await self.session.get(Order, payment.order_id)
             if order and order.status in ("pending_payment", "payment_review"):
                 order.status = "cancelled"
+            if order:
+                order.payment_state = payment.status
             await self._log_event(
                 payment, "COMPLETE", "failed",
                 click_trans_id=raw["click_trans_id"],
@@ -214,6 +229,8 @@ class PaymentService:
             await notify(
                 "order.payment_failed",
                 {
+                    "order_number": order.order_number if order else payment.merchant_trans_id,
+                    "email": order.guest_email if order else None,
                     "merchant_trans_id": payment.merchant_trans_id,
                     "amount": payment.amount,
                     "currency": payment.currency,
@@ -246,9 +263,12 @@ class PaymentService:
             payment, "COMPLETE", "ok", click_trans_id=raw["click_trans_id"]
         )
         await self.session.commit()
+        order = await self.session.get(Order, payment.order_id)
         await notify(
             "order.paid",
             {
+                "order_number": order.order_number if order else payment.merchant_trans_id,
+                "email": order.guest_email if order else None,
                 "merchant_trans_id": payment.merchant_trans_id,
                 "amount": payment.amount,
                 "currency": payment.currency,
@@ -300,25 +320,57 @@ class PaymentService:
             order = await self.session.get(Order, locked.order_id)
             if order and order.status == "pending_payment":
                 order.status = "cancelled"
+            if order:
+                order.payment_state = "expired"
             await self._log_event(locked, "EXPIRE", "ok")
             await self.session.commit()
         return locked
 
-    async def refund(self, merchant_trans_id: str, note: str = "") -> Payment:
+    async def refund(
+        self,
+        merchant_trans_id: str,
+        note: str = "",
+        *,
+        commit: bool = True,
+    ) -> Payment:
         payment = await self._locked_payment(merchant_trans_id)
         if payment.status != "paid":
             raise ClickProtocolError(
                 errors.UPDATE_FAILURE, f"Cannot refund in status {payment.status}"
+            )
+        provider_payment_id = payment.click_trans_id or payment.merchant_trans_id
+        if self.provider.environment != "mock" and not payment.click_trans_id:
+            raise ClickProtocolError(
+                errors.UPDATE_FAILURE,
+                "Provider transaction id is missing; manual reconciliation required",
+            )
+        try:
+            await self.provider.refund(provider_payment_id)
+        except Exception as exc:
+            await self._log_event(
+                payment,
+                "REFUND",
+                "provider_failed",
+                meta={"reason": type(exc).__name__},
+            )
+            if commit:
+                await self.session.commit()
+            raise ClickProtocolError(
+                errors.UPDATE_FAILURE,
+                "Provider refund failed; payment remains paid",
             )
         payment.status = "refunded"
         payment.cancelled_at = datetime.now(timezone.utc)
         order = await self.session.get(Order, payment.order_id)
         if order and order.status not in ("refunded",):
             order.status = "refunded"
+        if order:
+            order.payment_state = "refunded"
         await self._log_event(
             payment, "REFUND", "ok", meta={"note": note[:120]} if note else {}
         )
-        await self.session.commit()
+        if commit:
+            await self.session.commit()
         return payment
 
     async def get_status(self, merchant_trans_id: str) -> dict:

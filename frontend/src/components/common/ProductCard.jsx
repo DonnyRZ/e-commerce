@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useI18n } from "@/i18n";
 import { useShop } from "@/lib/ShopContext";
 import PriceDisplay from "./PriceDisplay";
+import ImageWithFallback from "./ImageWithFallback";
 
 export default function ProductCard({ product }) {
   const { t } = useI18n();
@@ -27,7 +28,7 @@ export default function ProductCard({ product }) {
     <article data-testid={`product-card-${product.slug || product.id}`} className="group">
       <div className="relative overflow-hidden bg-secondary">
         <Link to={href} aria-label={product.name}>
-          <img
+          <ImageWithFallback
             src={product.image}
             alt={product.name}
             loading="lazy"

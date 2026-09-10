@@ -21,3 +21,8 @@ class PaymentProvider(ABC):
         self, merchant_trans_id: str, amount: int, return_url: str = ""
     ) -> str:
         ...
+
+    @abstractmethod
+    async def refund(self, click_payment_id: str) -> dict:
+        """Cancel/reverse a provider transaction before local state changes."""
+        ...

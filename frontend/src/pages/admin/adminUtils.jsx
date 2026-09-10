@@ -38,6 +38,7 @@ export const statusTone = (s) =>
     cancelled: "red",
     refunded: "red",
     failed: "red",
+    expired: "red",
     out_of_stock: "red",
     inactive: "red",
     archived: "neutral",

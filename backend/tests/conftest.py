@@ -7,11 +7,20 @@ used across suites, making the full suite re-runnable. It only touches the
 seed SKUs the suites exercise.
 """
 
-import subprocess
+import asyncio
+import os
+
+import asyncpg
 
 import pytest
 
-DB_URL = "postgresql://muslimah:muslimah_dev_pass@localhost:5432/muslimah_cantik"
+DB_URL = os.environ.get(
+    "TEST_DATABASE_URL",
+    os.environ.get(
+        "DATABASE_URL",
+        "postgresql://marketplace:marketplace@localhost:55433/marketplace",
+    ),
+).replace("postgresql+asyncpg://", "postgresql://", 1)
 
 SEED_STOCK = {
     "BRS-30ML": 14,      # brightening serum (M7/M8 paid flows)
@@ -25,15 +34,17 @@ SEED_STOCK = {
 
 @pytest.fixture(scope="session", autouse=True)
 def reset_seed_stock():
-    values = ",".join(f"('{sku}', {qty})" for sku, qty in SEED_STOCK.items())
-    subprocess.run(
-        [
-            "psql", DB_URL, "-c",
-            "UPDATE product_variants v SET stock_quantity = s.qty "
-            f"FROM (VALUES {values}) AS s(sku, qty) WHERE v.sku = s.sku",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    async def _reset():
+        connection = await asyncpg.connect(DB_URL)
+        try:
+            for sku, quantity in SEED_STOCK.items():
+                await connection.execute(
+                    "UPDATE product_variants SET stock_quantity = $1 WHERE sku = $2",
+                    quantity,
+                    sku,
+                )
+        finally:
+            await connection.close()
+
+    asyncio.run(_reset())
     yield

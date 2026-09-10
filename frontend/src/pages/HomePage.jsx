@@ -7,6 +7,8 @@ import { HERO_IMAGE } from "@/data/demo";
 import CategoryStrip from "@/components/common/CategoryStrip";
 import EditorialSection from "@/components/common/EditorialSection";
 import ProductGrid from "@/components/common/ProductGrid";
+import ErrorState from "@/components/common/ErrorState";
+import ImageWithFallback from "@/components/common/ImageWithFallback";
 import { Skeleton } from "@/components/ui/skeleton";
 
 function GridSkeleton({ testId }) {
@@ -25,16 +27,18 @@ function GridSkeleton({ testId }) {
 export default function HomePage() {
   const { locale, t } = useI18n();
 
-  const { data: departments = [] } = useQuery({
+  const departmentsQuery = useQuery({
     queryKey: ["departments"],
     queryFn: getDepartments,
     staleTime: 5 * 60 * 1000,
   });
-  const { data: allCategories = [] } = useQuery({
+  const categoriesQuery = useQuery({
     queryKey: ["categories", "all"],
     queryFn: () => getCategories(),
     staleTime: 5 * 60 * 1000,
   });
+  const departments = departmentsQuery.data || [];
+  const allCategories = categoriesQuery.data || [];
   const newArrivals = useQuery({
     queryKey: ["products", "home-new"],
     queryFn: () => getProducts({ badge: "new", limit: 8 }),
@@ -43,11 +47,12 @@ export default function HomePage() {
     queryKey: ["products", "home-best"],
     queryFn: () => getProducts({ badge: "bestseller", limit: 8 }),
   });
-  const { data: cmsBundle } = useQuery({
+  const cmsBundleQuery = useQuery({
     queryKey: ["cms", "bundle"],
     queryFn: getCmsBundle,
     staleTime: 60_000,
   });
+  const cmsBundle = cmsBundleQuery.data;
 
   const hero = cmsBundle?.hero;
   const heroImage = mediaUrl(hero?.image_url) || HERO_IMAGE;
@@ -72,7 +77,7 @@ export default function HomePage() {
   return (
     <div data-testid="home-page">
       <section data-testid="home-hero" className="relative -mx-4 sm:-mx-6 lg:-mx-10">
-        <img
+        <ImageWithFallback
           src={heroImage}
           alt={heroTitle}
           className="h-[60vh] w-full object-cover lg:h-[72vh]"
@@ -110,7 +115,9 @@ export default function HomePage() {
         <h2 className="mb-5 text-lg font-semibold lg:text-xl">
           {t("home.shopByCategory")}
         </h2>
-        {stripCategories.length ? (
+        {categoriesQuery.isError ? (
+          <ErrorState onRetry={() => categoriesQuery.refetch()} />
+        ) : stripCategories.length ? (
           <CategoryStrip categories={stripCategories} nameOf={(c) => c.name} />
         ) : (
           <div className="flex gap-4">
@@ -132,7 +139,9 @@ export default function HomePage() {
             {t("home.viewAll")}
           </Link>
         </div>
-        {newArrivals.isLoading ? (
+        {newArrivals.isError ? (
+          <ErrorState onRetry={() => newArrivals.refetch()} />
+        ) : newArrivals.isLoading ? (
           <GridSkeleton testId="new-arrivals-loading" />
         ) : (
           <ProductGrid
@@ -151,7 +160,7 @@ export default function HomePage() {
               data-testid={`department-tile-${dept.slug}`}
               className="group relative block overflow-hidden bg-secondary"
             >
-              <img
+              <ImageWithFallback
                 src={dept.image_url}
                 alt={pickLocalized(dept.translations, locale)}
                 loading="lazy"
@@ -181,7 +190,9 @@ export default function HomePage() {
             {t("home.viewAll")}
           </Link>
         </div>
-        {bestSellers.isLoading ? (
+        {bestSellers.isError ? (
+          <ErrorState onRetry={() => bestSellers.refetch()} />
+        ) : bestSellers.isLoading ? (
           <GridSkeleton testId="best-sellers-loading" />
         ) : (
           <ProductGrid

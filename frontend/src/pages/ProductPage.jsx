@@ -9,6 +9,7 @@ import { useShop } from "@/lib/ShopContext";
 import { colorHex, pickLocalized } from "@/lib/localize";
 import EmptyState from "@/components/common/EmptyState";
 import ErrorState from "@/components/common/ErrorState";
+import ImageWithFallback from "@/components/common/ImageWithFallback";
 import PriceDisplay from "@/components/common/PriceDisplay";
 import SizeGuide from "@/components/pdp/SizeGuide";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -84,15 +85,6 @@ export default function ProductPage() {
       document.title = `${pickLocalized(product.translations, locale)} — MUSLIMAH CANTIK`;
     }
   }, [product, locale]);
-
-  const isValueAvailable = (dimKey, value) =>
-    variants.some(
-      (v) =>
-        v.option_values[dimKey] === value &&
-        dimensions.every(
-          (d) => d.key === dimKey || !selected[d.key] || v.option_values[d.key] === selected[d.key]
-        )
-    );
 
   const isValueInStock = (dimKey, value) =>
     variants.some(
@@ -279,7 +271,7 @@ export default function ProductPage() {
       <div className="mt-6 grid gap-8 lg:grid-cols-2 lg:gap-14">
         <div data-testid="pdp-gallery">
           <div className="overflow-hidden bg-secondary">
-            <img
+            <ImageWithFallback
               src={images[imageIndex]}
               alt={name}
               data-testid="pdp-main-image"
@@ -303,7 +295,7 @@ export default function ProductPage() {
                     imageIndex === i ? "border-foreground" : "border-transparent"
                   }`}
                 >
-                  <img
+                  <ImageWithFallback
                     src={url}
                     alt=""
                     loading="lazy"

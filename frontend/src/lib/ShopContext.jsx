@@ -16,10 +16,12 @@ const ShopContext = createContext(null);
 export function ShopProvider({ children }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const cartKey = ["cart", user?.id || "guest"];
+  const wishlistKey = ["wishlist", user?.id || "guest"];
 
-  const cartQuery = useQuery({ queryKey: ["cart"], queryFn: getCart });
+  const cartQuery = useQuery({ queryKey: cartKey, queryFn: getCart });
   const wishlistQuery = useQuery({
-    queryKey: ["wishlist"],
+    queryKey: wishlistKey,
     queryFn: getWishlist,
     enabled: Boolean(user),
     retry: false,
@@ -47,12 +49,12 @@ export function ShopProvider({ children }) {
     wishlist: wishlistQuery.data || null,
     async addToCart(payload) {
       const data = await addCartItem(payload);
-      queryClient.setQueryData(["cart"], data);
+      queryClient.setQueryData(cartKey, data);
       return data;
     },
     async updateItem(itemId, quantity) {
       const data = await updateCartItem(itemId, quantity);
-      queryClient.setQueryData(["cart"], data);
+      queryClient.setQueryData(cartKey, data);
       return data;
     },
     async removeItem(itemId) {

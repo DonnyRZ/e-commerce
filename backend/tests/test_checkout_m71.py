@@ -8,7 +8,7 @@ directly. A late Complete must reconcile atomically:
 """
 import os, subprocess, uuid, requests, pytest
 
-BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://muslimah-shop.preview.emergentagent.com").rstrip("/")
+BASE = os.environ.get("REACT_APP_BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 API = f"{BASE}/api/v1"
 DB_URL = "postgresql://muslimah:muslimah_dev_pass@localhost:5432/muslimah_cantik"
 

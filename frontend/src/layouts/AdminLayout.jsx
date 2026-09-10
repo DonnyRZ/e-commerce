@@ -10,14 +10,12 @@ import {
   Package,
   Settings,
   ShieldAlert,
-  Store,
   Users,
   X,
 } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
 import { Skeleton } from "@/components/ui/skeleton";
-
-const ACCENT = "#145A46";
+import BrandLogo from "@/components/brand/BrandLogo";
 
 function NavItem({ to, icon: Icon, label, end, onClick, testId }) {
   return (
@@ -108,11 +106,10 @@ export default function AdminLayout() {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <Link to="/admin" className="flex items-center gap-2" data-testid="admin-brand">
-          <Store className="h-5 w-5" style={{ color: ACCENT }} aria-hidden="true" />
-          <span className="text-sm font-bold tracking-wide">MUSLIMAH CANTIK</span>
+        <div className="flex items-center gap-2">
+          <BrandLogo size="sm" to="/admin" testId="admin-brand" priority />
           <span className="text-xs font-medium text-neutral-400">Admin</span>
-        </Link>
+        </div>
         <div className="ml-auto flex items-center gap-3">
           <Link to="/" className="text-xs text-neutral-500 hover:text-neutral-900" data-testid="admin-view-store">
             View Store

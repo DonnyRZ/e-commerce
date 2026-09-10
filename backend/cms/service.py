@@ -18,6 +18,7 @@ from db.models import (
     CmsMediaAsset,
     CmsRevision,
 )
+from storage import get_media_storage
 
 LOCALES = ("id", "en", "uz", "ru")
 
@@ -155,7 +156,16 @@ async def _media_url(session: AsyncSession, media_id: Optional[str]) -> Optional
     asset = await session.get(CmsMediaAsset, media_id)
     if not asset:
         return None
-    return f"/api/v1/cms/media/file/{asset.storage_key}"
+    public_url = get_media_storage().public_url(asset.storage_key)
+    return public_url or f"/api/v1/cms/media/file/{asset.storage_key}"
+
+
+async def media_url(session: AsyncSession, asset: CmsMediaAsset) -> str:
+    """Return a browser-safe URL for an asset in local or S3 storage."""
+
+    return get_media_storage().public_url(asset.storage_key) or (
+        f"/api/v1/cms/media/file/{asset.storage_key}"
+    )
 
 
 async def entry_detail(session: AsyncSession, entry: CmsContentEntry) -> dict:

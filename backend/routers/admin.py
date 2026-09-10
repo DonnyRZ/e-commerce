@@ -52,6 +52,8 @@ from routers.seller import (
     _stock_state,
     _validate_category,
     _validate_media,
+    _validate_price_order,
+    _validate_variant_prices,
     _validate_translations,
 )
 from checkout.service import _reserved_quantities
@@ -250,6 +252,11 @@ async def admin_create_product(
     if payload.status not in ("draft", "active", "inactive"):
         _bad_request("invalid_status")
     await _validate_category(session, payload.category_id)
+    _validate_price_order(payload.base_price, payload.compare_at_price)
+    for variant in payload.variants:
+        _validate_variant_prices(
+            variant.price_override, variant.sale_price_override, payload.base_price
+        )
     await _check_skus(session, [v.sku for v in payload.variants])
     import uuid as _uuid
     import re as _re
@@ -284,13 +291,13 @@ async def admin_create_product(
                 is_active=v.is_active,
             )
         )
+    await audit(session, user.id, "admin.product.create", "product", product.id,
+                {"slug": product.slug})
     try:
         await session.commit()
     except IntegrityError:
         await session.rollback()
         raise HTTPException(status_code=409, detail={"error": "sku_exists"})
-    await audit(session, user.id, "admin.product.create", "product", product.id,
-                {"slug": product.slug})
     return await _product_payload(session, product)
 
 
@@ -324,6 +331,10 @@ async def admin_update_product(
         await _validate_category(session, data["category_id"])
     if "media" in data:
         _validate_media(data["media"] or [])
+    _validate_price_order(
+        data.get("base_price", product.base_price),
+        data.get("compare_at_price", product.compare_at_price),
+    )
     translations = data.pop("translations", None)
     if translations:
         _validate_translations(payload.translations or {}, require_en=False)
@@ -350,9 +361,9 @@ async def admin_update_product(
                   "compare_at_price", "status", "attributes", "tags", "media"):
         if field in data:
             setattr(product, field, data[field])
-    await session.commit()
     await audit(session, user.id, "admin.product.update", "product", product.id,
                 {"fields": sorted(data.keys())})
+    await session.commit()
     return await _product_payload(session, product)
 
 
@@ -368,6 +379,9 @@ async def admin_create_variant(
     if not product:
         raise HTTPException(status_code=404, detail="product_not_found")
     await _check_skus(session, [payload.sku])
+    _validate_variant_prices(
+        payload.price_override, payload.sale_price_override, product.base_price
+    )
     variant = ProductVariant(
         product_id=product.id, sku=payload.sku, option_values=payload.option_values,
         stock_quantity=payload.stock_quantity, price_override=payload.price_override,
@@ -375,13 +389,13 @@ async def admin_create_variant(
         is_active=payload.is_active,
     )
     session.add(variant)
+    await audit(session, user.id, "admin.variant.create", "product", product.id,
+                {"sku": payload.sku})
     try:
         await session.commit()
     except IntegrityError:
         await session.rollback()
         raise HTTPException(status_code=409, detail={"error": "sku_exists", "skus": [payload.sku]})
-    await audit(session, user.id, "admin.variant.create", "product", product.id,
-                {"sku": payload.sku})
     return await _product_payload(session, product)
 
 
@@ -399,10 +413,18 @@ async def admin_update_variant(
     data = payload.model_dump(exclude_unset=True)
     if "sku" in data and data["sku"] != variant.sku:
         await _check_skus(session, [data["sku"]], exclude_variant_id=variant.id)
+    product = await session.get(Product, variant.product_id)
+    _validate_variant_prices(
+        data.get("price_override", variant.price_override),
+        data.get("sale_price_override", variant.sale_price_override),
+        product.base_price if product else None,
+    )
     for field in ("sku", "option_values", "price_override", "sale_price_override",
                   "image_url", "is_active"):
         if field in data:
             setattr(variant, field, data[field])
+    await audit(session, user.id, "admin.variant.update", "variant", variant.id,
+                {"fields": sorted(data.keys())})
     try:
         await session.commit()
     except IntegrityError:
@@ -437,9 +459,9 @@ async def admin_update_inventory(
             },
         )
     variant.stock_quantity = payload.stock_quantity
-    await session.commit()
     await audit(session, user.id, "admin.inventory.update", "variant", variant.id,
                 {"stock_quantity": payload.stock_quantity})
+    await session.commit()
     return {
         "variant_id": variant.id,
         "stock_quantity": variant.stock_quantity,
@@ -460,6 +482,7 @@ class CategoryTranslationIn(BaseModel):
 class CategoryCreateIn(BaseModel):
     slug: str = Field(min_length=2, max_length=120)
     department: str = Field(min_length=1, max_length=50)
+    parent_id: Optional[str] = Field(default=None, min_length=8, max_length=40)
     sort_order: int = Field(default=0, ge=0)
     image_url: Optional[str] = Field(default=None, max_length=500)
     is_active: bool = True
@@ -467,6 +490,7 @@ class CategoryCreateIn(BaseModel):
 
 
 class CategoryUpdateIn(BaseModel):
+    parent_id: Optional[str] = Field(default=None, min_length=8, max_length=40)
     sort_order: Optional[int] = Field(default=None, ge=0)
     image_url: Optional[str] = None
     is_active: Optional[bool] = None
@@ -496,6 +520,27 @@ async def _category_payload(session: AsyncSession, category: Category) -> dict:
             t.locale: {"name": t.name, "description": t.description} for t in translations
         },
     }
+
+
+async def _department_parent(
+    session: AsyncSession,
+    department: str,
+    requested_parent_id: Optional[str] = None,
+) -> Optional[str]:
+    parent = None
+    if requested_parent_id:
+        parent = await session.get(Category, requested_parent_id)
+        if not parent or parent.kind != "department" or parent.slug != department:
+            _bad_request("invalid_category_parent")
+    else:
+        parent = await session.scalar(
+            select(Category).where(
+                Category.kind == "department", Category.slug == department
+            )
+        )
+    if not parent:
+        _bad_request("invalid_department", {"allowed": [department]})
+    return parent.id
 
 
 @router.get("/categories")
@@ -541,11 +586,13 @@ async def admin_create_category(
         _bad_request("invalid_locale", {"locales": sorted(unknown)})
     if "en" not in payload.translations:
         _bad_request("translation_en_required")
+    parent_id = await _department_parent(session, payload.department, payload.parent_id)
     dupe = await session.scalar(select(Category).where(Category.slug == payload.slug))
     if dupe:
         raise HTTPException(status_code=409, detail={"error": "slug_exists"})
     category = Category(
         slug=payload.slug, department=payload.department,
+        parent_id=parent_id,
         sort_order=payload.sort_order, image_url=payload.image_url,
         is_active=payload.is_active,
     )
@@ -556,9 +603,9 @@ async def admin_create_category(
             CategoryTranslation(category_id=category.id, locale=locale,
                                 name=tr.name, description=tr.description)
         )
-    await session.commit()
     await audit(session, user.id, "admin.category.create", "category", category.id,
                 {"slug": category.slug})
+    await session.commit()
     return await _category_payload(session, category)
 
 
@@ -575,6 +622,10 @@ async def admin_update_category(
         raise HTTPException(status_code=404, detail="category_not_found")
     data = payload.model_dump(exclude_unset=True)
     translations = data.pop("translations", None)
+    if "parent_id" in data:
+        data["parent_id"] = await _department_parent(
+            session, category.department, data["parent_id"]
+        )
     if translations:
         unknown = set(translations) - set(LOCALES)
         if unknown:
@@ -596,11 +647,11 @@ async def admin_update_category(
                     CategoryTranslation(category_id=category.id, locale=locale,
                                         name=tr.name, description=tr.description)
                 )
-    for field in ("sort_order", "image_url", "is_active"):
+    for field in ("parent_id", "sort_order", "image_url", "is_active"):
         if field in data:
             setattr(category, field, data[field])
-    await session.commit()
     await audit(session, user.id, "admin.category.update", "category", category.id, None)
+    await session.commit()
     return await _category_payload(session, category)
 
 
@@ -627,8 +678,8 @@ async def admin_delete_category(
                     "children": int(children or 0)},
         )
     await session.delete(category)
-    await session.commit()
     await audit(session, user.id, "admin.category.delete", "category", category_id, None)
+    await session.commit()
     return {"deleted": True}
 
 
@@ -731,6 +782,7 @@ async def admin_get_order(
         ],
         "payment": (
             {
+                "id": payment.id,
                 "provider": payment.provider,
                 "environment": payment.environment,
                 "status": payment.status,
@@ -782,10 +834,11 @@ async def admin_update_order_status(
             detail={"error": "invalid_transition", "current": order.status,
                     "allowed": [expected] if expected else []},
         )
+    previous_status = order.status
     order.status = payload.status
-    await session.commit()
     await audit(session, user.id, "admin.order.status", "order", order.order_number,
-                {"from": expected and ORDER_TRANSITIONS.get(order.status), "to": payload.status})
+                {"from": previous_status, "to": payload.status})
+    await session.commit()
     return {"order_number": order.order_number, "status": order.status}
 
 
@@ -945,20 +998,18 @@ async def admin_payment_review_note(
     payment.review_note = payload.note
     payment.reviewed_by = user.id
     payment.reviewed_at = _now()
-    await session.commit()
     await audit(session, user.id, "admin.payment.review_note", "payment", payment.id, None)
+    await session.commit()
     return {"payment_id": payment.id, "review_note": payment.review_note}
 
 
-@router.post("/payments/{payment_id}/mock-refund")
-async def admin_mock_refund(
+@router.post("/payments/{payment_id}/refund")
+async def admin_refund(
     payment_id: str,
     user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    if CLICK_MODE != "mock":
-        raise HTTPException(status_code=404, detail="not_found")
     payment = await session.get(Payment, payment_id)
     if not payment:
         raise HTTPException(status_code=404, detail="payment_not_found")
@@ -968,8 +1019,24 @@ async def admin_mock_refund(
             detail={"error": "not_refundable", "status": payment.status},
         )
     service = PaymentService(session, get_provider())
-    refunded = await service.refund(payment.merchant_trans_id, note="admin mock refund")
-    await audit(session, user.id, "admin.payment.mock_refund", "payment", payment.id, None)
+    from payments.errors import ClickProtocolError
+
+    try:
+        refunded = await service.refund(
+            payment.merchant_trans_id,
+            note="admin refund",
+            commit=False,
+        )
+    except ClickProtocolError as exc:
+        # Preserve the provider failure event while keeping the local payment
+        # state paid until the provider confirms the reversal.
+        await session.commit()
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "provider_refund_failed", "code": exc.code},
+        )
+    await audit(session, user.id, "admin.payment.refund", "payment", payment.id, None)
+    await session.commit()
     return {"payment_id": refunded.id, "status": refunded.status}
 
 

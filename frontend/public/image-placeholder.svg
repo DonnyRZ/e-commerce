@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Image unavailable</title>
+  <desc id="desc">A neutral placeholder for missing store imagery.</desc>
+  <rect width="800" height="1000" fill="#f1eee8"/>
+  <path d="M180 700 330 520l105 112 80-90 105 158H180Z" fill="#d4cfc4"/>
+  <circle cx="500" cy="370" r="58" fill="#d4cfc4"/>
+  <path d="M0 820h800v180H0z" fill="#e5e0d7"/>
+  <text x="400" y="905" text-anchor="middle" fill="#766f64" font-family="Arial,sans-serif" font-size="30" letter-spacing="4">MUSLIMAH CANTIK</text>
+</svg>

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/i18n";
 import { authErrorKey, resetPassword } from "@/lib/api";
+import BrandLogo from "@/components/brand/BrandLogo";
 
 export default function ResetPasswordPage() {
   const { t } = useI18n();
@@ -28,6 +29,9 @@ export default function ResetPasswordPage() {
 
   return (
     <div data-testid="reset-password-page" className="mx-auto max-w-md py-12 lg:py-20">
+      <div className="mb-10 flex justify-center">
+        <BrandLogo size="lg" to="/" testId="reset-brand-logo" priority />
+      </div>
       <h1 className="text-2xl font-semibold tracking-tight lg:text-3xl">
         {t("auth.resetTitle")}
       </h1>

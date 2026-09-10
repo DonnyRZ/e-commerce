@@ -30,6 +30,16 @@ const EMPTY_ADDR = {
   country_code: "UZ",
 };
 
+const newIdempotencyKey = () => {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  if (globalThis.crypto?.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+};
+
 function AddressFields({ value, onChange, testPrefix }) {
   const { t } = useI18n();
   const set = (key) => (e) => onChange({ ...value, [key]: e.target.value });
@@ -43,6 +53,16 @@ function AddressFields({ value, onChange, testPrefix }) {
     ["postal_code", t("auth.postalCode")],
     ["country_code", t("auth.country")],
   ];
+  const autocomplete = {
+    recipient_name: "name",
+    phone: "tel",
+    address_line_1: "street-address",
+    address_line_2: "address-line2",
+    city: "address-level2",
+    state_province: "address-level1",
+    postal_code: "postal-code",
+    country_code: "country",
+  };
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       {fields.map(([key, label]) => (
@@ -50,15 +70,21 @@ function AddressFields({ value, onChange, testPrefix }) {
           key={key}
           className={key === "address_line_1" ? "sm:col-span-2" : ""}
         >
-          <label className="mb-1 block text-xs font-medium text-muted-foreground">
+          <label
+            htmlFor={`${testPrefix}-${key.replace(/_/g, "-")}`}
+            className="mb-1 block text-xs font-medium text-muted-foreground"
+          >
             {label}
           </label>
           <input
+            id={`${testPrefix}-${key.replace(/_/g, "-")}`}
             data-testid={`${testPrefix}-${key.replace(/_/g, "-")}`}
             value={value[key] || ""}
             onChange={set(key)}
             required={key !== "address_line_2"}
             maxLength={key === "country_code" ? 2 : 255}
+            autoComplete={autocomplete[key]}
+            type={key === "phone" ? "tel" : "text"}
             className={fieldClass}
           />
         </div>
@@ -73,7 +99,7 @@ export default function CheckoutPage() {
   const { cart, cartLoading } = useShop();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const idempotencyKey = useRef(crypto.randomUUID());
+  const idempotencyKey = useRef(newIdempotencyKey());
   const [email, setEmail] = useState("");
   const [addressMode, setAddressMode] = useState("new");
   const [savedAddressId, setSavedAddressId] = useState(null);
@@ -126,11 +152,18 @@ export default function CheckoutPage() {
       }
       const res = await placeOrder(payload);
       // idempotency key is single-use per intended checkout — rotate after success
-      idempotencyKey.current = crypto.randomUUID();
-      if (res.mock_payment_url) {
+      idempotencyKey.current = newIdempotencyKey();
+      if (res.payment_url) {
+        // Hosted provider flow: the order is only pending until the provider
+        // callback confirms payment. Never show the confirmation page here.
+        window.location.assign(res.payment_url);
+      } else if (res.mock_payment_url) {
         navigate(res.mock_payment_url);
       } else {
-        navigate(`/order-confirmation?order=${res.order_number}`);
+        const token = res.access_token
+          ? `&token=${encodeURIComponent(res.access_token)}`
+          : "";
+        navigate(`/payment-pending?order=${encodeURIComponent(res.order_number)}${token}`);
       }
     } catch (err) {
       const d = err?.response?.data?.detail;
@@ -201,15 +234,17 @@ export default function CheckoutPage() {
               </p>
             ) : (
               <div className="mt-3 max-w-md">
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                <label htmlFor="checkout-email" className="mb-1 block text-xs font-medium text-muted-foreground">
                   {t("checkout.email")}
                 </label>
                 <input
+                  id="checkout-email"
                   type="email"
                   required
                   data-testid="checkout-email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
                   className={fieldClass}
                 />
               </div>

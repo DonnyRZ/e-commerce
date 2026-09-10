@@ -6,7 +6,7 @@ import uuid
 import requests
 import pytest
 
-BASE = os.environ["REACT_APP_BACKEND_URL"].rstrip("/") if os.environ.get("REACT_APP_BACKEND_URL") else "https://muslimah-shop.preview.emergentagent.com"
+BASE = os.environ["REACT_APP_BACKEND_URL"].rstrip("/") if os.environ.get("REACT_APP_BACKEND_URL") else "http://127.0.0.1:8000"
 API = f"{BASE}/api/v1/payments"
 SECRET = "mock-dev-5c2f8a91e7b4d603"
 SERVICE_ID = "mock-service"

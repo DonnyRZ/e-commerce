@@ -3,7 +3,9 @@ export const pickLocalized = (translations, locale, field = "title") =>
 
 export const mediaUrl = (url) => {
   if (!url) return "";
-  return url.startsWith("/") ? `${process.env.REACT_APP_BACKEND_URL}${url}` : url;
+  if (!url.startsWith("/")) return url;
+  const origin = (process.env.REACT_APP_BACKEND_URL || window.location.origin).replace(/\/$/, "");
+  return `${origin}${url}`;
 };
 
 const COLOR_HEX = {

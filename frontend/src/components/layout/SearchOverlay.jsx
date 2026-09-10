@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Search, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -12,6 +12,14 @@ export default function SearchOverlay({ open, initialDept, onClose }) {
   const navigate = useNavigate();
   const [dept, setDept] = useState(initialDept || null);
   const [query, setQuery] = useState("");
+  const dialogRef = useRef(null);
+  const inputRef = useRef(null);
+  const previousFocusRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   const { data: departments = [] } = useQuery({
     queryKey: ["departments"],
@@ -25,22 +33,41 @@ export default function SearchOverlay({ open, initialDept, onClose }) {
   });
 
   useEffect(() => {
-    if (open) {
-      setDept(initialDept || null);
-      setQuery("");
-    }
-  }, [open, initialDept]);
-
-  useEffect(() => {
     if (!open) return undefined;
-    const onKey = (e) => e.key === "Escape" && onClose();
+    previousFocusRef.current = document.activeElement;
+    setDept(initialDept || null);
+    setQuery("");
+    const focusFrame = window.requestAnimationFrame(() => inputRef.current?.focus());
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const focusable = dialogRef.current?.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
+      previousFocusRef.current?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open, initialDept]);
 
   if (!open) return null;
 
@@ -60,6 +87,8 @@ export default function SearchOverlay({ open, initialDept, onClose }) {
       data-testid="search-overlay"
       role="dialog"
       aria-modal="true"
+      aria-labelledby="search-overlay-title"
+      ref={dialogRef}
       className="fixed inset-0 z-50 flex flex-col bg-background"
     >
       <div className="border-b border-border">
@@ -71,6 +100,7 @@ export default function SearchOverlay({ open, initialDept, onClose }) {
           >
             {t("brand.name")}
           </Link>
+          <h1 id="search-overlay-title" className="sr-only">{t("header.searchPlaceholder")}</h1>
           <button
             type="button"
             data-testid="search-overlay-close"
@@ -86,6 +116,7 @@ export default function SearchOverlay({ open, initialDept, onClose }) {
         <div className="mx-auto w-full max-w-[1200px] px-4 py-6 sm:px-6 lg:px-10 lg:py-8">
           <form onSubmit={submitSearch} className="relative">
             <input
+              ref={inputRef}
               type="search"
               data-testid="search-input"
               value={query}

@@ -1,8 +1,5 @@
 import hashlib
-import logging
-import os
 import secrets
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -24,11 +21,11 @@ from auth import (
     set_auth_cookies,
     verify_password,
 )
-from config import SUPPORTED_LOCALES
+from config import RATE_LIMIT_BACKEND, SUPPORTED_LOCALES
 from db.models import LoginAttempt, PasswordResetRequest, PasswordResetToken, User
 from db.session import get_session
-
-logger = logging.getLogger(__name__)
+from notifications import notify
+from rate_limit import enforce_redis_limit
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -47,7 +44,14 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def _rate_limit_register(ip: str) -> None:
+async def _rate_limit_register(ip: str) -> None:
+    if RATE_LIMIT_BACKEND == "redis":
+        await enforce_redis_limit(
+            "register", ip, limit=REGISTER_LIMIT, window_seconds=REGISTER_WINDOW_SECONDS
+        )
+        return
+    import time
+
     now = time.time()
     hits = [t for t in _register_hits.get(ip, []) if now - t < REGISTER_WINDOW_SECONDS]
     if len(hits) >= REGISTER_LIMIT:
@@ -101,7 +105,7 @@ async def register(
     response: Response,
     session: AsyncSession = Depends(get_session),
 ):
-    _rate_limit_register(_client_ip(request))
+    await _rate_limit_register(_client_ip(request))
     email = payload.email.lower()
     if payload.preferred_locale not in SUPPORTED_LOCALES:
         raise HTTPException(status_code=422, detail="invalid_locale")
@@ -194,16 +198,6 @@ async def refresh(
     return {"message": "refreshed"}
 
 
-async def _send_reset_email_mock(email: str, token: str) -> None:
-    base = os.environ.get("FRONTEND_URL", "http://localhost:3000").rstrip("/")
-    link = f"{base}/reset-password?token={token}"
-    # Mock provider: development-safe log line only, never in production envs.
-    if os.environ.get("APP_ENV", "development") == "development":
-        logger.warning("MOCK EMAIL password reset link for %s: %s", email, link)
-    else:
-        logger.info("Password reset email queued for %s via provider=%s", email, os.environ.get("EMAIL_PROVIDER", "mock"))
-
-
 @router.post("/forgot-password")
 async def forgot_password(
     payload: ForgotPasswordIn,
@@ -226,6 +220,7 @@ async def forgot_password(
         return GENERIC_RESET_RESPONSE
     session.add(PasswordResetRequest(email=email))
     user = await session.scalar(select(User).where(User.email == email))
+    reset_event = None
     if user:
         token = secrets.token_urlsafe(32)
         session.add(
@@ -237,8 +232,15 @@ async def forgot_password(
                 + timedelta(seconds=PASSWORD_RESET_TTL_SECONDS),
             )
         )
-        await _send_reset_email_mock(email, token)
+        from config import FRONTEND_URL
+
+        reset_event = {
+            "email": email,
+            "reset_url": f"{FRONTEND_URL.rstrip('/')}/reset-password?token={token}",
+        }
     await session.commit()
+    if reset_event:
+        await notify("password.reset", reset_event)
     return GENERIC_RESET_RESPONSE
 
 
@@ -280,11 +282,6 @@ async def reset_password(
     )
     await session.commit()
     return {"message": "password_updated"}
-
-
-@router.get("/seller/ping")
-async def seller_ping(user: User = Depends(require_roles("seller", "admin"))):
-    return {"area": "seller", "user": user.email}
 
 
 @router.get("/admin/ping")

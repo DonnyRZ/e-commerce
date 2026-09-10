@@ -3,6 +3,7 @@ import { ArrowRight } from "lucide-react";
 import { useI18n } from "@/i18n";
 import { EDITORIALS, localizedField } from "@/data/demo";
 import { mediaUrl, pickLocalized } from "@/lib/localize";
+import ImageWithFallback from "./ImageWithFallback";
 
 export default function EditorialSection({ stories }) {
   const { locale, t } = useI18n();
@@ -37,7 +38,7 @@ export default function EditorialSection({ stories }) {
         {items.map((item) => (
           <article key={item.id} data-testid={`editorial-card-${item.slug}`} className="group">
             <Link to={item.href} className="block overflow-hidden bg-secondary">
-              <img
+              <ImageWithFallback
                 src={item.image}
                 alt={item.title}
                 loading="lazy"

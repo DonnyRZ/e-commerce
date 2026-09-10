@@ -22,7 +22,7 @@ export default function PriceDisplay({
   return (
     <span
       data-testid={dataTestId || "price-display"}
-      className={`inline-flex items-baseline gap-2 ${className}`}
+      className={`inline-flex max-w-full flex-wrap items-baseline gap-2 ${className}`}
     >
       <span className={compareAt ? "font-semibold text-primary" : "font-semibold"}>
         {format(amount)}

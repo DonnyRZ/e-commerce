@@ -174,6 +174,26 @@ def _validate_translations(translations: dict, require_en: bool) -> None:
         _bad_request("invalid_locale", {"locales": sorted(unknown)})
     if require_en and "en" not in translations:
         _bad_request("translation_en_required")
+    for locale, translation in translations.items():
+        for field in ("name", "short_description", "description"):
+            value = getattr(translation, field, None)
+            if value and _UNSAFE_TEXT.search(value):
+                _bad_request("unsafe_text", {"locale": locale, "field": field})
+
+
+def _validate_price_order(base_price: int, compare_at_price: Optional[int]) -> None:
+    if compare_at_price is not None and compare_at_price < base_price:
+        _bad_request("compare_price_below_base")
+
+
+def _validate_variant_prices(
+    price_override: Optional[int],
+    sale_price_override: Optional[int],
+    base_price: Optional[int] = None,
+) -> None:
+    regular_price = price_override if price_override is not None else base_price
+    if sale_price_override is not None and regular_price is not None and sale_price_override >= regular_price:
+        _bad_request("sale_price_not_below_regular")
 
 
 async def _check_skus(session: AsyncSession, skus: list[str], exclude_variant_id: Optional[str] = None) -> None:
@@ -474,6 +494,11 @@ async def create_product(
     if payload.status not in PRODUCT_STATUSES:
         _bad_request("invalid_status")
     await _validate_category(session, payload.category_id)
+    _validate_price_order(payload.base_price, payload.compare_at_price)
+    for variant in payload.variants:
+        _validate_variant_prices(
+            variant.price_override, variant.sale_price_override, payload.base_price
+        )
     await _check_skus(session, [v.sku for v in payload.variants])
 
     product = Product(
@@ -547,6 +572,10 @@ async def update_product(
         await _validate_category(session, data["category_id"])
     if "media" in data:
         _validate_media(data["media"] or [])
+    _validate_price_order(
+        data.get("base_price", product.base_price),
+        data.get("compare_at_price", product.compare_at_price),
+    )
     if "translations" in data and data["translations"] is not None:
         translations = payload.translations or {}
         _validate_translations(translations, require_en=False)
@@ -594,6 +623,9 @@ async def create_variant(
     session: AsyncSession = Depends(get_session),
 ):
     product = await _own_product(session, product_id, user.id)
+    _validate_variant_prices(
+        payload.price_override, payload.sale_price_override, product.base_price
+    )
     await _check_skus(session, [payload.sku])
     variant = ProductVariant(
         product_id=product.id,
@@ -625,6 +657,12 @@ async def update_variant(
     data = payload.model_dump(exclude_unset=True)
     if "sku" in data and data["sku"] != variant.sku:
         await _check_skus(session, [data["sku"]], exclude_variant_id=variant.id)
+    product = await session.get(Product, variant.product_id)
+    _validate_variant_prices(
+        data.get("price_override", variant.price_override),
+        data.get("sale_price_override", variant.sale_price_override),
+        product.base_price if product else None,
+    )
     for field in ("sku", "option_values", "price_override", "sale_price_override", "image_url", "is_active"):
         if field in data:
             setattr(variant, field, data[field])

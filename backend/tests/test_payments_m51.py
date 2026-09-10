@@ -7,8 +7,9 @@ import uuid
 import pytest
 import requests
 
-BASE = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001")
+BASE = os.environ.get("REACT_APP_BACKEND_URL", "http://127.0.0.1:8000")
 API = f"{BASE}/api/v1"
+MOCK_SECRET = os.environ.get("CLICK_MOCK_SECRET_KEY", "local-click-secret")
 
 
 def make_order(amount=350000):
@@ -61,28 +62,28 @@ def test_failed_flow():
     o = make_order()
     res = simulate(o["merchant_trans_id"], "FAILED")
     assert res["payment_status"] == "failed"
-    assert res["order_payment_state"] == "unpaid"
+    assert res["order_payment_state"] == "failed"
 
 
 def test_cancelled_flow():
     o = make_order()
     res = simulate(o["merchant_trans_id"], "CANCELLED")
     assert res["payment_status"] == "cancelled"
-    assert res["order_payment_state"] == "unpaid"
+    assert res["order_payment_state"] == "cancelled"
 
 
 def test_timeout_flow_stays_prepared():
     o = make_order()
     res = simulate(o["merchant_trans_id"], "TIMEOUT")
     assert res["payment_status"] == "prepared"
-    assert res["order_payment_state"] == "unpaid"
+    assert res["order_payment_state"] in ("pending", "unpaid")
 
 
 def test_expired_flow():
     o = make_order()
     res = simulate(o["merchant_trans_id"], "EXPIRED")
     assert res["payment_status"] == "expired"
-    assert res["order_payment_state"] == "unpaid"
+    assert res["order_payment_state"] == "expired"
 
 
 def test_wrong_amount_no_mutation():
@@ -171,7 +172,7 @@ def _sign(fields, secret, action):
     return hashlib.md5("".join(parts).encode()).hexdigest()
 
 
-def _raw_params(payment_id, amount, action, secret="mock-dev-5c2f8a91e7b4d603", **over):
+def _raw_params(payment_id, amount, action, secret=None, **over):
     import datetime
     fields = {
         "click_trans_id": uuid.uuid4().hex[:10],
@@ -182,8 +183,9 @@ def _raw_params(payment_id, amount, action, secret="mock-dev-5c2f8a91e7b4d603", 
         "action": action,
         "error": "0",
         "error_note": "",
-        "sign_time": datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "sign_time": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S"),
     }
+    secret = secret or MOCK_SECRET
     if action == "1":
         fields["merchant_prepare_id"] = over.pop("merchant_prepare_id", "0")
     fields.update(over)

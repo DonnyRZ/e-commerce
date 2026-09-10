@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2 } from "lucide-react";
 import { useI18n } from "@/i18n";
@@ -53,6 +53,13 @@ export default function OrderConfirmationPage() {
         </Link>
       </div>
     );
+  }
+
+  // A confirmation page is reserved for a provider-confirmed payment. This
+  // also protects direct links/bookmarks from presenting an unpaid order as
+  // successful.
+  if (order.payment_state !== "paid") {
+    return <Navigate replace to={`/payment-pending?${searchParams.toString()}`} />;
   }
 
   return (

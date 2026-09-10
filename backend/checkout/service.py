@@ -43,6 +43,18 @@ class CheckoutError(Exception):
         self.extra = extra or {}
 
 
+def ensure_idempotent_owner(
+    order: Order,
+    *,
+    user_id: Optional[str],
+    cart_id: str,
+) -> None:
+    """Prevent an idempotency key from replaying another customer's order."""
+
+    if order.user_id != user_id or order.cart_id != cart_id:
+        raise CheckoutError("idempotency_key_conflict", 409)
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -184,6 +196,11 @@ async def create_order(
         select(Order).where(Order.idempotency_key == idempotency_key)
     )
     if existing:
+        ensure_idempotent_owner(
+            existing,
+            user_id=user.id if user else None,
+            cart_id=cart.id,
+        )
         return existing, False
     totals = await compute_cart_totals(session, cart, shipping_method, lock=True)
     now = _now()

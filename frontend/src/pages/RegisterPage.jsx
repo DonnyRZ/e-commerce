@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { LOCALE_LABELS, SUPPORTED_LOCALES, useI18n } from "@/i18n";
 import { useAuth } from "@/lib/AuthContext";
 import { authErrorKey } from "@/lib/api";
+import BrandLogo from "@/components/brand/BrandLogo";
 
 export default function RegisterPage() {
   const { t, locale } = useI18n();
@@ -39,6 +40,9 @@ export default function RegisterPage() {
 
   return (
     <div data-testid="register-page" className="mx-auto max-w-md py-12 lg:py-20">
+      <div className="mb-10 flex justify-center">
+        <BrandLogo size="lg" to="/" testId="register-brand-logo" priority />
+      </div>
       <h1 className="text-2xl font-semibold tracking-tight lg:text-3xl">
         {t("auth.register")}
       </h1>

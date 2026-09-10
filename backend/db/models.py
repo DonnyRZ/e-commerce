@@ -6,10 +6,12 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -172,6 +174,20 @@ class ProductVariant(TimestampMixin, Base):
 
 class Cart(TimestampMixin, Base):
     __tablename__ = "carts"
+    __table_args__ = (
+        Index(
+            "uq_carts_user_id_not_null",
+            "user_id",
+            unique=True,
+            postgresql_where=text("user_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_carts_guest_token_not_null",
+            "guest_token",
+            unique=True,
+            postgresql_where=text("guest_token IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
     user_id: Mapped[Optional[str]] = mapped_column(
@@ -310,6 +326,16 @@ class PaymentEvent(Base):
 
 class Payment(TimestampMixin, Base):
     __tablename__ = "payments"
+    __table_args__ = (
+        Index(
+            "uq_payments_one_active_order",
+            "order_id",
+            unique=True,
+            postgresql_where=text(
+                "status NOT IN ('failed', 'cancelled', 'expired', 'refunded', 'reversed')"
+            ),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
     order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"), index=True)

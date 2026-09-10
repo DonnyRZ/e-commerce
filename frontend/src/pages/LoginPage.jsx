@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/lib/AuthContext";
 import { authErrorKey } from "@/lib/api";
+import BrandLogo from "@/components/brand/BrandLogo";
 
 export default function LoginPage() {
   const { t } = useI18n();
@@ -18,8 +19,8 @@ export default function LoginPage() {
     setError("");
     setBusy(true);
     try {
-      await login(email, password);
-      navigate("/account");
+      const authenticatedUser = await login(email, password);
+      navigate(authenticatedUser.role === "admin" ? "/admin" : "/account");
     } catch (err) {
       setError(t(authErrorKey(err)));
     } finally {
@@ -29,6 +30,9 @@ export default function LoginPage() {
 
   return (
     <div data-testid="login-page" className="mx-auto max-w-md py-12 lg:py-20">
+      <div className="mb-10 flex justify-center">
+        <BrandLogo size="lg" to="/" testId="login-brand-logo" priority />
+      </div>
       <h1 className="text-2xl font-semibold tracking-tight lg:text-3xl">
         {t("auth.login")}
       </h1>

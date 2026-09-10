@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend-static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: latest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: uv pip install --system -r backend/requirements.txt
+      - name: Compile backend
+        run: python -m compileall -q backend
+      - name: Backend smoke script syntax
+        run: python -m py_compile backend/scripts/smoke_local.py
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Frontend tests
+        working-directory: frontend
+        run: npm run test:ci
+      - name: Frontend lint
+        working-directory: frontend
+        run: npm run lint
+      - name: Production build
+        working-directory: frontend
+        run: npm run build
+
+  backend-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start isolated stack
+        run: docker compose up -d --build
+      - name: Bootstrap isolated operator and content
+        run: |
+          docker compose exec -T -e SEED_ADMIN_EMAIL=operator@example.com -e SEED_ADMIN_PASSWORD='AdminPass123!' -e SEED_CUSTOMER_EMAIL=customer@example.com -e SEED_CUSTOMER_PASSWORD='CustomerPass123!' backend python seed_accounts.py
+          docker compose exec -T -e STORE_OWNER_EMAIL=operator@example.com backend python seed_catalog.py
+          docker compose exec -T backend python seed_cms.py
+      - name: Run API smoke test
+        run: docker compose exec -T -e API_BASE=http://backend:8000 -e SMOKE_ADMIN_EMAIL=operator@example.com -e SMOKE_ADMIN_PASSWORD='AdminPass123!' backend python scripts/smoke_local.py
+      - name: Collect service logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+      - name: Tear down isolated stack
+        if: always()
+        run: docker compose down -v

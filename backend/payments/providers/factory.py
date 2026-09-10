@@ -8,6 +8,8 @@ from payments.providers.mock_click import MockClickProvider
 def get_provider() -> PaymentProvider:
     from config import (
         CLICK_MERCHANT_ID,
+        CLICK_MERCHANT_USER_ID,
+        CLICK_API_BASE_URL,
         CLICK_MODE,
         CLICK_MOCK_SECRET_KEY,
         CLICK_PAYMENT_URL,
@@ -30,6 +32,7 @@ def get_provider() -> PaymentProvider:
             for name, value in {
                 "CLICK_SERVICE_ID": CLICK_SERVICE_ID,
                 "CLICK_MERCHANT_ID": CLICK_MERCHANT_ID,
+                "CLICK_MERCHANT_USER_ID": CLICK_MERCHANT_USER_ID,
                 "CLICK_SECRET_KEY": CLICK_SECRET_KEY,
             }.items()
             if not value
@@ -41,8 +44,11 @@ def get_provider() -> PaymentProvider:
         return ClickProvider(
             mode=CLICK_MODE,
             service_id=CLICK_SERVICE_ID,
+            merchant_id=CLICK_MERCHANT_ID,
             secret_key=CLICK_SECRET_KEY,
             payment_url=CLICK_PAYMENT_URL,
+            api_base_url=CLICK_API_BASE_URL,
+            merchant_user_id=CLICK_MERCHANT_USER_ID,
         )
 
     # Unknown mode: fail closed, never fall back to production.

@@ -218,7 +218,7 @@ export default function CmsContentEditPage() {
   const preview = async () => {
     try {
       const { preview_url } = await getCmsPreviewToken(entryId);
-      window.open(`${process.env.REACT_APP_BACKEND_URL}${preview_url}`, "_blank", "noopener");
+      window.open(mediaUrl(preview_url), "_blank", "noopener");
     } catch {
       toast.error("Could not create preview link");
     }

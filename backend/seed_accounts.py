@@ -1,4 +1,4 @@
-"""Idempotent seed for auth accounts (admin / demo customer / demo seller).
+"""Idempotent seed for auth accounts (single operator admin / demo customer).
 
 Run: python3 seed_accounts.py
 Passwords come from SEED_* env vars — never hardcoded.
@@ -10,14 +10,12 @@ import os
 from sqlalchemy import select
 
 from auth import hash_password
-from db.models import SellerProfile, User
+from db.models import User
 from db.session import SessionLocal
 
 ACCOUNTS = [
     ("SEED_ADMIN_EMAIL", "SEED_ADMIN_PASSWORD", "admin", "Platform", "Owner"),
-    ("SEED_SELLER_EMAIL", "SEED_SELLER_PASSWORD", "seller", "UNIQLO Products", "Partner"),
     ("SEED_CUSTOMER_EMAIL", "SEED_CUSTOMER_PASSWORD", "customer", "Demo", "Customer"),
-    ("SEED_SELLER2_EMAIL", "SEED_SELLER2_PASSWORD", "seller", "Tropical Glow", "Beauty"),
 ]
 
 
@@ -48,21 +46,6 @@ async def seed():
                 )
                 session.add(user)
                 action = "created"
-            if role == "seller":
-                await session.flush()
-                profile = await session.scalar(
-                    select(SellerProfile).where(SellerProfile.user_id == user.id)
-                )
-                if not profile:
-                    store = f"{first} {last}".strip()
-                    session.add(
-                        SellerProfile(
-                            user_id=user.id,
-                            store_name=store,
-                            slug=email.split("@")[0].replace(".", "-"),
-                        )
-                    )
-                    print(f"  + seller_profile: {store}")
             print(f"{action}: {email} ({role})")
         await session.commit()
 

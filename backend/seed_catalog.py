@@ -1,11 +1,12 @@
 """Idempotent catalog seed for MUSLIMAH CANTIK (PostgreSQL, Milestone 3).
 
 Run: python3 seed_catalog.py
-Creates departments, categories (+translations), sellers, products
-(+translations), variants. Safe to re-run.
+Creates departments, categories (+translations), the single store owner,
+products (+translations), and variants. Safe to re-run.
 """
 
 import asyncio
+import os
 
 from sqlalchemy import func, select
 
@@ -72,11 +73,7 @@ SKINCARE_CATEGORIES = [
     ("face-mist", 5, {"en": "Face Mist", "id": "Face Mist", "uz": "Yuz spreyi", "ru": "Мист для лица"}, img("1616750819456-5cdee9b85d22")),
 ]
 
-SELLERS = [
-    ("official@muslimahcantik.id", "MUSLIMAH CANTIK Official"),
-    ("partner-uniqlo@muslimahcantik.id", "UNIQLO Products Partner"),
-    ("tropicalglow@muslimahcantik.id", "Tropical Glow Halal Beauty"),
-]
+STORE_OWNER = ("official@muslimahcantik.id", "MUSLIMAH CANTIK Official")
 
 SIZES_6 = ["XS", "S", "M", "L", "XL", "XXL"]
 SIZES_4 = ["S", "M", "L", "XL"]
@@ -110,7 +107,6 @@ PRODUCTS = [
     {
         "slug": "gray-sweat-oversized-full-zip-hoodie",
         "category": "sweatshirts-hoodies",
-        "seller": "partner-uniqlo@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MC Essentials",
         "base_price": 499000,
@@ -140,7 +136,6 @@ PRODUCTS = [
     {
         "slug": "essential-crewneck-sweatshirt",
         "category": "tshirts-sweats-fleece",
-        "seller": "partner-uniqlo@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MC Essentials",
         "base_price": 349000,
@@ -167,7 +162,6 @@ PRODUCTS = [
     {
         "slug": "wide-leg-relaxed-trousers",
         "category": "bottoms",
-        "seller": "partner-uniqlo@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MC Essentials",
         "base_price": 399000,
@@ -194,7 +188,6 @@ PRODUCTS = [
     {
         "slug": "premium-chiffon-hijab",
         "category": "hijab-kerudung",
-        "seller": "official@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MUSLIMAH CANTIK",
         "base_price": 89000,
@@ -221,7 +214,6 @@ PRODUCTS = [
     {
         "slug": "gamis-a-line-dress",
         "category": "gamis",
-        "seller": "official@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MUSLIMAH CANTIK",
         "base_price": 389000,
@@ -248,7 +240,6 @@ PRODUCTS = [
     {
         "slug": "abaya-classic-black",
         "category": "abaya",
-        "seller": "official@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MUSLIMAH CANTIK",
         "base_price": 549000,
@@ -272,7 +263,6 @@ PRODUCTS = [
     {
         "slug": "mukena-travel-set",
         "category": "mukena",
-        "seller": "official@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MUSLIMAH CANTIK",
         "base_price": 259000,
@@ -297,7 +287,6 @@ PRODUCTS = [
     {
         "slug": "kids-muslimah-daily-set",
         "category": "busana-muslimah-anak",
-        "seller": "official@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MUSLIMAH CANTIK Kids",
         "base_price": 229000,
@@ -324,7 +313,6 @@ PRODUCTS = [
     {
         "slug": "halal-gentle-facial-wash",
         "category": "facial-wash",
-        "seller": "tropicalglow@muslimahcantik.id",
         "product_type": "skincare",
         "brand": "Tropical Glow",
         "base_price": 79000,
@@ -349,7 +337,6 @@ PRODUCTS = [
     {
         "slug": "brightening-serum-30ml",
         "category": "serum",
-        "seller": "tropicalglow@muslimahcantik.id",
         "product_type": "skincare",
         "brand": "Tropical Glow",
         "base_price": 149000,
@@ -373,7 +360,6 @@ PRODUCTS = [
     {
         "slug": "tropical-moist-cream-50ml",
         "category": "moist-cream",
-        "seller": "tropicalglow@muslimahcantik.id",
         "product_type": "skincare",
         "brand": "Tropical Glow",
         "base_price": 129000,
@@ -397,7 +383,6 @@ PRODUCTS = [
     {
         "slug": "halal-daily-sunscreen-spf50",
         "category": "sunscreen",
-        "seller": "tropicalglow@muslimahcantik.id",
         "product_type": "skincare",
         "brand": "Tropical Glow",
         "base_price": 119000,
@@ -453,10 +438,10 @@ async def upsert_category(session, *, slug, kind, department, names, sort_order,
     return cat.id
 
 
-async def upsert_product(session, spec, seller_ids, cat_ids):
+async def upsert_product(session, spec, owner_id, cat_ids):
     existing = await session.scalar(select(Product).where(Product.slug == spec["slug"]))
     fields = dict(
-        seller_id=seller_ids[spec["seller"]],
+        seller_id=owner_id,
         category_id=cat_ids[spec["category"]],
         product_type=spec["product_type"],
         brand=spec["brand"],
@@ -517,19 +502,26 @@ async def upsert_product(session, spec, seller_ids, cat_ids):
 
 async def seed():
     async with SessionLocal() as session:
-        seller_ids = {}
-        for email, name in SELLERS:
-            existing = await session.scalar(select(User).where(User.email == email))
-            if existing:
-                existing.full_name = name
-                existing.role = "seller"
-                existing.is_active = True
-                seller_ids[email] = existing.id
-            else:
-                user = User(email=email, full_name=name, role="seller")
-                session.add(user)
-                await session.flush()
-                seller_ids[email] = user.id
+        email = (
+            os.environ.get("STORE_OWNER_EMAIL", "").strip().lower()
+            or os.environ.get("SEED_ADMIN_EMAIL", "").strip().lower()
+            or STORE_OWNER[0]
+        )
+        name = STORE_OWNER[1]
+        owner = await session.scalar(select(User).where(User.email == email))
+        if not owner:
+            owner = await session.scalar(
+                select(User)
+                .where(User.role.in_(("admin", "owner")), User.is_active.is_(True))
+                .order_by(User.created_at, User.id)
+            )
+        if not owner:
+            raise RuntimeError(
+                "No active operator account found; run seed_accounts.py first"
+            )
+        owner.full_name = owner.full_name or name
+        owner.role = "admin"
+        owner.is_active = True
 
         dept_ids = {}
         for slug, order, names, image_url in DEPARTMENTS:
@@ -563,7 +555,7 @@ async def seed():
                 )
 
         for spec in PRODUCTS:
-            await upsert_product(session, spec, seller_ids, cat_ids)
+            await upsert_product(session, spec, owner.id, cat_ids)
 
         await session.commit()
 
@@ -574,8 +566,8 @@ async def seed():
             "categories": await session.scalar(
                 select(func.count()).select_from(Category).where(Category.kind == "category")
             ),
-            "sellers": await session.scalar(
-                select(func.count()).select_from(User).where(User.role == "seller")
+            "store_owners": await session.scalar(
+                select(func.count()).select_from(User).where(User.id == owner.id)
             ),
             "products": await session.scalar(select(func.count()).select_from(Product)),
             "variants": await session.scalar(select(func.count()).select_from(ProductVariant)),

@@ -30,6 +30,12 @@ class LocalFilesystemStorage(MediaStorageProvider):
         safe = os.path.basename(key)
         return str(self.root / safe)
 
+    def public_url(self, key: str) -> str:
+        # Local media is intentionally delivered through the authenticated
+        # application's media route so the frontend does not need filesystem
+        # knowledge.
+        return ""
+
     async def delete(self, key: str) -> None:
         try:
             os.remove(self.resolve_path(key))

@@ -10,6 +10,7 @@ import asyncio
 import os
 import re
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -18,7 +19,10 @@ from sqlalchemy import func, select
 from db.models import CmsContentEntry, CmsContentTranslation
 from db.session import SessionLocal
 
-TRANSLATIONS_PATH = "/app/frontend/src/i18n/translations.js"
+TRANSLATIONS_PATH = os.environ.get(
+    "FRONTEND_TRANSLATIONS_PATH",
+    str(Path(__file__).resolve().parent.parent / "frontend" / "src" / "i18n" / "translations.js"),
+)
 LOCALES = ("en", "id", "uz", "ru")
 
 HERO_IMAGE = (
@@ -205,6 +209,11 @@ FAQ_ITEMS = [
 
 def _load_translations():
     """Extract {key: {locale: value}} from the frontend translations file."""
+    if not Path(TRANSLATIONS_PATH).is_file():
+        raise RuntimeError(
+            f"Frontend translations file not found: {TRANSLATIONS_PATH}. "
+            "Set FRONTEND_TRANSLATIONS_PATH when running the CMS seed from a container."
+        )
     src = open(TRANSLATIONS_PATH, encoding="utf-8").read()
     out: dict = {}
     for locale in LOCALES:

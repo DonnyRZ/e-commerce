@@ -2,9 +2,9 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { addAdminReviewNote, adminMockRefund, getAdminPaymentsReview } from "@/lib/api";
+import { addAdminReviewNote, adminRefund, getAdminPaymentsReview } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatusPill, fmtDate, fmtMoney, inputClass } from "./adminUtils";
+import { StatusPill, fmtDate, fmtMoney } from "./adminUtils";
 
 function ReviewCard({ item, onSaved }) {
   const [note, setNote] = useState(item.review_note || "");
@@ -28,8 +28,8 @@ function ReviewCard({ item, onSaved }) {
     if (busy || !window.confirm(`Refund ${fmtMoney(item.amount, item.currency)} for order ${item.order_number}?`)) return;
     setBusy(true);
     try {
-      await adminMockRefund(item.payment_id);
-      toast.success("Payment refunded (mock)");
+      await adminRefund(item.payment_id);
+      toast.success("Payment refund requested");
       onSaved();
     } catch (err) {
       const d = err?.response?.data?.detail;
@@ -100,7 +100,7 @@ function ReviewCard({ item, onSaved }) {
             data-testid={`review-refund-${item.payment_id}`}
             className="h-10 border border-red-300 px-5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
           >
-            Mock refund
+            Refund payment
           </button>
         ) : null}
       </div>

@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill, fmtDate, fmtMoney, inputClass } from "./adminUtils";
 
 const ORDER_STATUSES = ["pending_payment", "payment_review", "paid", "processing", "shipped", "delivered", "cancelled", "refunded"];
-const PAYMENT_STATES = ["pending", "paid", "failed", "reconciliation_required", "refunded"];
+const PAYMENT_STATES = ["pending", "paid", "failed", "cancelled", "expired", "reconciliation_required", "refunded"];
 
 export default function AdminOrdersPage() {
   const [params, setParams] = useSearchParams();

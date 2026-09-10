@@ -2,7 +2,7 @@
 HMAC-signed time-limited draft preview and media file serving."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -102,6 +102,15 @@ async def media_file(key: str, session: AsyncSession = Depends(get_session)):
     if not asset:
         raise HTTPException(status_code=404, detail="media_not_found")
     storage = get_media_storage()
+    public_url = storage.public_url(asset.storage_key)
+    if public_url:
+        return RedirectResponse(
+            public_url,
+            headers={
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "public, max-age=31536000, immutable",
+            },
+        )
     return FileResponse(
         storage.resolve_path(asset.storage_key),
         media_type=asset.mime_type,

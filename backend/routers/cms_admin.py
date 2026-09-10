@@ -440,7 +440,7 @@ async def _media_payload(session: AsyncSession, asset: CmsMediaAsset) -> dict:
     )
     return {
         "id": asset.id,
-        "url": f"/api/v1/cms/media/file/{asset.storage_key}",
+        "url": await cms.media_url(session, asset),
         "original_filename": asset.original_filename,
         "mime_type": asset.mime_type,
         "file_size": asset.file_size,

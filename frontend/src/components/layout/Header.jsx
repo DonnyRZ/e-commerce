@@ -10,6 +10,7 @@ import LanguageSelector from "./LanguageSelector";
 import MobileNavigation from "./MobileNavigation";
 import SecondaryNav from "./SecondaryNav";
 import SearchOverlay from "./SearchOverlay";
+import BrandLogo from "@/components/brand/BrandLogo";
 
 const UTILITY_LINKS = [
   { key: "header.wishlist", to: "/wishlist", icon: Heart, testId: "wishlist-entry" },
@@ -34,13 +35,7 @@ export default function Header() {
         <div className="border-b border-border">
           <div className="mx-auto flex h-14 w-full max-w-[1440px] items-center gap-2 px-4 sm:px-6 lg:h-16 lg:gap-4 lg:px-10">
             <MobileNavigation />
-            <Link
-              to="/"
-              data-testid="brand-logo"
-              className="text-sm font-extrabold tracking-widest sm:text-base"
-            >
-              {t("brand.name")}
-            </Link>
+            <BrandLogo size="md" to="/" testId="brand-logo" priority />
             <nav
               className="ml-6 hidden items-center gap-7 lg:flex"
               aria-label="Primary"
@@ -73,7 +68,7 @@ export default function Header() {
                   to={to}
                   data-testid={testId}
                   aria-label={t(key)}
-                  className="relative inline-flex h-9 w-9 items-center justify-center text-foreground transition-colors hover:text-primary"
+                  className={`relative ${testId === "cart-entry" ? "inline-flex" : "hidden sm:inline-flex"} h-9 w-9 items-center justify-center text-foreground transition-colors hover:text-primary`}
                 >
                   <Icon className="h-5 w-5" aria-hidden="true" />
                   {counts[testId] > 0 ? (
@@ -86,7 +81,9 @@ export default function Header() {
                   ) : null}
                 </Link>
               ))}
-              <LanguageSelector />
+              <span className="hidden sm:inline-flex">
+                <LanguageSelector />
+              </span>
             </div>
           </div>
         </div>

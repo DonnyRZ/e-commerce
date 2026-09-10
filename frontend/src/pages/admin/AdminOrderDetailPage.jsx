@@ -1,8 +1,9 @@
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
-import { getAdminOrder, updateAdminOrderStatus } from "@/lib/api";
+import { adminRefund, getAdminOrder, updateAdminOrderStatus } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill, fmtDate, fmtMoney } from "./adminUtils";
 
@@ -11,6 +12,7 @@ const NEXT_STATUS = { paid: "processing", processing: "shipped", shipped: "deliv
 export default function AdminOrderDetailPage() {
   const { orderNumber } = useParams();
   const queryClient = useQueryClient();
+  const [refunding, setRefunding] = useState(false);
   const { data: order, isLoading } = useQuery({
     queryKey: ["admin-order", orderNumber],
     queryFn: () => getAdminOrder(orderNumber),
@@ -29,6 +31,24 @@ export default function AdminOrderDetailPage() {
       const d = err?.response?.data?.detail;
       const code = typeof d === "string" ? d : d?.error;
       toast.error(code === "payment_not_eligible" ? "Order payment is not eligible for fulfillment." : "Status update failed.");
+    }
+  };
+
+  const refund = async () => {
+    if (!order?.payment?.id || refunding) return;
+    if (!window.confirm(`Refund ${fmtMoney(order.payment.amount, order.currency)} for order ${order.order_number}?`)) return;
+    setRefunding(true);
+    try {
+      await adminRefund(order.payment.id);
+      toast.success("Payment refunded");
+      queryClient.invalidateQueries({ queryKey: ["admin-order", orderNumber] });
+      queryClient.invalidateQueries({ queryKey: ["admin-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] });
+    } catch (err) {
+      const d = err?.response?.data?.detail;
+      toast.error((typeof d === "object" && d?.error) || "Refund failed");
+    } finally {
+      setRefunding(false);
     }
   };
 
@@ -121,6 +141,17 @@ export default function AdminOrderDetailPage() {
                 {order.payment.paid_at ? <div className="flex justify-between"><dt className="text-neutral-500">Paid at</dt><dd>{fmtDate(order.payment.paid_at)}</dd></div> : null}
                 {order.payment.failure_code ? <div className="flex justify-between"><dt className="text-neutral-500">Failure</dt><dd className="text-red-600">{order.payment.failure_code}</dd></div> : null}
                 {order.payment.review_note ? <div className="border-t border-neutral-100 pt-2 text-xs text-neutral-500" data-testid="order-review-note">Review note: {order.payment.review_note}</div> : null}
+                {order.payment.status === "paid" ? (
+                  <button
+                    type="button"
+                    onClick={refund}
+                    disabled={refunding}
+                    data-testid="order-refund-payment"
+                    className="mt-3 h-10 w-full border border-red-300 px-4 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    {refunding ? "Refunding…" : "Refund payment"}
+                  </button>
+                ) : null}
               </dl>
             ) : (
               <p className="mt-3 text-sm text-neutral-400">No payment record.</p>

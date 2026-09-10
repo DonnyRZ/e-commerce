@@ -5,7 +5,7 @@ users keep CSRF protection. Prices/shipping/totals are always recomputed
 from PostgreSQL — the client sends only identity, address and choices.
 """
 
-import time
+from urllib.parse import urlencode
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -17,7 +17,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from auth import csrf_protect
 from checkout import service as checkout_service
 from checkout.service import CheckoutError
-from config import BASE_CURRENCY, CLICK_MODE, INVENTORY_RESERVATION_TTL_MINUTES
+from config import (
+    BASE_CURRENCY,
+    CLICK_MODE,
+    CLICK_RETURN_URL,
+    FRONTEND_URL,
+    INVENTORY_RESERVATION_TTL_MINUTES,
+    RATE_LIMIT_BACKEND,
+)
 from db.models import Order, Payment, UserAddress
 from db.session import get_session
 from notifications import notify
@@ -26,6 +33,7 @@ from payments.service import PaymentService
 from routers.auth import _client_ip
 from routers.shop import _cart_payload, _find_cart, _optional_user
 from shipping.factory import get_shipping_provider
+from rate_limit import enforce_redis_limit
 
 router = APIRouter(prefix="/api/v1/checkout", tags=["checkout"])
 
@@ -34,7 +42,14 @@ ORDER_RATE_WINDOW = 15 * 60
 _order_hits: dict = {}
 
 
-def _rate_limit_orders(ip: str) -> None:
+async def _rate_limit_orders(ip: str) -> None:
+    if RATE_LIMIT_BACKEND == "redis":
+        await enforce_redis_limit(
+            "checkout-orders", ip, limit=ORDER_RATE_LIMIT, window_seconds=ORDER_RATE_WINDOW
+        )
+        return
+    import time
+
     now = time.time()
     hits = [t for t in _order_hits.get(ip, []) if now - t < ORDER_RATE_WINDOW]
     if len(hits) >= ORDER_RATE_LIMIT:
@@ -79,7 +94,23 @@ ADDRESS_FIELDS = (
 )
 
 
-def _order_out(order: Order, payment: Payment, is_guest: bool) -> dict:
+def _payment_return_url(order: Order, is_guest: bool) -> str:
+    """Build the browser return URL used after the hosted payment flow."""
+
+    base = CLICK_RETURN_URL or f"{FRONTEND_URL.rstrip('/')}/payment-pending"
+    params = {"order": order.order_number}
+    if is_guest and order.guest_access_token:
+        params["token"] = order.guest_access_token
+    separator = "&" if "?" in base else "?"
+    return f"{base}{separator}{urlencode(params)}"
+
+
+def _order_out(
+    order: Order,
+    payment: Payment,
+    is_guest: bool,
+    payment_url: str | None = None,
+) -> dict:
     out = {
         "order_number": order.order_number,
         "status": order.status,
@@ -104,6 +135,8 @@ def _order_out(order: Order, payment: Payment, is_guest: bool) -> dict:
         if is_guest and order.guest_access_token:
             url += f"&token={order.guest_access_token}"
         out["mock_payment_url"] = url
+    elif payment_url:
+        out["payment_url"] = payment_url
     return out
 
 
@@ -162,11 +195,13 @@ async def create_checkout_order(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    _rate_limit_orders(_client_ip(request))
+    await _rate_limit_orders(_client_ip(request))
     user = await _optional_user(request, session)
     cart = await _find_cart(request, session, user)
     if not cart:
         raise HTTPException(status_code=400, detail="empty_cart")
+    request_user_id = user.id if user else None
+    request_cart_id = cart.id
 
     if user:
         contact_email = user.email
@@ -203,7 +238,8 @@ async def create_checkout_order(
             idempotency_key=payload.idempotency_key,
             locale=payload.locale,
         )
-        payment = await PaymentService(session, get_provider()).create_payment(order)
+        provider = get_provider()
+        payment = await PaymentService(session, provider).create_payment(order)
         await session.commit()
     except CheckoutError as exc:
         await session.rollback()
@@ -218,10 +254,31 @@ async def create_checkout_order(
         )
         if not order:
             raise HTTPException(status_code=409, detail="order_conflict")
+        try:
+            checkout_service.ensure_idempotent_owner(
+                order,
+                user_id=request_user_id,
+                cart_id=request_cart_id,
+            )
+        except CheckoutError as exc:
+            raise HTTPException(
+                status_code=exc.status, detail={"error": exc.code, **exc.extra}
+            )
         payment = await session.scalar(
             select(Payment).where(Payment.order_id == order.id)
         )
+        if not payment:
+            raise HTTPException(status_code=409, detail="payment_conflict")
         created = False
+
+    payment_url = None
+    if CLICK_MODE != "mock":
+        provider = get_provider()
+        payment_url = provider.build_payment_url(
+            payment.merchant_trans_id,
+            payment.amount,
+            return_url=_payment_return_url(order, is_guest=user is None),
+        )
 
     if created:
         await notify(
@@ -233,4 +290,9 @@ async def create_checkout_order(
                 "currency": order.currency,
             },
         )
-    return _order_out(order, payment, is_guest=user is None)
+    return _order_out(
+        order,
+        payment,
+        is_guest=user is None,
+        payment_url=payment_url,
+    )

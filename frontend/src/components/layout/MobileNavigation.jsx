@@ -12,6 +12,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import BrandLogo from "@/components/brand/BrandLogo";
 
 const QUICK_LINKS = [
   { key: "nav.newArrivals", to: "/shop?badge=new" },
@@ -50,7 +51,7 @@ export default function MobileNavigation() {
       <SheetContent side="left" className="w-72 overflow-y-auto p-0" data-testid="mobile-menu">
         <SheetTitle className="sr-only">{t("brand.name")}</SheetTitle>
         <div className="flex items-center justify-between border-b px-4 py-3">
-          <span className="text-sm font-extrabold tracking-widest">{t("brand.name")}</span>
+          <BrandLogo size="sm" to="/" testId="mobile-brand-logo" priority />
           <SheetClose asChild>
             <Button
               variant="ghost"
