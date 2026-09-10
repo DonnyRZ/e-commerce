@@ -1,11 +1,11 @@
-import { useI18n } from "@/i18n";
+import { useI18n, BASE_CURRENCY } from "@/i18n";
 
 const LOCALE_TAGS = { id: "id-ID", en: "en-US", uz: "uz-UZ", ru: "ru-RU" };
 
 export default function PriceDisplay({
   amount,
   compareAt,
-  currency = "IDR",
+  currency = BASE_CURRENCY,
   className = "",
 }) {
   const { locale } = useI18n();

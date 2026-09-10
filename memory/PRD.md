@@ -81,6 +81,12 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
   - Frontend: /login /register /forgot-password /reset-password /account (profile + addresses + placeholders), AuthContext (react-query), CSRF interceptor in api.js, ~45 auth keys ×4 locales.
   - Seeded accounts (see memory/test_credentials.md): admin bmulyanto@gmail.com, seller partner-uniqlo@muslimahcantik.id, customer customer.demo@muslimahcantik.id. Testing playbook: /app/auth_testing.md.
   - Verified: 46/46 pytest (incl. new test_auth_m5.py), iteration_7 + iteration_8 retest 100% — RBAC matrix, CSRF 403, mass-assignment, reset E2E, rate limits (psql-verified), 4-locale auth UI, responsive. Fixed post-test: missing common.edit/delete keys, stale-locale profile toast. GitHub milestone-5-auth NOT saved (no remote).
+- 2026-09-10: Milestone 5.1 — UZS + CLICK Payment Foundation. Status: PASS.
+  - Currency: BASE_CURRENCY=UZS everywhere (config, model defaults, seed, frontend i18n + PriceDisplay, promo/delivery strings ×4 locales); money stays integer-only.
+  - Alembic a207cd2314b3: payments + payment_events tables (FKs, unique merchant_trans_id/idempotency_key, indexes), IDR→UZS data update; clean-DB replay verified (22 tables).
+  - payments/ package: PaymentProvider ABC, MockClickProvider (in-process, zero network, 13 scenarios), ClickProvider (test/production, fails closed without credentials), factory with mode gates (unknown mode → error, never falls back to production), MD5 signature over RAW form strings + hmac.compare_digest, protocol error mapping (-1..-9), PaymentService with SELECT FOR UPDATE row locks + exactly-once paid/refund transitions + payment_events audit (no secrets).
+  - Routes: POST /api/v1/payments/click/{prepare,complete} (raw form strings preserved), mock simulator (/mock/order, /mock/simulate, /mock/status) hard-gated to CLICK_MODE=mock (404 otherwise).
+  - Verified: 69/69 pytest (incl. 23 new test_payments_m51.py — signature accept/reject, raw-amount fidelity, wrong-amount no-mutation, duplicate prepare/complete exactly-once, already-paid, service/action rejection, refund, events no-secret). Dev bugs fixed: _echo_id for non-numeric mock trans ids, mock/status join query. GitHub milestone NOT saved (no remote).
 
 ## Backlog (prioritized, from Master Context V3)
 - P0: Milestone 1 foundation (responsive shell, design tokens #145A46 emerald accent, 4-language i18n), taxonomy seed, catalog/PLP/PDP, search/filter/sort, auth+RBAC, cart, wishlist, checkout+mock payment, orders w/ idempotency + atomic inventory, seller isolation, admin core, security hardening.
@@ -90,6 +96,6 @@ Muslimah, Tropical Halal Skincare), roles customer/seller/admin, server-authorit
 ## Next Tasks
 1. Milestone 6 — Cart + Wishlist — only on explicit next prompt.
 2. Known tracked issue: preview ingress rewrites SameSite to None (CHIPS Partitioned) — origin sends lax; re-verify on VPS Nginx. CORS_ORIGINS now allowlisted (no wildcard) — set production origins on VPS.
-3. Dev ops note: `service postgresql start` needed after pod restart.
-4. Later: decouple UI locale from persisted preferred_locale for logged-in browsing (iteration_8 note); partial-PATCH semantics for addresses (optional).
-5. Cart integration point ready on PDP (variant validation + toast).
+3. Dev ops note: `service postgresql start` needed after pod restart (data dir ephemeral in dev pod; VPS uses persistent volumes).
+4. Payment foundation ready for checkout: PaymentService.create_payment(order) + provider.build_payment_url(); post-paid effects hook = PaymentService._on_payment_paid.
+5. Later: real CLICK credentials → CLICK_MODE=test; CLICK Merchant API refund verification; Split Shop decision pending merchant model clarification; fiscalization at onboarding.

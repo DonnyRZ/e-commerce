@@ -9,7 +9,7 @@ export const LOCALE_LABELS = {
   uz: "O'zbek",
   ru: "Русский",
 };
-export const BASE_CURRENCY = "IDR";
+export const BASE_CURRENCY = "UZS";
 
 const STORAGE_KEY = "mc_locale";
 

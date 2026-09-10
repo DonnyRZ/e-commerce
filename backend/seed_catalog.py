@@ -462,7 +462,7 @@ async def upsert_product(session, spec, seller_ids, cat_ids):
         brand=spec["brand"],
         base_price=spec["base_price"],
         compare_at_price=spec["compare_at_price"],
-        currency="IDR",
+        currency="UZS",
         attributes=spec["attributes"],
         tags=spec["tags"],
         media=[{"url": u, "alt": spec["slug"], "sort_order": i} for i, u in enumerate(spec["media"])],

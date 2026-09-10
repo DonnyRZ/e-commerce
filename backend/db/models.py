@@ -117,7 +117,7 @@ class Product(TimestampMixin, Base):
     brand: Mapped[str] = mapped_column(String(120), default="")
     base_price: Mapped[int] = mapped_column(Integer, default=0)
     compare_at_price: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    currency: Mapped[str] = mapped_column(String(3), default="IDR")
+    currency: Mapped[str] = mapped_column(String(3), default="UZS")
     attributes: Mapped[dict] = mapped_column(JSONB, default=dict)
     tags: Mapped[list] = mapped_column(JSONB, default=list)
     media: Mapped[list] = mapped_column(JSONB, default=list)
@@ -239,7 +239,7 @@ class Order(TimestampMixin, Base):
     shipping_amount: Mapped[int] = mapped_column(Integer, default=0)
     tax: Mapped[int] = mapped_column(Integer, default=0)
     grand_total: Mapped[int] = mapped_column(Integer, default=0)
-    currency: Mapped[str] = mapped_column(String(3), default="IDR")
+    currency: Mapped[str] = mapped_column(String(3), default="UZS")
     payment_state: Mapped[str] = mapped_column(String(20), default="unpaid")
     status: Mapped[str] = mapped_column(String(30), default="pending_payment", index=True)
     idempotency_key: Mapped[Optional[str]] = mapped_column(
@@ -277,6 +277,55 @@ class MarketplaceSettings(TimestampMixin, Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
     key: Mapped[str] = mapped_column(String(80), unique=True)
     data: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class PaymentEvent(Base):
+    __tablename__ = "payment_events"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    payment_id: Mapped[str] = mapped_column(
+        ForeignKey("payments.id", ondelete="CASCADE"), index=True
+    )
+    provider: Mapped[str] = mapped_column(String(20), default="click")
+    environment: Mapped[str] = mapped_column(String(12), default="mock")
+    event_type: Mapped[str] = mapped_column(String(40))
+    click_trans_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    provider_error_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    meta: Mapped[dict] = mapped_column(JSONB, default=dict)
+    result: Mapped[str] = mapped_column(String(20), default="ok")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+
+class Payment(TimestampMixin, Base):
+    __tablename__ = "payments"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(20), default="click")
+    environment: Mapped[str] = mapped_column(String(12), default="mock")
+    currency: Mapped[str] = mapped_column(String(3), default="UZS")
+    amount: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    merchant_trans_id: Mapped[str] = mapped_column(String(80), unique=True)
+    click_trans_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
+    click_paydoc_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    merchant_prepare_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    merchant_confirm_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    provider_reference: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(80), unique=True, nullable=True)
+    failure_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    failure_note: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    events: Mapped[list["PaymentEvent"]] = relationship(
+        back_populates="payment", cascade="all, delete-orphan"
+    )
+
+
+PaymentEvent.payment = relationship("Payment", back_populates="events")
 
 
 class StatusCheck(Base):
