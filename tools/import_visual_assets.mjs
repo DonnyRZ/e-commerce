@@ -214,7 +214,12 @@ async function main() {
   const taxonomyWithoutMedia = (verifiedCategories.items || verifiedCategories).filter((item) => targetTaxonomySlugs.has(item.slug) && !item.media_id);
   if (taxonomyWithoutMedia.length) throw new Error(`Taxonomy assets missing: ${taxonomyWithoutMedia.map((item) => item.slug).join(", ")}`);
   const verifiedContent = await listAll("/admin/cms/content");
-  const cmsWithoutMedia = verifiedContent.filter((item) => ["home-hero", "modest-styling-guide", "hijab-styling-guide", "tropical-halal-skincare-routine", "new-season-muslimah-edit"].includes(item.slug) && !item.media_id);
+  const verifiedCmsDetails = await Promise.all(
+    verifiedContent
+      .filter((item) => ["home-hero", "modest-styling-guide", "hijab-styling-guide", "tropical-halal-skincare-routine", "new-season-muslimah-edit"].includes(item.slug))
+      .map((item) => request(`/admin/cms/content/${item.id}`))
+  );
+  const cmsWithoutMedia = verifiedCmsDetails.filter((item) => !item.media_id);
   if (cmsWithoutMedia.length) throw new Error(`CMS assets missing: ${cmsWithoutMedia.map((item) => item.slug).join(", ")}`);
   const publicBundle = await request("/cms/public/bundle");
   if (!publicBundle.hero?.image_url) throw new Error("Public CMS hero has no image URL");

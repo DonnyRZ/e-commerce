@@ -222,6 +222,7 @@ async def entry_summary(session: AsyncSession, entry: CmsContentEntry) -> dict:
         "placement": entry.placement,
         "sort_order": entry.sort_order,
         "is_visible": entry.is_visible,
+        "media_id": entry.media_id,
         "updated_at": entry.updated_at,
         "completeness": sorted(
             t.locale for t in translations if (t.title or t.body or t.description)
