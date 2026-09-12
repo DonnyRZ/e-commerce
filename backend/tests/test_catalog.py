@@ -28,7 +28,10 @@ def test_health(s):
 
 def test_status(s):
     r = s.get(f"{BASE_URL}/api/status")
-    assert r.status_code == 200
+    # The public API intentionally exposes only the liveness/readiness
+    # endpoints.  Keep this aligned with the production smoke contract so a
+    # generic status/debug surface is not accidentally reintroduced.
+    assert r.status_code == 404
 
 
 # ---------- Departments ----------
