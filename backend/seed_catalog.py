@@ -45,14 +45,6 @@ BATIK_WOMEN_CATEGORIES = [
     ("hijab-pashmina-batik", 6, {"en": "Batik Hijab & Pashmina", "id": "Hijab & Pashmina Batik", "uz": "Batik hijob va pashmina", "ru": "Хиджабы и пашмины из батика"}),
 ]
 
-BATIK_MEN_CATEGORIES = [
-    ("batik-koko-kemko", 1, {"en": "Batik Koko (Kemko)", "id": "Batik Koko (Kemko)", "uz": "Batik koko (kemko)", "ru": "Батик-коко (кемко)"}),
-    ("kemeja-batik-lengan-panjang", 2, {"en": "Long-Sleeve Batik Shirts", "id": "Kemeja Batik Lengan Panjang", "uz": "Uzun yengli batik ko'ylaklar", "ru": "Батиковые рубашки с длинным рукавом"}),
-    ("kemeja-batik-lengan-pendek", 3, {"en": "Short-Sleeve Batik Shirts", "id": "Kemeja Batik Lengan Pendek", "uz": "Qisqa yengli batik ko'ylaklar", "ru": "Батиковые рубашки с коротким рукавом"}),
-    ("jas-blazer-batik-luara", 4, {"en": "Batik Suits & Blazers: Luara", "id": "Jas & Blazer Batik: Luara", "uz": "Batik kostyum va blazerlar: Luara", "ru": "Костюмы и блейзеры из батика: Luara"}),
-    ("sarung-batik", 5, {"en": "Batik Sarongs", "id": "Sarung Batik", "uz": "Batik sarunglar", "ru": "Батиковые саронги"}),
-]
-
 PARFUM_WOMEN_CATEGORIES = [
     ("musk-thaharah", 1, {"en": "Musk Thaharah", "id": "Musk Thaharah", "uz": "Musk Thaharah", "ru": "Муск Тахара"}),
     ("soft-floral-powdery", 2, {"en": "Soft Floral & Powdery (Light Daily Aroma)", "id": "Soft Floral & Powdery (Aroma Ringan Harian)", "uz": "Yumshoq floral va pudrali (yengil kundalik hid)", "ru": "Мягкий цветочный и пудровый аромат (лёгкий на каждый день)"}),
@@ -60,19 +52,27 @@ PARFUM_WOMEN_CATEGORIES = [
     ("parfum-semprot-bebas-alkohol", 4, {"en": "Alcohol-Free Spray Perfume", "id": "Parfum Semprot Bebas Alkohol (Alcohol-Free Spray)", "uz": "Spirtsiz purkaladigan atir", "ru": "Спрей-парфюм без спирта"}),
 ]
 
-PARFUM_MEN_CATEGORIES = [
-    ("oud-woody", 1, {"en": "Oud & Woody (Agarwood & Woods)", "id": "Oud & Woody (Gaharu & Kayu)", "uz": "Ud va yog'ochsimon (agar va yog'och)", "ru": "Удовые и древесные (агар и древесина)"}),
-    ("kasturi-rempah", 2, {"en": "Musk & Spices", "id": "Kasturi & Rempah (Musk & Spices)", "uz": "Musk va ziravorlar", "ru": "Мускус и специи"}),
-    ("fresh-citrus-aquatic", 3, {"en": "Fresh Citrus & Aquatic", "id": "Fresh Citrus & Aquatic", "uz": "Yangi sitrus va akvatik", "ru": "Свежие цитрусовые и акватические"}),
-    ("attar-perfume-oil-premium", 4, {"en": "Premium Attar / Perfume Oil", "id": "Attar / Perfume Oil Premium", "uz": "Premium attor / atir moyi", "ru": "Премиальный аттар / парфюмерное масло"}),
-]
-
 NEW_TAXONOMY_GROUPS = [
     ("batik", "batik-wanita-muslimah", 1, {"en": "Batik Women Muslimah", "id": "Batik Wanita Muslimah", "uz": "Muslima ayollar batigi", "ru": "Батик для мусульманок"}, BATIK_WOMEN_CATEGORIES),
-    ("batik", "batik-pria", 2, {"en": "Men's Batik", "id": "Batik Pria", "uz": "Erkaklar batigi", "ru": "Мужской батик"}, BATIK_MEN_CATEGORIES),
     ("parfum", "parfum-wanita-muslimah", 1, {"en": "Women Muslimah Perfume", "id": "Parfum Wanita Muslimah", "uz": "Muslima ayollar atirlari", "ru": "Парфюмерия для мусульманок"}, PARFUM_WOMEN_CATEGORIES),
-    ("parfum", "parfum-pria", 2, {"en": "Men's Perfume", "id": "Parfum Pria", "uz": "Erkaklar atirlari", "ru": "Мужская парфюмерия"}, PARFUM_MEN_CATEGORIES),
 ]
+
+# Legacy nodes removed after the store scope was clarified. The deployment
+# migration deletes these rows and this list prevents a future seed from
+# recreating them.
+REMOVED_CATALOG_SLUGS = {
+    "batik-pria",
+    "batik-koko-kemko",
+    "kemeja-batik-lengan-panjang",
+    "kemeja-batik-lengan-pendek",
+    "jas-blazer-batik-luara",
+    "sarung-batik",
+    "parfum-pria",
+    "oud-woody",
+    "kasturi-rempah",
+    "fresh-citrus-aquatic",
+    "attar-perfume-oil-premium",
+}
 
 MUSLIMAH_CATEGORIES = [
     ("hijab-kerudung", 1, {"en": "Hijab / Kerudung", "id": "Hijab / Kerudung", "uz": "Hijob", "ru": "Хиджаб"}, img("1550546094-9835463f9f71")),

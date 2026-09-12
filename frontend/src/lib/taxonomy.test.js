@@ -15,7 +15,7 @@ const tree = [
           { id: "tunik", kind: "category", slug: "tunik-batik", children: [] },
         ],
       },
-      { id: "sarung", kind: "category", slug: "sarung-batik", children: [] },
+      { id: "hijab", kind: "category", slug: "hijab-pashmina-batik", children: [] },
     ],
   },
 ];
@@ -27,12 +27,12 @@ describe("taxonomy helpers", () => {
       "batik-wanita-muslimah",
       "gamis-batik",
       "tunik-batik",
-      "sarung-batik",
+      "hijab-pashmina-batik",
     ]);
     expect(leafTaxonomy(tree).map((node) => node.slug)).toEqual([
       "gamis-batik",
       "tunik-batik",
-      "sarung-batik",
+      "hijab-pashmina-batik",
     ]);
   });
 
