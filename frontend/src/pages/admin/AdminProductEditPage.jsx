@@ -18,7 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { inputClass } from "./adminUtils";
 
 const LOCALES = ["en", "id", "uz", "ru"];
-const EMPTY_VARIANT = { sku: "", optionsText: "", stock: 0, price_override: "", sale_price_override: "", is_active: true };
+const EMPTY_VARIANT = { sku: "", optionsText: "", stock: 0, price_override: "", sale_price_override: "", media_id: null, image_url: "", is_active: true };
 
 function parseOptions(text) {
   const out = {};
@@ -36,11 +36,41 @@ const optionsToText = (obj) =>
 
 const MAX_PRODUCT_IMAGES = 8;
 
+const ATTRIBUTE_FIELDS = {
+  apparel: [
+    ["material", "Material"],
+    ["fit", "Fit"],
+    ["care", "Care instructions"],
+  ],
+  hijab: [
+    ["material", "Material"],
+    ["care", "Care instructions"],
+  ],
+  batik: [
+    ["material", "Material"],
+    ["motif", "Motif"],
+    ["fit", "Fit"],
+    ["care", "Care instructions"],
+  ],
+  skincare: [
+    ["skin_type", "Skin type"],
+    ["ingredients", "Ingredients"],
+    ["benefits", "Benefits"],
+    ["directions", "How to use"],
+  ],
+  parfum: [
+    ["fragrance_family", "Fragrance family"],
+    ["notes", "Notes"],
+    ["concentration", "Concentration"],
+    ["usage", "How to wear"],
+  ],
+};
+
 const normalizeMedia = (items) =>
   (Array.isArray(items) ? items : [])
     .map((item, index) => {
       if (typeof item === "string") return { url: item, sort_order: index };
-      return item && typeof item === "object" && item.url
+      return item && typeof item === "object" && (item.url || item.media_id)
         ? { ...item, sort_order: item.sort_order ?? index }
         : null;
     })
@@ -67,6 +97,7 @@ export default function AdminProductEditPage() {
     category_id: "", product_type: "general", brand: "",
     base_price: "", compare_at_price: "", status: "draft", media: [],
   });
+  const [attributes, setAttributes] = useState({});
   const [tr, setTr] = useState({ en: { name: "", short_description: "", description: "" } });
   const [activeLocale, setActiveLocale] = useState("en");
   const [variants, setVariants] = useState([{ ...EMPTY_VARIANT }]);
@@ -89,6 +120,7 @@ export default function AdminProductEditPage() {
       compare_at_price: p.compare_at_price != null ? String(p.compare_at_price) : "",
       status: p.status, media: normalizeMedia(p.media),
     });
+    setAttributes(p.attributes || {});
     setTr(p.translations || { en: { name: "" } });
     setVariants(
       (p.variants || []).map((v) => ({
@@ -96,6 +128,7 @@ export default function AdminProductEditPage() {
         stock: v.stock_quantity, active_reserved: v.active_reserved,
         price_override: v.price_override != null ? String(v.price_override) : "",
         sale_price_override: v.sale_price_override != null ? String(v.sale_price_override) : "",
+        media_id: v.media_id || null,
         image_url: v.image_url || "",
         is_active: v.is_active,
       }))
@@ -103,6 +136,7 @@ export default function AdminProductEditPage() {
   }, [productQuery.data]);
 
   const setF = (key) => (e) => setForm((current) => ({ ...current, [key]: e.target.value }));
+  const setAttribute = (key, value) => setAttributes((current) => ({ ...current, [key]: value }));
   const setT = (key) => (e) =>
     setTr((current) => ({ ...current, [activeLocale]: { ...(current[activeLocale] || {}), [key]: e.target.value } }));
   const setV = (idx, key, value) =>
@@ -168,7 +202,7 @@ export default function AdminProductEditPage() {
 
   const rawCats = categoriesQuery.data;
   const catItems = (Array.isArray(rawCats) ? rawCats : rawCats?.items || []).filter(
-    (c) => c.kind !== "department"
+    (c) => c.kind === "category" && c.is_leaf !== false && (c.is_active || c.id === form.category_id)
   );
 
   const save = async (e) => {
@@ -180,7 +214,9 @@ export default function AdminProductEditPage() {
         Object.entries(tr).filter(([, v]) => v && v.name && v.name.trim())
       );
       const media = form.media.map((item, index) => ({ ...item, sort_order: index }));
+      const primaryMediaId = media[0]?.media_id || null;
       const primaryImageUrl = media[0]?.url || null;
+      const previousPrimaryMediaId = productQuery.data?.media?.[0]?.media_id || null;
       const previousPrimaryImageUrl = productQuery.data?.media?.[0]?.url || null;
       const base = {
         category_id: form.category_id,
@@ -189,6 +225,7 @@ export default function AdminProductEditPage() {
         base_price: parseInt(form.base_price, 10),
         compare_at_price: form.compare_at_price === "" ? null : parseInt(form.compare_at_price, 10),
         status: form.status,
+        attributes,
         media,
         translations,
       };
@@ -201,7 +238,8 @@ export default function AdminProductEditPage() {
             stock_quantity: parseInt(v.stock, 10) || 0,
             price_override: v.price_override === "" ? null : parseInt(v.price_override, 10),
             sale_price_override: v.sale_price_override === "" ? null : parseInt(v.sale_price_override, 10),
-            image_url: primaryImageUrl,
+            media_id: primaryMediaId,
+            image_url: primaryMediaId ? null : primaryImageUrl,
             is_active: Boolean(v.is_active),
           })),
         });
@@ -212,11 +250,16 @@ export default function AdminProductEditPage() {
       }
       await updateAdminProduct(productId, base);
       for (const v of variants) {
+        const usesPreviousPrimary =
+          (Boolean(v.media_id) && v.media_id === previousPrimaryMediaId) ||
+          (!v.media_id && v.image_url === previousPrimaryImageUrl);
+        const variantMediaId = usesPreviousPrimary ? primaryMediaId : (v.media_id || null);
         const body = {
           option_values: parseOptions(v.optionsText),
           price_override: v.price_override === "" ? null : parseInt(v.price_override, 10),
           sale_price_override: v.sale_price_override === "" ? null : parseInt(v.sale_price_override, 10),
-          image_url: v.image_url === previousPrimaryImageUrl ? primaryImageUrl : (v.image_url || null),
+          media_id: variantMediaId,
+          image_url: variantMediaId ? null : (usesPreviousPrimary ? primaryImageUrl : (v.image_url || null)),
           is_active: Boolean(v.is_active),
         };
         if (v.id) {
@@ -230,7 +273,8 @@ export default function AdminProductEditPage() {
           await createAdminVariant(productId, {
             ...body, sku: v.sku.trim(),
             stock_quantity: parseInt(v.stock, 10) || 0,
-            image_url: primaryImageUrl,
+            media_id: primaryMediaId,
+            image_url: primaryMediaId ? null : primaryImageUrl,
           });
         }
       }
@@ -245,6 +289,10 @@ export default function AdminProductEditPage() {
         toast.error("A variant SKU already exists.");
       } else if (code === "below_active_reservations") {
         toast.error(`Stock cannot go below ${d.active_reservations} active reservations.`);
+      } else if (code === "product_type_category_mismatch") {
+        toast.error("Batik and Parfum products must use a matching active category.");
+      } else if (code === "invalid_category") {
+        toast.error("Select an active leaf category before saving.");
       } else {
         toast.error("Save failed. Check required fields.");
       }
@@ -290,6 +338,8 @@ export default function AdminProductEditPage() {
                 <option value="general">general</option>
                 <option value="apparel">apparel</option>
                 <option value="hijab">hijab</option>
+                <option value="batik">batik</option>
+                <option value="parfum">parfum</option>
                 <option value="skincare">skincare</option>
               </select>
             </div>
@@ -315,6 +365,32 @@ export default function AdminProductEditPage() {
             </div>
           </div>
         </section>
+
+        {(ATTRIBUTE_FIELDS[form.product_type] || []).length ? (
+          <section className="border border-neutral-200 bg-white p-5" data-testid="editor-attributes">
+            <h2 className="text-sm font-semibold">{form.product_type === "parfum" ? "Fragrance details" : "Product details"}</h2>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              {(ATTRIBUTE_FIELDS[form.product_type] || []).map(([key, label]) => (
+                <div key={key}>
+                  <label className="mb-1 block text-xs font-medium text-neutral-500">{label}</label>
+                  <textarea
+                    value={attributes[key] || ""}
+                    onChange={(e) => setAttribute(key, e.target.value)}
+                    rows={key === "care" || key === "ingredients" || key === "benefits" || key === "directions" || key === "notes" || key === "usage" ? 3 : 2}
+                    className="w-full border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#145A46]"
+                    data-testid={`editor-attribute-${key}`}
+                  />
+                </div>
+              ))}
+              {form.product_type === "parfum" ? (
+                <label className="flex items-center gap-2 text-sm sm:col-span-2" data-testid="editor-alcohol-free">
+                  <input type="checkbox" checked={Boolean(attributes.alcohol_free)} onChange={(e) => setAttribute("alcohol_free", e.target.checked)} className="accent-[#145A46]" />
+                  Alcohol-free formula (only if confirmed in the master data)
+                </label>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
 
         <section className="border border-neutral-200 bg-white p-5" data-testid="editor-media">
           <div className="flex flex-wrap items-start justify-between gap-3">

@@ -14,6 +14,7 @@ export default function EditorialSection({ stories }) {
         image: mediaUrl(s.image_url),
         label: pickLocalized(s.translations, locale, "eyebrow"),
         title: pickLocalized(s.translations, locale),
+        alt: pickLocalized(s.translations, locale, "alt_text"),
         description: pickLocalized(s.translations, locale, "description"),
         ctaLabel: pickLocalized(s.translations, locale, "cta_label") || t("editorial.cta"),
         href: s.cta_url || "/shop",
@@ -24,6 +25,7 @@ export default function EditorialSection({ stories }) {
         image: item.image,
         label: localizedField(item, "labels", locale),
         title: localizedField(item, "titles", locale),
+        alt: localizedField(item, "titles", locale),
         description: localizedField(item, "descriptions", locale),
         ctaLabel: t("editorial.cta"),
         href: "/shop",
@@ -40,7 +42,7 @@ export default function EditorialSection({ stories }) {
             <Link to={item.href} className="block overflow-hidden bg-secondary">
               <ImageWithFallback
                 src={item.image}
-                alt={item.title}
+                alt={item.alt || item.title}
                 loading="lazy"
                 className="aspect-[4/3] w-full object-cover transition-transform duration-300 group-hover:scale-105"
               />

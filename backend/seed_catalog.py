@@ -27,9 +27,51 @@ def img(*_args, **_kwargs):
 
 
 DEPARTMENTS = [
-    ("women-muslimah", 1, {"en": "Women Muslimah", "id": "Busana Muslimah", "uz": "Muslima ayollar", "ru": "Женская мусульманская"}, img("1762376268273-645db555eaf9", 900)),
-    ("uniqlo-products", 2, {"en": "UNIQLO Products", "id": "Produk UNIQLO", "uz": "UNIQLO mahsulotlari", "ru": "Товары UNIQLO"}, img("1603400521630-9f2de124b33b", 900)),
-    ("tropical-halal-skincare", 3, {"en": "Tropical Halal Skincare", "id": "Skincare Halal Tropis", "uz": "Tropik halol teri parvarishi", "ru": "Тропический халяль-уход"}, img("1616750819456-5cdee9b85d22", 900)),
+    ("women-muslimah", 1, {"en": "Women Muslimah", "id": "Busana Muslimah", "uz": "Muslima ayollar", "ru": "Женская мусульманская"}, img("1762376268273-645db555eaf9", 900), True),
+    ("uniqlo-products", 2, {"en": "UNIQLO Products", "id": "Produk UNIQLO", "uz": "UNIQLO mahsulotlari", "ru": "Товары UNIQLO"}, img("1603400521630-9f2de124b33b", 900), True),
+    ("tropical-halal-skincare", 3, {"en": "Tropical Halal Skincare", "id": "Skincare Halal Tropis", "uz": "Tropik halol teri parvarishi", "ru": "Тропический халяль-уход"}, img("1616750819456-5cdee9b85d22", 900), True),
+    # New commercial taxonomy is staged inactive until official products and
+    # approved CMS visuals are imported.
+    ("batik", 4, {"en": "Batik", "id": "Batik", "uz": "Batik", "ru": "Батик"}, None, False),
+    ("parfum", 5, {"en": "Perfume", "id": "Parfum", "uz": "Atirlar", "ru": "Парфюмерия"}, None, False),
+]
+
+BATIK_WOMEN_CATEGORIES = [
+    ("gamis-batik", 1, {"en": "Batik Gamis", "id": "Gamis Batik", "uz": "Batikli gamis", "ru": "Гамис из батика"}),
+    ("tunik-batik", 2, {"en": "Batik Tunic", "id": "Tunik Batik", "uz": "Batik tunika", "ru": "Туника из батика"}),
+    ("outer-cardigan-batik", 3, {"en": "Batik Outerwear & Cardigans", "id": "Outer & Cardigan Batik", "uz": "Batik ustki kiyimlari va kardiganlar", "ru": "Верхняя одежда и кардиганы из батика"}),
+    ("setelan-one-set-batik", 4, {"en": "Batik One-Set", "id": "Setelan (One-Set Batik)", "uz": "Batikli komplekt", "ru": "Комплект из батика"}),
+    ("rok-batik-panjang", 5, {"en": "Long Batik Skirts", "id": "Rok Batik Panjang", "uz": "Uzun batik yubkalar", "ru": "Длинные юбки из батика"}),
+    ("hijab-pashmina-batik", 6, {"en": "Batik Hijab & Pashmina", "id": "Hijab & Pashmina Batik", "uz": "Batik hijob va pashmina", "ru": "Хиджабы и пашмины из батика"}),
+]
+
+BATIK_MEN_CATEGORIES = [
+    ("batik-koko-kemko", 1, {"en": "Batik Koko (Kemko)", "id": "Batik Koko (Kemko)", "uz": "Batik koko (kemko)", "ru": "Батик-коко (кемко)"}),
+    ("kemeja-batik-lengan-panjang", 2, {"en": "Long-Sleeve Batik Shirts", "id": "Kemeja Batik Lengan Panjang", "uz": "Uzun yengli batik ko'ylaklar", "ru": "Батиковые рубашки с длинным рукавом"}),
+    ("kemeja-batik-lengan-pendek", 3, {"en": "Short-Sleeve Batik Shirts", "id": "Kemeja Batik Lengan Pendek", "uz": "Qisqa yengli batik ko'ylaklar", "ru": "Батиковые рубашки с коротким рукавом"}),
+    ("jas-blazer-batik-luara", 4, {"en": "Batik Suits & Blazers: Luara", "id": "Jas & Blazer Batik: Luara", "uz": "Batik kostyum va blazerlar: Luara", "ru": "Костюмы и блейзеры из батика: Luara"}),
+    ("sarung-batik", 5, {"en": "Batik Sarongs", "id": "Sarung Batik", "uz": "Batik sarunglar", "ru": "Батиковые саронги"}),
+]
+
+PARFUM_WOMEN_CATEGORIES = [
+    ("musk-thaharah", 1, {"en": "Musk Thaharah", "id": "Musk Thaharah", "uz": "Musk Thaharah", "ru": "Муск Тахара"}),
+    ("soft-floral-powdery", 2, {"en": "Soft Floral & Powdery (Light Daily Aroma)", "id": "Soft Floral & Powdery (Aroma Ringan Harian)", "uz": "Yumshoq floral va pudrali (yengil kundalik hid)", "ru": "Мягкий цветочный и пудровый аромат (лёгкий на каждый день)"}),
+    ("gourmand-rich-oriental", 3, {"en": "Gourmand & Rich Oriental (Private/Home Use)", "id": "Gourmand & Rich Oriental (Khusus Area Privat/Rumah)", "uz": "Gurman va boy sharqona (uy va shaxsiy foydalanish)", "ru": "Гурманские и насыщенные восточные ароматы (для дома и личного использования)"}),
+    ("parfum-semprot-bebas-alkohol", 4, {"en": "Alcohol-Free Spray Perfume", "id": "Parfum Semprot Bebas Alkohol (Alcohol-Free Spray)", "uz": "Spirtsiz purkaladigan atir", "ru": "Спрей-парфюм без спирта"}),
+]
+
+PARFUM_MEN_CATEGORIES = [
+    ("oud-woody", 1, {"en": "Oud & Woody (Agarwood & Woods)", "id": "Oud & Woody (Gaharu & Kayu)", "uz": "Ud va yog'ochsimon (agar va yog'och)", "ru": "Удовые и древесные (агар и древесина)"}),
+    ("kasturi-rempah", 2, {"en": "Musk & Spices", "id": "Kasturi & Rempah (Musk & Spices)", "uz": "Musk va ziravorlar", "ru": "Мускус и специи"}),
+    ("fresh-citrus-aquatic", 3, {"en": "Fresh Citrus & Aquatic", "id": "Fresh Citrus & Aquatic", "uz": "Yangi sitrus va akvatik", "ru": "Свежие цитрусовые и акватические"}),
+    ("attar-perfume-oil-premium", 4, {"en": "Premium Attar / Perfume Oil", "id": "Attar / Perfume Oil Premium", "uz": "Premium attor / atir moyi", "ru": "Премиальный аттар / парфюмерное масло"}),
+]
+
+NEW_TAXONOMY_GROUPS = [
+    ("batik", "batik-wanita-muslimah", 1, {"en": "Batik Women Muslimah", "id": "Batik Wanita Muslimah", "uz": "Muslima ayollar batigi", "ru": "Батик для мусульманок"}, BATIK_WOMEN_CATEGORIES),
+    ("batik", "batik-pria", 2, {"en": "Men's Batik", "id": "Batik Pria", "uz": "Erkaklar batigi", "ru": "Мужской батик"}, BATIK_MEN_CATEGORIES),
+    ("parfum", "parfum-wanita-muslimah", 1, {"en": "Women Muslimah Perfume", "id": "Parfum Wanita Muslimah", "uz": "Muslima ayollar atirlari", "ru": "Парфюмерия для мусульманок"}, PARFUM_WOMEN_CATEGORIES),
+    ("parfum", "parfum-pria", 2, {"en": "Men's Perfume", "id": "Parfum Pria", "uz": "Erkaklar atirlari", "ru": "Мужская парфюмерия"}, PARFUM_MEN_CATEGORIES),
 ]
 
 MUSLIMAH_CATEGORIES = [
@@ -404,7 +446,18 @@ PRODUCTS = [
 ]
 
 
-async def upsert_category(session, *, slug, kind, department, names, sort_order, parent_id=None, image_url=None):
+async def upsert_category(
+    session,
+    *,
+    slug,
+    kind,
+    department,
+    names,
+    sort_order,
+    parent_id=None,
+    image_url=None,
+    is_active=True,
+):
     existing = await session.scalar(select(Category).where(Category.slug == slug))
     if existing:
         existing.kind = kind
@@ -416,7 +469,10 @@ async def upsert_category(session, *, slug, kind, department, names, sort_order,
             existing.image_url = image_url
         if existing.image_url and not existing.media_id and str(existing.image_url).startswith(("http://", "https://")):
             existing.image_url = None
-        existing.is_active = True
+        # Existing manual activation is authoritative for staged taxonomy.
+        # Legacy catalog entries are still explicitly kept active by the seed.
+        if is_active:
+            existing.is_active = True
         cat = existing
         await session.execute(
             CategoryTranslation.__table__.delete().where(
@@ -431,6 +487,7 @@ async def upsert_category(session, *, slug, kind, department, names, sort_order,
             sort_order=sort_order,
             parent_id=parent_id,
             image_url=None,
+            is_active=is_active,
         )
         session.add(cat)
         await session.flush()
@@ -464,10 +521,16 @@ async def upsert_product(session, spec, owner_id, cat_ids):
         existing.media = [
             item for item in (existing.media or [])
             if not (
-                isinstance(item, dict)
-                and isinstance(item.get("url"), str)
-                and item["url"].startswith(("http://", "https://"))
-                and not item.get("media_id")
+                (
+                    isinstance(item, str)
+                    and item.startswith(("http://", "https://"))
+                )
+                or (
+                    isinstance(item, dict)
+                    and isinstance(item.get("url"), str)
+                    and item["url"].startswith(("http://", "https://"))
+                    and not item.get("media_id")
+                )
             )
         ]
         product = existing
@@ -537,7 +600,7 @@ async def seed():
         owner.is_active = True
 
         dept_ids = {}
-        for slug, order, names, image_url in DEPARTMENTS:
+        for slug, order, names, image_url, is_active in DEPARTMENTS:
             dept_ids[slug] = await upsert_category(
                 session,
                 slug=slug,
@@ -546,6 +609,7 @@ async def seed():
                 names=names,
                 sort_order=order,
                 image_url=image_url,
+                is_active=is_active,
             )
 
         cat_ids = {}
@@ -567,6 +631,29 @@ async def seed():
                     image_url=image_url,
                 )
 
+        for root_slug, group_slug, group_order, group_names, leaf_specs in NEW_TAXONOMY_GROUPS:
+            group_id = await upsert_category(
+                session,
+                slug=group_slug,
+                kind="group",
+                department=root_slug,
+                names=group_names,
+                sort_order=group_order,
+                parent_id=dept_ids[root_slug],
+                is_active=False,
+            )
+            for leaf_slug, leaf_order, leaf_names in leaf_specs:
+                await upsert_category(
+                    session,
+                    slug=leaf_slug,
+                    kind="category",
+                    department=root_slug,
+                    names=leaf_names,
+                    sort_order=leaf_order,
+                    parent_id=group_id,
+                    is_active=False,
+                )
+
         for spec in PRODUCTS:
             await upsert_product(session, spec, owner.id, cat_ids)
 
@@ -578,6 +665,9 @@ async def seed():
             ),
             "categories": await session.scalar(
                 select(func.count()).select_from(Category).where(Category.kind == "category")
+            ),
+            "groups": await session.scalar(
+                select(func.count()).select_from(Category).where(Category.kind == "group")
             ),
             "store_owners": await session.scalar(
                 select(func.count()).select_from(User).where(User.id == owner.id)

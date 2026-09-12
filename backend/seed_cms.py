@@ -94,9 +94,6 @@ FOOTER_LINKS = {
     "shop": [
         ("footer.link.newArrivals", "/shop?badge=new"),
         ("footer.link.bestSellers", "/shop?badge=bestseller"),
-        ("nav.womenMuslimah", "/shop?department=women-muslimah"),
-        ("nav.uniqloProducts", "/shop?department=uniqlo-products"),
-        ("nav.skincare", "/shop?department=tropical-halal-skincare"),
     ],
     "help": [
         ("footer.link.contact", "/page/contact"),
@@ -137,10 +134,10 @@ PAGES = {
         "ru": ("О MUSLIMAH CANTIK", "MUSLIMAH CANTIK — монобрендовый бутик мусульманской моды и тропического халяль-ухода из Ташкента. Мы обслуживаем клиентов по всему Узбекистану с оплатой CLICK и ценами в сумах."),
     },
     "contact": {
-        "en": ("Contact Us", "Reach our team at official@muslimahcantik.id. We reply within one business day."),
-        "id": ("Hubungi Kami", "Hubungi tim kami di official@muslimahcantik.id. Kami membalas dalam satu hari kerja."),
-        "uz": ("Biz bilan bog'laning", "Jamoamizga official@muslimahcantik.id orqali murojaat qiling. Bir ish kuni ichida javob beramiz."),
-        "ru": ("Свяжитесь с нами", "Напишите нам: official@muslimahcantik.id. Мы отвечаем в течение одного рабочего дня."),
+        "en": ("Contact Us", "Reach our team at contact@shanicantik.com. We reply within one business day."),
+        "id": ("Hubungi Kami", "Hubungi tim kami di contact@shanicantik.com. Kami membalas dalam satu hari kerja."),
+        "uz": ("Biz bilan bog'laning", "Jamoamizga contact@shanicantik.com orqali murojaat qiling. Bir ish kuni ichida javob beramiz."),
+        "ru": ("Свяжитесь с нами", "Напишите нам: contact@shanicantik.com. Мы отвечаем в течение одного рабочего дня."),
     },
     "shipping": {
         "en": ("Shipping", "We ship across Uzbekistan. Standard delivery (3-5 business days) is 30,000 UZS and free for orders over 550,000 UZS. Express delivery (1-2 business days) is 65,000 UZS."),

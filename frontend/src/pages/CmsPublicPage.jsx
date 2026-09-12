@@ -48,7 +48,7 @@ export default function CmsPublicPage() {
       {image ? (
         <ImageWithFallback
           src={image}
-          alt={title}
+          alt={pickLocalized(entry?.translations, locale, "alt_text") || title}
           className="mb-8 max-h-[28rem] w-full object-cover"
         />
       ) : null}

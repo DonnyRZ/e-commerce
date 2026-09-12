@@ -3,13 +3,13 @@ import { ArrowUpDown, ChevronLeft, ChevronRight, SlidersHorizontal } from "lucid
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import {
-  getCategories,
   getCategory,
-  getDepartments,
+  getCatalogTree,
   getFilters,
   getProducts,
 } from "@/lib/api";
 import { pickLocalized, toCardCategory, toCardProduct } from "@/lib/localize";
+import { findTaxonomyNode } from "@/lib/taxonomy";
 import CategoryStrip from "@/components/common/CategoryStrip";
 import ProductGrid from "@/components/common/ProductGrid";
 import EmptyState from "@/components/common/EmptyState";
@@ -62,20 +62,15 @@ export default function ShopPage() {
   };
   const clearFilters = () => {
     const next = new URLSearchParams(searchParams);
-    ["min_price", "max_price", "color", "size", "availability", "page"].forEach((k) =>
+    ["min_price", "max_price", "color", "size", "volume", "motif", "format", "availability", "page"].forEach((k) =>
       next.delete(k)
     );
     setSearchParams(next);
   };
 
-  const { data: departments = [] } = useQuery({
-    queryKey: ["departments"],
-    queryFn: getDepartments,
-    staleTime: 5 * 60 * 1000,
-  });
-  const { data: allCategories = [] } = useQuery({
-    queryKey: ["categories", "all"],
-    queryFn: () => getCategories(),
+  const { data: catalogTree = [] } = useQuery({
+    queryKey: ["catalog-tree"],
+    queryFn: getCatalogTree,
     staleTime: 5 * 60 * 1000,
   });
   const { data: categoryDetail } = useQuery({
@@ -102,12 +97,18 @@ export default function ShopPage() {
         max_price: params.max_price,
         color: params.color,
         size: params.size,
+        volume: params.volume,
+        motif: params.motif,
+        format: params.format,
         availability: params.availability,
       }),
     placeholderData: (prev) => prev,
   });
 
-  const activeDept = departments.find((d) => d.slug === department);
+  const activeDept = catalogTree.find((d) => d.slug === department);
+  const activeNode = category
+    ? categoryDetail
+    : activeDept || findTaxonomyNode(catalogTree, department);
   const title = categoryDetail
     ? pickLocalized(categoryDetail.translations, locale)
     : activeDept
@@ -116,12 +117,15 @@ export default function ShopPage() {
         ? t(BADGE_TITLES[badge])
         : t("page.title.shop");
 
-  const stripCategories = (department
-    ? allCategories.filter((c) => c.department === department)
-    : allCategories
-  )
-    .slice(0, 10)
+  const stripNodes = activeNode?.children?.length
+    ? activeNode.children
+    : categoryDetail
+      ? []
+      : catalogTree.flatMap((node) => node.children || []);
+  const stripCategories = stripNodes
     .map((c) => toCardCategory(c, locale));
+
+  const breadcrumbNodes = categoryDetail?.ancestors || (activeDept ? [activeDept] : []);
 
   const data = productsQuery.data;
   const products = (data?.items || []).map((p) => toCardProduct(p, locale));
@@ -131,14 +135,19 @@ export default function ShopPage() {
       <p data-testid="plp-breadcrumb" className="text-xs text-muted-foreground">
         <Link to="/" className="hover:underline">{t("nav.home")}</Link>
         {" / "}
-        {activeDept && categoryDetail ? (
-          <>
-            <Link to={`/shop?department=${activeDept.slug}`} className="hover:underline">
-              {pickLocalized(activeDept.translations, locale)}
+        {breadcrumbNodes.map((node) => (
+          <span key={node.id}>
+            <Link
+              to={node.kind === "department"
+                ? `/shop?department=${node.slug}`
+                : `/shop?category=${node.slug}`}
+              className="hover:underline"
+            >
+              {pickLocalized(node.translations, locale)}
             </Link>
             {" / "}
-          </>
-        ) : null}
+          </span>
+        ))}
         <span className="text-foreground">{title}</span>
       </p>
       <h1 className="mt-2 text-2xl font-semibold tracking-tight lg:text-3xl">{title}</h1>

@@ -67,6 +67,9 @@ export const getHealth = () => api.get("/v1/health").then((r) => r.data);
 export const getDepartments = () =>
   api.get("/v1/catalog/departments").then((r) => r.data);
 
+export const getCatalogTree = () =>
+  api.get("/v1/catalog/tree").then((r) => r.data);
+
 export const getCategories = (params = {}) =>
   api.get("/v1/catalog/categories", { params: clean(params) }).then((r) => r.data);
 

@@ -8,7 +8,8 @@ export default function FilterPanel({ meta, params, setParam, clearAll }) {
   const [maxPrice, setMaxPrice] = useState(params.max_price || "");
 
   const hasActive =
-    params.min_price || params.max_price || params.color || params.size || params.availability;
+    params.min_price || params.max_price || params.color || params.size ||
+    params.volume || params.motif || params.format || params.availability;
 
   return (
     <div data-testid="filter-panel" className="space-y-7">
@@ -117,6 +118,38 @@ export default function FilterPanel({ meta, params, setParam, clearAll }) {
           </div>
         </div>
       ) : null}
+
+      {[
+        ["volume", "volumes", "plp.volume"],
+        ["motif", "motifs", "plp.motif"],
+        ["format", "formats", "plp.format"],
+      ].map(([paramKey, metaKey, labelKey]) =>
+        meta?.[metaKey]?.length ? (
+          <div key={paramKey}>
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t(labelKey)}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {meta[metaKey].map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  data-testid={`filter-${paramKey}-${String(value).toLowerCase().replace(/\s+/g, "-")}`}
+                  aria-pressed={params[paramKey] === value}
+                  onClick={() => setParam(paramKey, params[paramKey] === value ? "" : value)}
+                  className={`border px-2.5 py-1 text-xs font-medium transition-colors ${
+                    params[paramKey] === value
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border hover:border-foreground"
+                  }`}
+                >
+                  {value}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null
+      )}
 
       <div>
         <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">

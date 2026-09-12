@@ -16,6 +16,7 @@ from sqlalchemy import select
 
 from db.models import Category, CmsContentEntry, CmsMediaAsset, Product, ProductVariant
 from db.session import SessionLocal
+from media import media_item_url
 from storage import get_media_storage
 
 logger = logging.getLogger("jobs.cleanup_orphan_media")
@@ -56,13 +57,13 @@ async def cleanup(*, older_than_days: int = 7, dry_run: bool = False) -> int:
         def referenced_by_product(asset):
             suffix = f"/api/v1/cms/media/file/{asset.storage_key}"
             return any(
-                isinstance(item, dict)
-                and (
-                    item.get("media_id") == asset.id
-                    or (
-                        isinstance(item.get("url"), str)
-                        and item["url"].split("?", 1)[0].rstrip("/").endswith(suffix)
-                    )
+                (
+                    isinstance(item, dict)
+                    and item.get("media_id") == asset.id
+                )
+                or (
+                    isinstance(media_item_url(item), str)
+                    and media_item_url(item).split("?", 1)[0].rstrip("/").endswith(suffix)
                 )
                 for media in product_media
                 for item in (media or [])

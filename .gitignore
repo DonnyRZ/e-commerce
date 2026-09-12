@@ -85,6 +85,7 @@ agenthub/agents/youtube/db
 
 # Generated visual import artifacts (manifest and image files stay off-git)
 artifacts/imagegen/
+frontend/public/brand/generated/catalog/
 
 # Build caches
 .cache/

@@ -22,6 +22,7 @@ from config import BASE_CURRENCY, INVENTORY_RESERVATION_TTL_MINUTES
 from db.models import (
     Cart,
     CartItem,
+    Category,
     InventoryReservation,
     Order,
     OrderItem,
@@ -31,6 +32,7 @@ from db.models import (
     SellerOrderFulfillment,
     User,
 )
+from media import media_item_url
 from shipping.factory import get_shipping_provider
 from shipping.mock import UnknownShippingMethod
 
@@ -122,7 +124,24 @@ async def compute_cart_totals(
     for row in rows:
         variant = variants.get(row.variant_id)
         product = await session.get(Product, row.product_id) if variant else None
-        if not variant or not variant.is_active or not product or product.status != "active":
+        category = (
+            await session.scalar(
+                select(Category).where(
+                    Category.id == product.category_id,
+                    Category.kind == "category",
+                    Category.is_active.is_(True),
+                )
+            )
+            if product
+            else None
+        )
+        if (
+            not variant
+            or not variant.is_active
+            or not product
+            or product.status != "active"
+            or not category
+        ):
             raise CheckoutError("unavailable_item", 409, {"variant_id": row.variant_id})
         available = variant.stock_quantity - reserved.get(variant.id, 0)
         if row.quantity > available:
@@ -234,7 +253,7 @@ async def create_order(
                 sku=variant.sku,
                 product_name=await _localized_name(session, product, locale),
                 option_values=variant.option_values or {},
-                image_url=variant.image_url or (product.media or [{}])[0].get("url"),
+                image_url=variant.image_url or media_item_url((product.media or [None])[0]),
                 unit_price=item["unit_price"],
                 quantity=row.quantity,
                 line_total=item["line_total"],

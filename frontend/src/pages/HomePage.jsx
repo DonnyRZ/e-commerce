@@ -1,9 +1,10 @@
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
-import { getCategories, getCmsBundle, getDepartments, getProducts } from "@/lib/api";
+import { getCatalogTree, getCmsBundle, getProducts } from "@/lib/api";
 import { mediaUrl, pickLocalized, toCardCategory, toCardProduct } from "@/lib/localize";
 import { HERO_IMAGE } from "@/data/demo";
+import { leafTaxonomy } from "@/lib/taxonomy";
 import CategoryStrip from "@/components/common/CategoryStrip";
 import EditorialSection from "@/components/common/EditorialSection";
 import ProductGrid from "@/components/common/ProductGrid";
@@ -27,18 +28,13 @@ function GridSkeleton({ testId }) {
 export default function HomePage() {
   const { locale, t } = useI18n();
 
-  const departmentsQuery = useQuery({
-    queryKey: ["departments"],
-    queryFn: getDepartments,
+  const catalogQuery = useQuery({
+    queryKey: ["catalog-tree"],
+    queryFn: getCatalogTree,
     staleTime: 5 * 60 * 1000,
   });
-  const categoriesQuery = useQuery({
-    queryKey: ["categories", "all"],
-    queryFn: () => getCategories(),
-    staleTime: 5 * 60 * 1000,
-  });
-  const departments = departmentsQuery.data || [];
-  const allCategories = categoriesQuery.data || [];
+  const catalogTree = catalogQuery.data || [];
+  const departments = catalogTree;
   const newArrivals = useQuery({
     queryKey: ["products", "home-new"],
     queryFn: () => getProducts({ badge: "new", limit: 8 }),
@@ -58,6 +54,7 @@ export default function HomePage() {
   const heroImage = mediaUrl(hero?.image_url) || HERO_IMAGE;
   const heroEyebrow = pickLocalized(hero?.translations, locale, "eyebrow") || t("brand.tagline");
   const heroTitle = pickLocalized(hero?.translations, locale) || t("page.home.heroTitle");
+  const heroAlt = pickLocalized(hero?.translations, locale, "alt_text") || heroTitle;
   const heroSubtitle = pickLocalized(hero?.translations, locale, "subtitle") || t("page.home.heroSubtitle");
   const heroPrimary = {
     label: pickLocalized(hero?.translations, locale, "cta_label") || t("home.shopNow"),
@@ -68,7 +65,7 @@ export default function HomePage() {
     to: hero?.secondary_cta_url || "/shop",
   };
 
-  const stripCategories = allCategories
+  const stripCategories = leafTaxonomy(catalogTree)
     .slice()
     .sort((a, b) => a.sort_order - b.sort_order)
     .slice(0, 8)
@@ -79,7 +76,7 @@ export default function HomePage() {
       <section data-testid="home-hero" className="relative -mx-4 sm:-mx-6 lg:-mx-10">
         <ImageWithFallback
           src={heroImage}
-          alt={heroTitle}
+          alt={heroAlt}
           className="h-[60vh] w-full object-cover lg:h-[72vh]"
         />
         <div className="absolute inset-x-0 bottom-0 pb-8 pt-24 text-center text-white [background:linear-gradient(to_top,rgba(0,0,0,0.55),transparent)] lg:pb-12">
@@ -115,8 +112,8 @@ export default function HomePage() {
         <h2 className="mb-5 text-lg font-semibold lg:text-xl">
           {t("home.shopByCategory")}
         </h2>
-        {categoriesQuery.isError ? (
-          <ErrorState onRetry={() => categoriesQuery.refetch()} />
+        {catalogQuery.isError ? (
+          <ErrorState onRetry={() => catalogQuery.refetch()} />
         ) : stripCategories.length ? (
           <CategoryStrip categories={stripCategories} nameOf={(c) => c.name} />
         ) : (

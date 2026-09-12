@@ -24,11 +24,12 @@ export const colorHex = (name) =>
   COLOR_HEX[String(name).toLowerCase()] || "#C9C9C9";
 
 export function toCardProduct(p, locale) {
+  const firstMedia = p.media?.[0];
   return {
     id: p.id,
     slug: p.slug,
     name: pickLocalized(p.translations, locale),
-    image: p.media?.[0]?.url || "",
+    image: (typeof firstMedia === "string" ? firstMedia : firstMedia?.url) || "",
     price: p.base_price,
     compareAt: p.compare_at_price,
     colors: (p.colors || []).map(colorHex),

@@ -117,7 +117,7 @@ export default function ProductPage() {
     const media = (product?.media || [])
       .slice()
       .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
-      .map((m) => m.url)
+      .map((m) => (typeof m === "string" ? m : m.url))
       .filter(Boolean);
     if (selectedVariant?.image_url) {
       return [selectedVariant.image_url, ...media.filter((u) => u !== selectedVariant.image_url)];
@@ -145,7 +145,10 @@ export default function ProductPage() {
   const description = pickLocalized(product.translations, locale, "description");
   const attrs = product.attributes || {};
   const isSkincare = product.product_type === "skincare";
-  const hasSize = dimensions.some((d) => d.key === "size") && product.product_type === "apparel";
+  const isBatik = product.product_type === "batik";
+  const isParfum = product.product_type === "parfum";
+  const hasSize = dimensions.some((d) => d.key === "size") &&
+    (["apparel", "hijab"].includes(product.product_type) || isBatik);
 
   const unitPrice = selectedVariant
     ? selectedVariant.sale_price_override ??
@@ -163,6 +166,7 @@ export default function ProductPage() {
 
   const category = product.category;
   const department = category?.department;
+  const ancestors = category?.ancestors || (department ? [department] : []);
 
   const addToCart = async () => {
     if (!selectedVariant || outOfStock) return;
@@ -198,7 +202,7 @@ export default function ProductPage() {
 
   const infoSections = [
     description && { key: "description", title: t("pdp.description"), body: description },
-    (attrs.fit || attrs.size_cm || attrs.includes || attrs.age_range || attrs.spf) && {
+    (attrs.fit || attrs.size_cm || attrs.includes || attrs.age_range || attrs.spf || attrs.motif || attrs.volume || attrs.format) && {
       key: "features",
       title: t("pdp.features"),
       list: [
@@ -207,6 +211,9 @@ export default function ProductPage() {
         attrs.includes && `Includes: ${attrs.includes}`,
         attrs.age_range && `Age: ${attrs.age_range} yrs`,
         attrs.spf && `SPF ${attrs.spf}`,
+        attrs.motif && `${t("pdp.motif")}: ${attrs.motif}`,
+        attrs.volume && `${t("options.volume")}: ${attrs.volume}`,
+        attrs.format && `${t("options.format")}: ${attrs.format}`,
       ].filter(Boolean),
     },
     !isSkincare && (attrs.fabric || attrs.material || attrs.care) && {
@@ -229,6 +236,16 @@ export default function ProductPage() {
       title: t("pdp.directions"),
       body: attrs.directions,
     },
+    isParfum && (attrs.fragrance_family || attrs.notes || attrs.usage || attrs.alcohol_free) && {
+      key: "fragrance",
+      title: t("pdp.fragrance"),
+      list: [
+        attrs.fragrance_family && `${t("pdp.fragranceFamily")}: ${attrs.fragrance_family}`,
+        attrs.notes && `${t("pdp.notes")}: ${attrs.notes}`,
+        attrs.usage && `${t("pdp.usage")}: ${attrs.usage}`,
+        attrs.alcohol_free && t("pdp.alcoholFree"),
+      ].filter(Boolean),
+    },
     {
       key: "details",
       title: t("pdp.details"),
@@ -248,14 +265,19 @@ export default function ProductPage() {
     <div data-testid="pdp-page" className="py-6 lg:py-10">
       <p data-testid="pdp-breadcrumb" className="text-xs text-muted-foreground">
         <Link to="/" className="hover:underline">{t("nav.home")}</Link>
-        {department ? (
-          <>
+        {ancestors.map((ancestor) => (
+          <span key={ancestor.id}>
             {" / "}
-            <Link to={`/shop?department=${department.slug}`} className="hover:underline">
-              {pickLocalized(department.translations, locale)}
+            <Link
+              to={ancestor.kind === "department"
+                ? `/shop?department=${ancestor.slug}`
+                : `/shop?category=${ancestor.slug}`}
+              className="hover:underline"
+            >
+              {pickLocalized(ancestor.translations, locale)}
             </Link>
-          </>
-        ) : null}
+          </span>
+        ))}
         {category ? (
           <>
             {" / "}

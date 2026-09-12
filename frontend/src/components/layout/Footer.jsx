@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { Facebook, Instagram, Youtube } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
-import { getCmsFooter } from "@/lib/api";
+import { getCatalogTree, getCmsFooter } from "@/lib/api";
 import { pickLocalized } from "@/lib/localize";
 import LanguageSelector from "./LanguageSelector";
 import BrandLogo from "@/components/brand/BrandLogo";
@@ -13,15 +13,12 @@ const FALLBACK_GROUPS = [
     links: [
       ["footer.link.newArrivals", "/shop?badge=new"],
       ["footer.link.bestSellers", "/shop?badge=bestseller"],
-      ["nav.womenMuslimah", "/shop?department=women-muslimah"],
-      ["nav.uniqloProducts", "/shop?department=uniqlo-products"],
-      ["nav.skincare", "/shop?department=tropical-halal-skincare"],
     ],
   },
   {
     heading: "footer.help",
     links: [
-      ["footer.link.contact", "mailto:hello@muslimahcantik.id"],
+      ["footer.link.contact", "mailto:contact@shanicantik.com"],
       ["footer.link.shipping", "/page/shipping"],
       ["footer.link.returns", "/page/returns"],
       ["footer.link.faq", "/faq"],
@@ -61,6 +58,11 @@ export default function Footer() {
     queryFn: getCmsFooter,
     staleTime: 60_000,
   });
+  const { data: catalogTree = [] } = useQuery({
+    queryKey: ["catalog-tree"],
+    queryFn: getCatalogTree,
+    staleTime: 5 * 60 * 1000,
+  });
 
   const cmsGroups = (cmsFooter?.groups || [])
     .map((g) => ({
@@ -78,6 +80,19 @@ export default function Footer() {
     pickLocalized(cmsFooter?.promo?.translations, locale) ||
     pickLocalized(cmsFooter?.promo?.translations, locale, "description") ||
     t("footer.promo");
+  const fallbackGroups = [
+    {
+      ...FALLBACK_GROUPS[0],
+      links: [
+        ...FALLBACK_GROUPS[0].links,
+        ...catalogTree.map((department) => [
+          pickLocalized(department.translations, locale) || department.slug,
+          `/shop?department=${department.slug}`,
+        ]),
+      ],
+    },
+    ...FALLBACK_GROUPS.slice(1),
+  ];
 
   return (
     <footer data-testid="site-footer" className="border-t border-brand-gold/30 bg-brand-ivory/60">
@@ -124,30 +139,33 @@ export default function Footer() {
                 </ul>
               </div>
             ))
-          : FALLBACK_GROUPS.map((group) => (
+          : fallbackGroups.map((group) => (
               <div key={group.heading} className="mb-6">
                 <h3 className="mb-2 text-sm text-muted-foreground">{t(group.heading)}</h3>
                 <ul
                   className="flex flex-wrap items-center gap-x-3 gap-y-1.5"
                   data-testid={`footer-group-${group.heading.split(".")[1]}`}
                 >
-                  {group.links.map(([key, to], i) => (
-                    <li key={key} className="flex items-center gap-3">
+                  {group.links.map(([key, to], i) => {
+                    const label = key.includes(".") ? t(key) : key;
+                    const testKey = key.includes(".") ? key.split(".").pop() : to.split("department=")[1] || key.toLowerCase().replace(/\s+/g, "-");
+                    return (
+                    <li key={`${key}-${to}`} className="flex items-center gap-3">
                       {to.startsWith("/") ? (
                         <Link
                           to={to}
-                          data-testid={`footer-link-${key.split(".").pop()}`}
+                          data-testid={`footer-link-${testKey}`}
                           className={linkClass}
                         >
-                          {t(key)}
+                          {label}
                         </Link>
                       ) : (
                         <a
                           href={to}
-                          data-testid={`footer-link-${key.split(".").pop()}`}
+                          data-testid={`footer-link-${testKey}`}
                           className={linkClass}
                         >
-                          {t(key)}
+                          {label}
                         </a>
                       )}
                       {i < group.links.length - 1 ? (
@@ -156,7 +174,8 @@ export default function Footer() {
                         </span>
                       ) : null}
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               </div>
             ))}
