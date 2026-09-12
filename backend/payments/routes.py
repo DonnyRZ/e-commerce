@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import csrf_protect
-from config import BASE_CURRENCY, CLICK_MODE
+from config import BASE_CURRENCY, CHECKOUT_ENABLED, CLICK_MODE
 from db.models import Order, Payment, PaymentEvent
 from db.session import get_session
 from payments.errors import ClickProtocolError
@@ -39,6 +39,11 @@ from routers.shop import _optional_user
 router = APIRouter(prefix="/api/v1/payments", tags=["payments"])
 
 
+def _require_payment_enabled() -> None:
+    if not CHECKOUT_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+
+
 def _protocol_response(raw: dict, payload: dict = None, error: int = 0, note: str = "Success") -> JSONResponse:
     body = payload or {
         "click_trans_id": int(raw["click_trans_id"]) if str(raw.get("click_trans_id", "")).isdigit() else raw.get("click_trans_id"),
@@ -51,6 +56,7 @@ def _protocol_response(raw: dict, payload: dict = None, error: int = 0, note: st
 
 @router.post("/click/prepare")
 async def click_prepare(request: Request, session: AsyncSession = Depends(get_session)):
+    _require_payment_enabled()
     form = await request.form()
     raw = {k: str(v) for k, v in form.items()}  # raw strings preserved
     provider = get_provider()
@@ -65,6 +71,7 @@ async def click_prepare(request: Request, session: AsyncSession = Depends(get_se
 
 @router.post("/click/complete")
 async def click_complete(request: Request, session: AsyncSession = Depends(get_session)):
+    _require_payment_enabled()
     form = await request.form()
     raw = {k: str(v) for k, v in form.items()}
     provider = get_provider()

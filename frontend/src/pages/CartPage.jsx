@@ -1,7 +1,9 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Minus, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
+import { getCheckoutOptions } from "@/lib/api";
 import { useShop } from "@/lib/ShopContext";
 import { pickLocalized } from "@/lib/localize";
 import EmptyState from "@/components/common/EmptyState";
@@ -12,6 +14,18 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function CartPage() {
   const { t, locale } = useI18n();
   const { cart, cartLoading, cartError, refetchCart, updateItem, removeItem } = useShop();
+  const checkoutOptionsQuery = useQuery({
+    queryKey: ["checkout-options"],
+    queryFn: getCheckoutOptions,
+    enabled: Boolean(cart?.item_count),
+    staleTime: 60 * 1000,
+    retry: false,
+  });
+  // Fail closed if the backend status cannot be read. The API also blocks
+  // checkout server-side, but the cart should not advertise a dead CTA.
+  const checkoutEnabled =
+    checkoutOptionsQuery.isSuccess &&
+    checkoutOptionsQuery.data?.checkout_enabled !== false;
 
   if (cartLoading) {
     return (
@@ -169,13 +183,29 @@ export default function CartPage() {
             <p className="mt-2 text-xs text-muted-foreground">
               {t("cart.shippingNote")}
             </p>
-            <Link
-              to="/checkout"
-              data-testid="cart-checkout-cta"
-              className="mt-5 flex h-12 items-center justify-center bg-foreground text-sm font-semibold text-background transition-colors hover:bg-primary"
-            >
-              {t("cart.checkout")}
-            </Link>
+            {checkoutEnabled ? (
+              <Link
+                to="/checkout"
+                data-testid="cart-checkout-cta"
+                className="mt-5 flex h-12 items-center justify-center bg-foreground text-sm font-semibold text-background transition-colors hover:bg-primary"
+              >
+                {t("cart.checkout")}
+              </Link>
+            ) : (
+              <div className="mt-5 space-y-2">
+                <button
+                  type="button"
+                  data-testid="cart-checkout-disabled"
+                  disabled
+                  className="flex h-12 w-full items-center justify-center bg-muted text-sm font-semibold text-muted-foreground"
+                >
+                  {t("cart.checkoutUnavailable")}
+                </button>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {t("cart.checkoutUnavailableBody")}
+                </p>
+              </div>
+            )}
           </aside>
         </div>
       )}

@@ -111,6 +111,10 @@ export default function CheckoutPage() {
     queryKey: ["checkout-options"],
     queryFn: getCheckoutOptions,
   });
+  // Keep the UI aligned with the server and fail closed if the status call
+  // fails. The backend remains the final enforcement point.
+  const checkoutEnabled =
+    optionsQuery.isSuccess && optionsQuery.data?.checkout_enabled !== false;
   const addressesQuery = useQuery({
     queryKey: ["addresses"],
     queryFn: getAddresses,
@@ -120,7 +124,7 @@ export default function CheckoutPage() {
   const quoteQuery = useQuery({
     queryKey: ["checkout-quote", shippingMethod],
     queryFn: () => getCheckoutQuote(shippingMethod),
-    enabled: hasItems,
+    enabled: hasItems && optionsQuery.isSuccess && checkoutEnabled,
     retry: false,
   });
 
@@ -136,6 +140,7 @@ export default function CheckoutPage() {
 
   const submit = async (e) => {
     e.preventDefault();
+    if (!checkoutEnabled) return;
     if (placing) return;
     setPlacing(true);
     try {
@@ -203,6 +208,26 @@ export default function CheckoutPage() {
               className="inline-flex h-11 items-center bg-foreground px-8 text-sm font-semibold text-background hover:bg-primary"
             >
               {t("checkout.emptyCta")}
+            </Link>
+          }
+        />
+      </div>
+    );
+  }
+
+  if (!checkoutEnabled) {
+    return (
+      <div data-testid="checkout-disabled" className="py-8 lg:py-12">
+        <EmptyState
+          title={t("checkout.disabledTitle")}
+          description={t("checkout.disabledBody")}
+          action={
+            <Link
+              to="/shop"
+              data-testid="checkout-disabled-cta"
+              className="inline-flex h-11 items-center bg-foreground px-8 text-sm font-semibold text-background hover:bg-primary"
+            >
+              {t("checkout.disabledCta")}
             </Link>
           }
         />

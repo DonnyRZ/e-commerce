@@ -14,6 +14,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from config import (
     APP_ENV,
+    CHECKOUT_ENABLED,
     CORS_ORIGINS,
     ENFORCE_HTTPS,
     LOG_LEVEL,
@@ -116,11 +117,17 @@ async def _readiness_payload() -> tuple[dict, bool]:
         checks["database"] = "down"
         checks["migrations"] = "down"
 
-    try:
-        get_provider()
-        checks["payment"] = "up"
-    except Exception:
-        checks["payment"] = "down"
+    if not CHECKOUT_ENABLED:
+        # The storefront is intentionally live before payment onboarding. A
+        # disabled payment check is healthy by policy; checkout endpoints are
+        # separately hard-blocked and never create orders/reservations.
+        checks["payment"] = "disabled"
+    else:
+        try:
+            get_provider()
+            checks["payment"] = "up"
+        except Exception:
+            checks["payment"] = "down"
 
     try:
         get_notifier()
@@ -143,12 +150,17 @@ async def _readiness_payload() -> tuple[dict, bool]:
     else:
         checks["rate_limit_store"] = "up"
 
-    ready = all(value == "up" for value in checks.values())
+    ready = all(
+        value == "up" or (name == "payment" and value == "disabled")
+        for name, value in checks.items()
+    )
     return {
         "status": "ready" if ready else "not_ready",
         "app": "muslimah-cantik",
         "version": "v1",
         "checks": checks,
+        "checkout_enabled": CHECKOUT_ENABLED,
+        "payment_mode": "click" if CHECKOUT_ENABLED else "disabled",
         "config_errors": config_errors if not ready else [],
     }, ready
 

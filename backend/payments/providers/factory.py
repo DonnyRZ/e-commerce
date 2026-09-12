@@ -18,6 +18,9 @@ def get_provider() -> PaymentProvider:
         PAYMENT_PROVIDER,
     )
 
+    if PAYMENT_PROVIDER == "disabled":
+        raise RuntimeError("Payment provider is disabled while checkout is offline")
+
     if PAYMENT_PROVIDER != "click":
         raise RuntimeError(f"Unsupported PAYMENT_PROVIDER: {PAYMENT_PROVIDER}")
 

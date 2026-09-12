@@ -4,7 +4,7 @@ import { Heart, Minus, Plus, ShoppingBag } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
-import { getProduct } from "@/lib/api";
+import { getCheckoutOptions, getProduct } from "@/lib/api";
 import { useShop } from "@/lib/ShopContext";
 import { colorHex, pickLocalized } from "@/lib/localize";
 import EmptyState from "@/components/common/EmptyState";
@@ -50,6 +50,12 @@ export default function ProductPage() {
     retry: false,
   });
   const product = query.data;
+  const checkoutOptionsQuery = useQuery({
+    queryKey: ["checkout-options"],
+    queryFn: getCheckoutOptions,
+    staleTime: 60 * 1000,
+    retry: false,
+  });
 
   const variants = useMemo(
     () => (product?.variants || []).filter((v) => v.is_active),
@@ -163,13 +169,18 @@ export default function ProductPage() {
   const outOfStock = selectedVariant ? stockQty <= 0 : false;
   const lowStock = selectedVariant ? stockQty > 0 && stockQty <= 5 : false;
   const maxQty = stockQty ? Math.min(stockQty, 10) : 10;
+  const checkoutUnavailable =
+    checkoutOptionsQuery.isError ||
+    (checkoutOptionsQuery.isSuccess &&
+      checkoutOptionsQuery.data?.checkout_enabled === false);
+  const checkoutEnabled = !checkoutUnavailable && checkoutOptionsQuery.isSuccess;
 
   const category = product.category;
   const department = category?.department;
   const ancestors = category?.ancestors || (department ? [department] : []);
 
   const addToCart = async () => {
-    if (!selectedVariant || outOfStock) return;
+    if (!checkoutEnabled || !selectedVariant || outOfStock) return;
     try {
       await addCartItem({
         product_id: product.id,
@@ -469,12 +480,16 @@ export default function ProductPage() {
             <button
               type="button"
               data-testid="pdp-add-to-cart"
-              disabled={!selectedVariant || outOfStock}
+              disabled={!checkoutEnabled || !selectedVariant || outOfStock}
               onClick={addToCart}
               className="flex h-12 flex-1 items-center justify-center gap-2 bg-foreground text-sm font-semibold text-background transition-colors hover:bg-primary disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ShoppingBag className="h-4 w-4" aria-hidden="true" />
-              {outOfStock ? t("product.outOfStock") : t("pdp.addToCart")}
+              {checkoutUnavailable
+                ? t("pdp.checkoutUnavailable")
+                : outOfStock
+                  ? t("product.outOfStock")
+                  : t("pdp.addToCart")}
             </button>
             <button
               type="button"
@@ -489,6 +504,14 @@ export default function ProductPage() {
               <Heart className="h-5 w-5" fill={wished ? "currentColor" : "none"} aria-hidden="true" />
             </button>
           </div>
+          {checkoutUnavailable ? (
+            <p
+              data-testid="pdp-checkout-unavailable"
+              className="mt-3 text-xs leading-relaxed text-muted-foreground"
+            >
+              {t("pdp.checkoutUnavailableBody")}
+            </p>
+          ) : null}
 
           <div className="mt-6 border-t border-border pt-4 text-xs text-muted-foreground">
             <p>{t("pdp.deliveryText")}</p>

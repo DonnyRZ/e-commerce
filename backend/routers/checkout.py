@@ -19,6 +19,7 @@ from checkout import service as checkout_service
 from checkout.service import CheckoutError
 from config import (
     BASE_CURRENCY,
+    CHECKOUT_ENABLED,
     CLICK_MODE,
     CLICK_RETURN_URL,
     FRONTEND_URL,
@@ -40,6 +41,17 @@ router = APIRouter(prefix="/api/v1/checkout", tags=["checkout"])
 ORDER_RATE_LIMIT = 60
 ORDER_RATE_WINDOW = 15 * 60
 _order_hits: dict = {}
+
+
+def _require_checkout_enabled() -> None:
+    if not CHECKOUT_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "checkout_unavailable",
+                "message": "Online checkout is temporarily unavailable.",
+            },
+        )
 
 
 async def _rate_limit_orders(ip: str) -> None:
@@ -153,8 +165,9 @@ async def checkout_options(
         "item_count": payload["item_count"],
         "items": payload["items"],
         "shipping_methods": get_shipping_provider().list_methods(payload["subtotal"]),
-        "payment_methods": [{"code": "click", "label": "CLICK"}],
-        "payment_mode": CLICK_MODE,
+        "payment_methods": ([{"code": "click", "label": "CLICK"}] if CHECKOUT_ENABLED else []),
+        "payment_mode": CLICK_MODE if CHECKOUT_ENABLED else "disabled",
+        "checkout_enabled": CHECKOUT_ENABLED,
         "reservation_ttl_minutes": INVENTORY_RESERVATION_TTL_MINUTES,
     }
 
@@ -166,6 +179,7 @@ async def checkout_quote(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
+    _require_checkout_enabled()
     user = await _optional_user(request, session)
     cart = await _find_cart(request, session, user)
     if not cart:
@@ -195,6 +209,7 @@ async def create_checkout_order(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
+    _require_checkout_enabled()
     await _rate_limit_orders(_client_ip(request))
     user = await _optional_user(request, session)
     cart = await _find_cart(request, session, user)

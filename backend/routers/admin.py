@@ -20,6 +20,7 @@ from auth import csrf_protect, require_roles
 from cms.service import audit, media_url
 from config import (
     BASE_CURRENCY,
+    CHECKOUT_ENABLED,
     CLICK_MODE,
     INVENTORY_RESERVATION_TTL_MINUTES,
     SHIPPING_PROVIDER,
@@ -1148,6 +1149,8 @@ async def admin_refund(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
+    if not CHECKOUT_ENABLED:
+        raise HTTPException(status_code=503, detail="checkout_unavailable")
     payment = await session.get(Payment, payment_id)
     if not payment:
         raise HTTPException(status_code=404, detail="payment_not_found")
@@ -1235,6 +1238,8 @@ async def admin_settings(user: User = Depends(require_admin)):
         "store": "MUSLIMAH CANTIK",
         "business_model": "single_vendor",
         "currency": BASE_CURRENCY,
+        "checkout_enabled": CHECKOUT_ENABLED,
+        "payment_provider": "click" if CHECKOUT_ENABLED else "disabled",
         "click_mode": CLICK_MODE,
         "shipping_provider": SHIPPING_PROVIDER,
         "shipping_methods": list(_METHODS),
