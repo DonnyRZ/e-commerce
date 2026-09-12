@@ -1,4 +1,4 @@
-"""Remove CMS media assets that are no longer referenced by published/draft content.
+"""Remove media assets that are no longer referenced by CMS content or products.
 
 Run from the backend directory with a conservative retention window:
 
@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from db.models import CmsContentEntry, CmsMediaAsset
+from db.models import CmsContentEntry, CmsMediaAsset, Product
 from db.session import SessionLocal
 from storage import get_media_storage
 
@@ -25,19 +25,40 @@ async def cleanup(*, older_than_days: int = 7, dry_run: bool = False) -> int:
     cutoff = datetime.now(timezone.utc) - timedelta(days=older_than_days)
     storage = get_media_storage()
     async with SessionLocal() as session:
-        rows = (
+        assets = (
             await session.execute(
-                select(CmsMediaAsset)
-                .outerjoin(
-                    CmsContentEntry,
-                    CmsContentEntry.media_id == CmsMediaAsset.id,
-                )
-                .where(
-                    CmsContentEntry.id.is_(None),
-                    CmsMediaAsset.created_at < cutoff,
-                )
+                select(CmsMediaAsset).where(CmsMediaAsset.created_at < cutoff)
             )
         ).scalars().all()
+        content_refs = set(
+            (
+                await session.execute(
+                    select(CmsContentEntry.media_id).where(CmsContentEntry.media_id.is_not(None))
+                )
+            ).scalars().all()
+        )
+        product_media = (await session.execute(select(Product.media))).scalars().all()
+
+        def referenced_by_product(asset):
+            suffix = f"/api/v1/cms/media/file/{asset.storage_key}"
+            return any(
+                isinstance(item, dict)
+                and (
+                    item.get("media_id") == asset.id
+                    or (
+                        isinstance(item.get("url"), str)
+                        and item["url"].split("?", 1)[0].rstrip("/").endswith(suffix)
+                    )
+                )
+                for media in product_media
+                for item in (media or [])
+            )
+
+        rows = [
+            asset
+            for asset in assets
+            if asset.id not in content_refs and not referenced_by_product(asset)
+        ]
         for asset in rows:
             logger.info("orphan media candidate id=%s key=%s", asset.id, asset.storage_key)
             if dry_run:
@@ -59,4 +80,3 @@ if __name__ == "__main__":
         cleanup(older_than_days=max(args.older_than_days, 1), dry_run=args.dry_run)
     )
     logger.info("orphan media scan complete: %s candidate(s)", count)
-

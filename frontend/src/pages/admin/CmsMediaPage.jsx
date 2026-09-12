@@ -136,7 +136,7 @@ export default function CmsMediaPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Media Library</h1>
-          <p className="mt-1 text-sm text-neutral-500">JPEG, PNG or WebP up to 5 MB. Used by CMS content entries.</p>
+          <p className="mt-1 text-sm text-neutral-500">JPEG, PNG or WebP up to 5 MB. Used by CMS content and product images.</p>
         </div>
         <label
           className={`inline-flex h-10 cursor-pointer items-center gap-1.5 bg-[#145A46] px-4 text-sm font-semibold text-white hover:opacity-90 ${uploading ? "opacity-50" : ""}`}

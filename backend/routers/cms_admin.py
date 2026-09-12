@@ -22,6 +22,7 @@ from db.models import (
     CmsMediaAsset,
     CmsMediaTranslation,
     CmsRevision,
+    Product,
     User,
 )
 from db.session import get_session
@@ -435,9 +436,7 @@ async def _media_payload(session: AsyncSession, asset: CmsMediaAsset) -> dict:
             select(CmsMediaTranslation).where(CmsMediaTranslation.media_id == asset.id)
         )
     ).scalars().all()
-    usage = await session.scalar(
-        select(func.count(CmsContentEntry.id)).where(CmsContentEntry.media_id == asset.id)
-    )
+    usage = await _media_usage_count(session, asset)
     return {
         "id": asset.id,
         "url": await cms.media_url(session, asset),
@@ -452,6 +451,35 @@ async def _media_payload(session: AsyncSession, asset: CmsMediaAsset) -> dict:
             t.locale: {"alt_text": t.alt_text, "caption": t.caption} for t in translations
         },
     }
+
+
+def _product_media_item_matches(item: object, asset: CmsMediaAsset) -> bool:
+    if not isinstance(item, dict):
+        return False
+    if item.get("media_id") == asset.id:
+        return True
+    url = item.get("url")
+    if not isinstance(url, str):
+        return False
+    return url.split("?", 1)[0].rstrip("/").endswith(
+        f"/api/v1/cms/media/file/{asset.storage_key}"
+    )
+
+
+async def _media_usage_count(session: AsyncSession, asset: CmsMediaAsset) -> int:
+    content_usage = await session.scalar(
+        select(func.count(CmsContentEntry.id)).where(CmsContentEntry.media_id == asset.id)
+    )
+    product_media = (
+        await session.execute(select(Product.media))
+    ).scalars().all()
+    product_usage = sum(
+        1
+        for media in product_media
+        for item in (media or [])
+        if _product_media_item_matches(item, asset)
+    )
+    return int(content_usage or 0) + product_usage
 
 
 @router.get("/media")
@@ -528,9 +556,7 @@ async def delete_media(
     asset = await session.get(CmsMediaAsset, media_id)
     if not asset:
         raise HTTPException(status_code=404, detail="media_not_found")
-    usage = await session.scalar(
-        select(func.count(CmsContentEntry.id)).where(CmsContentEntry.media_id == asset.id)
-    )
+    usage = await _media_usage_count(session, asset)
     if usage:
         raise HTTPException(
             status_code=409,
