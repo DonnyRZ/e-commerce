@@ -9,7 +9,7 @@ import {
   getProducts,
 } from "@/lib/api";
 import { pickLocalized, toCardCategory, toCardProduct } from "@/lib/localize";
-import { findTaxonomyNode } from "@/lib/taxonomy";
+import { findTaxonomyNode, leafTaxonomy } from "@/lib/taxonomy";
 import CategoryStrip from "@/components/common/CategoryStrip";
 import ProductGrid from "@/components/common/ProductGrid";
 import EmptyState from "@/components/common/EmptyState";
@@ -117,16 +117,12 @@ export default function ShopPage() {
         ? t(BADGE_TITLES[badge])
         : t("page.title.shop");
 
-  const groupedSections = activeNode?.kind === "department"
-    ? (activeNode.children || [])
-      .filter((node) => node.kind === "group" && (node.children || []).length)
-      .map((group) => ({
-        group,
-        categories: group.children || [],
-      }))
-    : [];
-  const stripNodes = groupedSections.length
-    ? []
+  // Keep every department on the same storefront pattern. Nested departments
+  // still retain their group hierarchy in navigation and group pages, but the
+  // department landing page presents one flat, leaf-category strip just like
+  // the legacy departments.
+  const stripNodes = activeNode?.kind === "department"
+    ? leafTaxonomy([activeNode])
     : activeNode?.children?.length
     ? activeNode.children
     : categoryDetail
@@ -206,30 +202,7 @@ export default function ShopPage() {
         </div>
       </div>
 
-      {groupedSections.length ? (
-        <div className="mt-8 space-y-10" data-testid="department-category-navigation">
-          <section data-testid="department-group-strip">
-            <h2 className="mb-4 text-lg font-semibold tracking-tight lg:text-xl">
-              {t("home.shopByCategory")}
-            </h2>
-            <CategoryStrip
-              categories={groupedSections.map(({ group }) => toCardCategory(group, locale))}
-              nameOf={(group) => group.name}
-            />
-          </section>
-          {groupedSections.map(({ group, categories }) => (
-            <section key={group.id} data-testid={`department-category-section-${group.slug}`}>
-              <h2 className="mb-4 text-lg font-semibold tracking-tight lg:text-xl">
-                {pickLocalized(group.translations, locale)}
-              </h2>
-              <CategoryStrip
-                categories={categories.map((node) => toCardCategory(node, locale))}
-                nameOf={(node) => node.name}
-              />
-            </section>
-          ))}
-        </div>
-      ) : stripCategories.length ? (
+      {stripCategories.length ? (
         <div className="mt-8">
           <CategoryStrip categories={stripCategories} nameOf={(c) => c.name} />
         </div>
