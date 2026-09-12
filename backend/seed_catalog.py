@@ -30,10 +30,10 @@ DEPARTMENTS = [
     ("women-muslimah", 1, {"en": "Women Muslimah", "id": "Busana Muslimah", "uz": "Muslima ayollar", "ru": "Женская мусульманская"}, img("1762376268273-645db555eaf9", 900), True),
     ("uniqlo-products", 2, {"en": "UNIQLO Products", "id": "Produk UNIQLO", "uz": "UNIQLO mahsulotlari", "ru": "Товары UNIQLO"}, img("1603400521630-9f2de124b33b", 900), True),
     ("tropical-halal-skincare", 3, {"en": "Tropical Halal Skincare", "id": "Skincare Halal Tropis", "uz": "Tropik halol teri parvarishi", "ru": "Тропический халяль-уход"}, img("1616750819456-5cdee9b85d22", 900), True),
-    # New commercial taxonomy is staged inactive until official products and
-    # approved CMS visuals are imported.
-    ("batik", 4, {"en": "Batik", "id": "Batik", "uz": "Batik", "ru": "Батик"}, None, False),
-    ("parfum", 5, {"en": "Perfume", "id": "Parfum", "uz": "Atirlar", "ru": "Парфюмерия"}, None, False),
+    # The approved taxonomy is storefront-visible even before product master
+    # data is entered, so customers can discover the new departments now.
+    ("batik", 4, {"en": "Batik", "id": "Batik", "uz": "Batik", "ru": "Батик"}, None, True),
+    ("parfum", 5, {"en": "Perfume", "id": "Parfum", "uz": "Atirlar", "ru": "Парфюмерия"}, None, True),
 ]
 
 BATIK_WOMEN_CATEGORIES = [
@@ -640,7 +640,7 @@ async def seed():
                 names=group_names,
                 sort_order=group_order,
                 parent_id=dept_ids[root_slug],
-                is_active=False,
+                is_active=True,
             )
             for leaf_slug, leaf_order, leaf_names in leaf_specs:
                 await upsert_category(
@@ -651,7 +651,7 @@ async def seed():
                     names=leaf_names,
                     sort_order=leaf_order,
                     parent_id=group_id,
-                    is_active=False,
+                    is_active=True,
                 )
 
         for spec in PRODUCTS:

@@ -2,11 +2,22 @@
 
 from sqlalchemy.dialects import postgresql
 
+from seed_catalog import DEPARTMENTS, NEW_TAXONOMY_GROUPS
 from taxonomy import TAXONOMY_KINDS, descendant_ids_select
 
 
 def test_taxonomy_kinds_are_explicit_and_product_safe():
     assert TAXONOMY_KINDS == {"department", "group", "category"}
+
+
+def test_approved_batik_and_parfum_taxonomy_is_storefront_visible():
+    departments = {slug: is_active for slug, _order, _names, _image, is_active in DEPARTMENTS}
+    assert departments["batik"] is True
+    assert departments["parfum"] is True
+    assert all(
+        group_names and leaf_specs
+        for _department, _slug, _order, group_names, leaf_specs in NEW_TAXONOMY_GROUPS
+    )
 
 
 def test_descendant_scope_uses_a_recursive_cte():
