@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import csrf_protect, require_roles
-from cms.service import audit
+from cms.service import audit, media_url
 from config import (
     BASE_CURRENCY,
     CLICK_MODE,
@@ -27,6 +27,7 @@ from config import (
 from db.models import (
     Category,
     CategoryTranslation,
+    CmsMediaAsset,
     Order,
     OrderItem,
     Payment,
@@ -76,6 +77,28 @@ async def _store_owner_id(session: AsyncSession, admin_id: str) -> str:
         select(User).where(User.email == "official@muslimahcantik.id")
     )
     return owner.id if owner else admin_id
+
+
+async def _resolve_media_url(session: AsyncSession, media_id: Optional[str]) -> Optional[str]:
+    """Validate a CMS asset reference and resolve its local browser URL."""
+    if not media_id:
+        return None
+    asset = await session.get(CmsMediaAsset, media_id)
+    if not asset:
+        _bad_request("invalid_media")
+    return await media_url(session, asset)
+
+
+async def _normalize_product_media(session: AsyncSession, media: list[dict]) -> list[dict]:
+    """Make media_id authoritative while retaining legacy URL compatibility."""
+    _validate_media(media)
+    normalized = []
+    for raw in media:
+        item = dict(raw or {})
+        if item.get("media_id"):
+            item["url"] = await _resolve_media_url(session, item["media_id"])
+        normalized.append(item)
+    return normalized
 
 
 # ------------------------------ dashboard -----------------------------------
@@ -248,7 +271,7 @@ async def admin_create_product(
     _: None = Depends(csrf_protect),
 ):
     _validate_translations(payload.translations, require_en=True)
-    _validate_media(payload.media)
+    normalized_media = await _normalize_product_media(session, payload.media)
     if payload.status not in ("draft", "active", "inactive"):
         _bad_request("invalid_status")
     await _validate_category(session, payload.category_id)
@@ -273,7 +296,7 @@ async def admin_create_product(
         status=payload.status,
         attributes=payload.attributes,
         tags=payload.tags,
-        media=payload.media,
+        media=normalized_media,
     )
     session.add(product)
     await session.flush()
@@ -283,11 +306,13 @@ async def admin_create_product(
                 short_description=tr.short_description, description=tr.description)
         )
     for v in payload.variants:
+        variant_image_url = await _resolve_media_url(session, v.media_id) if v.media_id else v.image_url
         session.add(
             ProductVariant(
                 product_id=product.id, sku=v.sku, option_values=v.option_values,
                 stock_quantity=v.stock_quantity, price_override=v.price_override,
-                sale_price_override=v.sale_price_override, image_url=v.image_url,
+                sale_price_override=v.sale_price_override, media_id=v.media_id,
+                image_url=variant_image_url,
                 is_active=v.is_active,
             )
         )
@@ -330,7 +355,7 @@ async def admin_update_product(
     if "category_id" in data:
         await _validate_category(session, data["category_id"])
     if "media" in data:
-        _validate_media(data["media"] or [])
+        data["media"] = await _normalize_product_media(session, data["media"] or [])
     _validate_price_order(
         data.get("base_price", product.base_price),
         data.get("compare_at_price", product.compare_at_price),
@@ -382,10 +407,12 @@ async def admin_create_variant(
     _validate_variant_prices(
         payload.price_override, payload.sale_price_override, product.base_price
     )
+    variant_image_url = await _resolve_media_url(session, payload.media_id) if payload.media_id else payload.image_url
     variant = ProductVariant(
         product_id=product.id, sku=payload.sku, option_values=payload.option_values,
         stock_quantity=payload.stock_quantity, price_override=payload.price_override,
-        sale_price_override=payload.sale_price_override, image_url=payload.image_url,
+        sale_price_override=payload.sale_price_override,
+        media_id=payload.media_id, image_url=variant_image_url,
         is_active=payload.is_active,
     )
     session.add(variant)
@@ -419,8 +446,10 @@ async def admin_update_variant(
         data.get("sale_price_override", variant.sale_price_override),
         product.base_price if product else None,
     )
+    if "media_id" in data:
+        data["image_url"] = await _resolve_media_url(session, data["media_id"])
     for field in ("sku", "option_values", "price_override", "sale_price_override",
-                  "image_url", "is_active"):
+                  "media_id", "image_url", "is_active"):
         if field in data:
             setattr(variant, field, data[field])
     await audit(session, user.id, "admin.variant.update", "variant", variant.id,
@@ -484,6 +513,7 @@ class CategoryCreateIn(BaseModel):
     department: str = Field(min_length=1, max_length=50)
     parent_id: Optional[str] = Field(default=None, min_length=8, max_length=40)
     sort_order: int = Field(default=0, ge=0)
+    media_id: Optional[str] = Field(default=None, max_length=40)
     image_url: Optional[str] = Field(default=None, max_length=500)
     is_active: bool = True
     translations: dict[str, CategoryTranslationIn]
@@ -492,6 +522,7 @@ class CategoryCreateIn(BaseModel):
 class CategoryUpdateIn(BaseModel):
     parent_id: Optional[str] = Field(default=None, min_length=8, max_length=40)
     sort_order: Optional[int] = Field(default=None, ge=0)
+    media_id: Optional[str] = Field(default=None, max_length=40)
     image_url: Optional[str] = None
     is_active: Optional[bool] = None
     translations: Optional[dict[str, CategoryTranslationIn]] = None
@@ -513,6 +544,7 @@ async def _category_payload(session: AsyncSession, category: Category) -> dict:
         "kind": category.kind,
         "parent_id": category.parent_id,
         "sort_order": category.sort_order,
+        "media_id": category.media_id,
         "image_url": category.image_url,
         "is_active": category.is_active,
         "product_count": int(product_count or 0),
@@ -593,7 +625,9 @@ async def admin_create_category(
     category = Category(
         slug=payload.slug, department=payload.department,
         parent_id=parent_id,
-        sort_order=payload.sort_order, image_url=payload.image_url,
+        sort_order=payload.sort_order,
+        media_id=payload.media_id,
+        image_url=await _resolve_media_url(session, payload.media_id) if payload.media_id else payload.image_url,
         is_active=payload.is_active,
     )
     session.add(category)
@@ -647,7 +681,9 @@ async def admin_update_category(
                     CategoryTranslation(category_id=category.id, locale=locale,
                                         name=tr.name, description=tr.description)
                 )
-    for field in ("parent_id", "sort_order", "image_url", "is_active"):
+    if "media_id" in data:
+        data["image_url"] = await _resolve_media_url(session, data["media_id"])
+    for field in ("parent_id", "sort_order", "media_id", "image_url", "is_active"):
         if field in data:
             setattr(category, field, data[field])
     await audit(session, user.id, "admin.category.update", "category", category.id, None)

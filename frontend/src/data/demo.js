@@ -1,13 +1,12 @@
-const img = (id, w = 800) =>
-  `https://images.unsplash.com/photo-${id}?crop=entropy&cs=srgb&fm=jpg&q=80&w=${w}&fit=crop`;
-
-export const HERO_IMAGE = img("1772714601002-fbb0fea8a911", 1800);
+// Local resilience fallbacks. The CMS-imported asset is authoritative; these
+// files keep the first paint usable if the CMS bundle is temporarily empty.
+export const HERO_IMAGE = "/brand/generated/home-hero.jpg";
 
 export const EDITORIALS = [
   {
     id: "e1",
     slug: "modest-styling-guide",
-    image: img("1552874869-5c39ec9288dc", 900),
+    image: "/brand/generated/modest-styling-guide.jpg",
     labels: { en: "Guide", id: "Panduan", uz: "Qo'llanma", ru: "Гид" },
     titles: { en: "Modest Styling Guide", id: "Panduan Gaya Muslimah", uz: "Muslimona uslub qo'llanmasi", ru: "Гид по скромному стилю" },
     descriptions: {
@@ -20,7 +19,7 @@ export const EDITORIALS = [
   {
     id: "e2",
     slug: "hijab-styling-guide",
-    image: img("1536528947088-d655e462f4d3", 900),
+    image: "/brand/generated/hijab-styling-guide.jpg",
     labels: { en: "Guide", id: "Panduan", uz: "Qo'llanma", ru: "Гид" },
     titles: { en: "Hijab Styling Guide", id: "Panduan Gaya Hijab", uz: "Hijob qo'llanmasi", ru: "Гид по стилю хиджаба" },
     descriptions: {
@@ -33,7 +32,7 @@ export const EDITORIALS = [
   {
     id: "e3",
     slug: "tropical-halal-skincare-routine",
-    image: img("1670201202833-b0932731628f", 900),
+    image: "/brand/generated/tropical-halal-skincare-routine.jpg",
     labels: { en: "Routine", id: "Rutinitas", uz: "Tartib", ru: "Ритуал" },
     titles: { en: "Tropical Halal Skincare Routine", id: "Rutinitas Skincare Halal Tropis", uz: "Tropik halol teri parvarishi tartibi", ru: "Тропический халяль-уход: ритуал" },
     descriptions: {
@@ -46,7 +45,7 @@ export const EDITORIALS = [
   {
     id: "e4",
     slug: "new-season-muslimah-edit",
-    image: img("1763906802942-8b1959ad0698", 900),
+    image: "/brand/generated/new-season-muslimah-edit.jpg",
     labels: { en: "Edit", id: "Pilihan", uz: "Tanlov", ru: "Подборка" },
     titles: { en: "New Season Muslimah Edit", id: "Pilihan Muslimah Musim Baru", uz: "Yangi mavsum muslima tanlovi", ru: "Мусульманская подборка нового сезона" },
     descriptions: {

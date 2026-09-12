@@ -89,6 +89,7 @@ class VariantIn(BaseModel):
     stock_quantity: int = Field(default=0, ge=0)
     price_override: Optional[int] = Field(default=None, ge=0)
     sale_price_override: Optional[int] = Field(default=None, ge=0)
+    media_id: Optional[str] = Field(default=None, max_length=40)
     image_url: Optional[str] = Field(default=None, max_length=500)
     is_active: bool = True
 
@@ -125,6 +126,7 @@ class VariantUpdateIn(BaseModel):
     option_values: Optional[dict] = None
     price_override: Optional[int] = Field(default=None, ge=0)
     sale_price_override: Optional[int] = Field(default=None, ge=0)
+    media_id: Optional[str] = Field(default=None, max_length=40)
     image_url: Optional[str] = Field(default=None, max_length=500)
     is_active: Optional[bool] = None
 
@@ -220,6 +222,10 @@ def _validate_media(media: list[dict]) -> None:
     if len(media) > 8:
         _bad_request("too_many_media")
     for m in media:
+        if isinstance(m, dict) and m.get("media_id"):
+            if not isinstance(m["media_id"], str) or not m["media_id"].strip():
+                _bad_request("invalid_media")
+            continue
         url = (m or {}).get("url", "")
         if not isinstance(url, str) or not url.startswith(("http://", "https://")) or len(url) > 500:
             _bad_request("invalid_media_url")
@@ -274,6 +280,7 @@ async def _product_payload(session: AsyncSession, product: Product) -> dict:
                 "available": v.stock_quantity - reserved.get(v.id, 0),
                 "price_override": v.price_override,
                 "sale_price_override": v.sale_price_override,
+                "media_id": v.media_id,
                 "image_url": v.image_url,
                 "is_active": v.is_active,
                 "stock_state": _stock_state(v.stock_quantity),
@@ -534,8 +541,9 @@ async def create_product(
                 option_values=v.option_values,
                 stock_quantity=v.stock_quantity,
                 price_override=v.price_override,
-                sale_price_override=v.sale_price_override,
-                image_url=v.image_url,
+        sale_price_override=v.sale_price_override,
+        media_id=v.media_id,
+        image_url=v.image_url,
                 is_active=v.is_active,
             )
         )
@@ -663,7 +671,7 @@ async def update_variant(
         data.get("sale_price_override", variant.sale_price_override),
         product.base_price if product else None,
     )
-    for field in ("sku", "option_values", "price_override", "sale_price_override", "image_url", "is_active"):
+    for field in ("sku", "option_values", "price_override", "sale_price_override", "media_id", "image_url", "is_active"):
         if field in data:
             setattr(variant, field, data[field])
     try:

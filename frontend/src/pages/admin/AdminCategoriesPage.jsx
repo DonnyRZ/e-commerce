@@ -1,19 +1,71 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, X } from "lucide-react";
+import { ImagePlus, Pencil, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   createAdminCategory,
   deleteAdminCategory,
   getAdminCategories,
+  getCmsMedia,
   updateAdminCategory,
+  uploadCmsMedia,
 } from "@/lib/api";
-import { pickLocalized } from "@/lib/localize";
+import { mediaUrl, pickLocalized } from "@/lib/localize";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill, inputClass } from "./adminUtils";
 
 const LOCALES = ["en", "id", "uz", "ru"];
-const EMPTY_FORM = { slug: "", department: "", sort_order: 0, image_url: "", is_active: true, names: { en: "", id: "", uz: "", ru: "" } };
+const EMPTY_FORM = { slug: "", department: "", sort_order: 0, media_id: null, image_url: "", is_active: true, names: { en: "", id: "", uz: "", ru: "" } };
+
+function MediaPicker({ onSelect, onClose }) {
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ["cms-media", "category-picker"],
+    queryFn: () => getCmsMedia({ page_size: 48 }),
+  });
+  const [uploading, setUploading] = useState(false);
+
+  const upload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setUploading(true);
+    try {
+      const asset = await uploadCmsMedia(file);
+      await refetch();
+      onSelect(asset);
+      toast.success("Image uploaded and selected");
+    } catch {
+      toast.error("Image upload failed");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 border border-neutral-200 bg-neutral-50 p-3" data-testid="category-media-picker">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-widest text-neutral-500">Asset Library</p>
+        <div className="flex items-center gap-2">
+          <label className={`inline-flex h-8 cursor-pointer items-center gap-1 border border-neutral-300 bg-white px-3 text-xs font-semibold hover:border-[#145A46] ${uploading ? "opacity-50" : ""}`}>
+            <ImagePlus className="h-3.5 w-3.5" aria-hidden="true" />
+            {uploading ? "Uploading…" : "Upload"}
+            <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={upload} disabled={uploading} />
+          </label>
+          <button type="button" onClick={onClose} className="h-8 border border-neutral-300 bg-white px-3 text-xs">Close</button>
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-4 gap-2 sm:grid-cols-6">
+        {isLoading ? Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="aspect-square" />) : (data?.items || []).map((m) => (
+          <button key={m.id} type="button" onClick={() => onSelect(m)} className="border border-neutral-200 bg-white p-1 text-left hover:border-[#145A46]" data-testid={`category-media-pick-${m.id}`}>
+            <img src={mediaUrl(m.url)} alt={m.translations?.en?.alt_text || m.original_filename} className="aspect-square w-full object-cover" />
+            <span className="mt-1 block truncate text-[10px] text-neutral-500">{m.original_filename}</span>
+          </button>
+        ))}
+      </div>
+      {!isLoading && !(data?.items || []).length ? <p className="py-4 text-center text-xs text-neutral-400">No assets yet. Upload one here.</p> : null}
+    </div>
+  );
+}
 
 export default function AdminCategoriesPage() {
   const queryClient = useQueryClient();
@@ -21,6 +73,7 @@ export default function AdminCategoriesPage() {
   const [editing, setEditing] = useState(null); // null | "new" | category object
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const raw = data;
   const items = Array.isArray(raw) ? raw : raw?.items || [];
@@ -36,6 +89,7 @@ export default function AdminCategoriesPage() {
       slug: c.slug,
       department: c.department,
       sort_order: c.sort_order,
+      media_id: c.media_id || null,
       image_url: c.image_url || "",
       is_active: c.is_active,
       names: Object.fromEntries(LOCALES.map((l) => [l, c.translations?.[l]?.name || ""])),
@@ -56,7 +110,7 @@ export default function AdminCategoriesPage() {
           slug: form.slug.trim(),
           department: form.department,
           sort_order: parseInt(form.sort_order, 10) || 0,
-          image_url: form.image_url || null,
+          media_id: form.media_id || null,
           is_active: Boolean(form.is_active),
           translations,
         });
@@ -64,7 +118,7 @@ export default function AdminCategoriesPage() {
       } else {
         await updateAdminCategory(editing.id, {
           sort_order: parseInt(form.sort_order, 10) || 0,
-          image_url: form.image_url || null,
+          media_id: form.media_id || null,
           is_active: Boolean(form.is_active),
           translations,
         });
@@ -140,9 +194,16 @@ export default function AdminCategoriesPage() {
               <label className="mb-1 block text-xs font-medium text-neutral-500">Sort order</label>
               <input type="number" min="0" step="1" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: e.target.value })} className={inputClass} data-testid="category-sort" />
             </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-500">Image URL</label>
-              <input type="url" value={form.image_url} onChange={(e) => setForm({ ...form, image_url: e.target.value })} className={inputClass} data-testid="category-image" placeholder="https://…" />
+            <div className="sm:col-span-2 xl:col-span-2">
+              <label className="mb-1 block text-xs font-medium text-neutral-500">Category image</label>
+              <div className="flex flex-wrap items-center gap-3">
+                {form.media_id && form.image_url ? <img src={mediaUrl(form.image_url)} alt="" className="h-12 w-12 border border-neutral-200 object-cover" /> : <div className="flex h-12 w-12 items-center justify-center border border-dashed border-neutral-300 text-[10px] text-neutral-400">None</div>}
+                <button type="button" onClick={() => setPickerOpen(!pickerOpen)} className="h-10 border border-neutral-300 px-4 text-xs font-semibold hover:border-[#145A46] hover:text-[#145A46]" data-testid="category-media-choose">
+                  {pickerOpen ? "Hide library" : "Choose from library"}
+                </button>
+                {form.media_id ? <button type="button" onClick={() => setForm({ ...form, media_id: null, image_url: "" })} className="text-xs font-medium text-red-600 hover:underline">Remove</button> : null}
+              </div>
+              {pickerOpen ? <MediaPicker onClose={() => setPickerOpen(false)} onSelect={(m) => { setForm({ ...form, media_id: m.id, image_url: m.url }); setPickerOpen(false); }} /> : null}
             </div>
           </div>
           <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

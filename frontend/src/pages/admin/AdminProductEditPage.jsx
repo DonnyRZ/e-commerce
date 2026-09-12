@@ -65,7 +65,7 @@ export default function AdminProductEditPage() {
 
   const [form, setForm] = useState({
     category_id: "", product_type: "general", brand: "",
-    base_price: "", compare_at_price: "", status: "draft", media: [], externalImageUrl: "",
+    base_price: "", compare_at_price: "", status: "draft", media: [],
   });
   const [tr, setTr] = useState({ en: { name: "", short_description: "", description: "" } });
   const [activeLocale, setActiveLocale] = useState("en");
@@ -87,7 +87,7 @@ export default function AdminProductEditPage() {
       category_id: p.category_id, product_type: p.product_type, brand: p.brand || "",
       base_price: String(p.base_price),
       compare_at_price: p.compare_at_price != null ? String(p.compare_at_price) : "",
-      status: p.status, media: normalizeMedia(p.media), externalImageUrl: "",
+      status: p.status, media: normalizeMedia(p.media),
     });
     setTr(p.translations || { en: { name: "" } });
     setVariants(
@@ -147,35 +147,6 @@ export default function AdminProductEditPage() {
     } finally {
       setImageUploading(false);
     }
-  };
-
-  const addExternalImage = () => {
-    const value = form.externalImageUrl.trim();
-    if (!value) return;
-    let parsed;
-    try {
-      parsed = new URL(value);
-    } catch {
-      toast.error("Enter a valid image URL.");
-      return;
-    }
-    if (!["http:", "https:"].includes(parsed.protocol)) {
-      toast.error("Image URL must use HTTP or HTTPS.");
-      return;
-    }
-    if (form.media.length >= MAX_PRODUCT_IMAGES) {
-      toast.error(`A product can have up to ${MAX_PRODUCT_IMAGES} images.`);
-      return;
-    }
-    if (form.media.some((item) => item.url === value)) {
-      toast.error("This image is already added.");
-      return;
-    }
-    setForm((current) => ({
-      ...current,
-      media: [...current.media, { url: value }],
-      externalImageUrl: "",
-    }));
   };
 
   const removeProductImage = (index) => {
@@ -426,24 +397,6 @@ export default function AdminProductEditPage() {
                 data-testid="editor-image-input"
               />
             </label>
-            <div className="flex min-w-64 flex-1 items-end gap-2">
-              <div className="min-w-0 flex-1">
-                <label className="mb-1 block text-[11px] font-medium text-neutral-500" htmlFor="editor-image-url">Or add external image URL</label>
-                <input
-                  id="editor-image-url"
-                  type="url"
-                  value={form.externalImageUrl}
-                  onChange={setF("externalImageUrl")}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addExternalImage(); } }}
-                  className={inputClass}
-                  data-testid="editor-image-url"
-                  placeholder="https://…"
-                />
-              </div>
-              <button type="button" onClick={addExternalImage} className="h-10 border border-neutral-300 px-4 text-xs font-semibold hover:border-[#145A46] hover:text-[#145A46]" data-testid="editor-add-image-url">
-                Add URL
-              </button>
-            </div>
           </div>
           <p className="mt-2 text-[11px] text-neutral-400">JPEG, PNG, or WebP up to 5 MB each. Images are stored on the VPS.</p>
         </section>

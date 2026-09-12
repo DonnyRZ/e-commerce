@@ -22,7 +22,9 @@ from db.models import (
     CmsMediaAsset,
     CmsMediaTranslation,
     CmsRevision,
+    Category,
     Product,
+    ProductVariant,
     User,
 )
 from db.session import get_session
@@ -408,6 +410,15 @@ async def upload_media(
     except Exception:
         raise HTTPException(status_code=415, detail={"error": "invalid_image"})
 
+    checksum = hashlib.sha256(data).hexdigest()
+    existing = await session.scalar(
+        select(CmsMediaAsset).where(CmsMediaAsset.checksum == checksum)
+    )
+    if existing:
+        # Checksum makes retries/resumable imports idempotent and avoids
+        # creating duplicate library entries for the same generated asset.
+        return await _media_payload(session, existing)
+
     key = f"{uuid.uuid4().hex}{ALLOWED_MIME[declared]}"
     storage = get_media_storage()
     await storage.save(data, key, declared)
@@ -419,7 +430,7 @@ async def upload_media(
         file_size=len(data),
         width=width,
         height=height,
-        checksum=hashlib.sha256(data).hexdigest(),
+        checksum=checksum,
         created_by=user.id,
     )
     session.add(asset)
@@ -436,7 +447,7 @@ async def _media_payload(session: AsyncSession, asset: CmsMediaAsset) -> dict:
             select(CmsMediaTranslation).where(CmsMediaTranslation.media_id == asset.id)
         )
     ).scalars().all()
-    usage = await _media_usage_count(session, asset)
+    usage_items = await _media_usage_details(session, asset)
     return {
         "id": asset.id,
         "url": await cms.media_url(session, asset),
@@ -445,8 +456,10 @@ async def _media_payload(session: AsyncSession, asset: CmsMediaAsset) -> dict:
         "file_size": asset.file_size,
         "width": asset.width,
         "height": asset.height,
+        "checksum": asset.checksum,
         "created_at": asset.created_at,
-        "usage_count": int(usage or 0),
+        "usage_count": len(usage_items),
+        "usage": usage_items,
         "translations": {
             t.locale: {"alt_text": t.alt_text, "caption": t.caption} for t in translations
         },
@@ -467,19 +480,70 @@ def _product_media_item_matches(item: object, asset: CmsMediaAsset) -> bool:
 
 
 async def _media_usage_count(session: AsyncSession, asset: CmsMediaAsset) -> int:
-    content_usage = await session.scalar(
-        select(func.count(CmsContentEntry.id)).where(CmsContentEntry.media_id == asset.id)
-    )
-    product_media = (
-        await session.execute(select(Product.media))
+    return len(await _media_usage_details(session, asset))
+
+
+async def _media_usage_details(session: AsyncSession, asset: CmsMediaAsset) -> list[dict]:
+    usages: list[dict] = []
+    content_rows = (
+        await session.execute(
+            select(CmsContentEntry).where(CmsContentEntry.media_id == asset.id)
+        )
     ).scalars().all()
-    product_usage = sum(
-        1
-        for media in product_media
-        for item in (media or [])
-        if _product_media_item_matches(item, asset)
+    usages.extend(
+        {
+            "type": "cms",
+            "id": entry.id,
+            "label": entry.internal_name or entry.slug,
+            "href": f"/admin/cms/{entry.id}",
+        }
+        for entry in content_rows
     )
-    return int(content_usage or 0) + product_usage
+
+    category_rows = (
+        await session.execute(select(Category).where(Category.media_id == asset.id))
+    ).scalars().all()
+    usages.extend(
+        {
+            "type": "category" if category.kind == "category" else "department",
+            "id": category.id,
+            "label": category.slug,
+            "href": "/admin/categories",
+        }
+        for category in category_rows
+    )
+
+    variant_rows = (
+        await session.execute(
+            select(ProductVariant, Product)
+            .join(Product, ProductVariant.product_id == Product.id)
+            .where(ProductVariant.media_id == asset.id)
+        )
+    ).all()
+    usages.extend(
+        {
+            "type": "variant",
+            "id": variant.id,
+            "label": f"{product.slug} · {variant.sku}",
+            "href": f"/admin/products/{product.id}",
+        }
+        for variant, product in variant_rows
+    )
+
+    product_media = (
+        await session.execute(select(Product.id, Product.slug, Product.media))
+    ).all()
+    for product_id, product_slug, media in product_media:
+        if any(_product_media_item_matches(item, asset) for item in (media or [])):
+            usages.append(
+                {
+                    "type": "product",
+                    "id": product_id,
+                    "label": product_slug,
+                    "href": f"/admin/products/{product_id}",
+                }
+            )
+    return usages
 
 
 @router.get("/media")

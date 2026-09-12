@@ -83,6 +83,9 @@ agenthub/agents/youtube/db
 *.deb
 *.dylib
 
+# Generated visual import artifacts (manifest and image files stay off-git)
+artifacts/imagegen/
+
 # Build caches
 .cache/
 

@@ -25,17 +25,12 @@ TRANSLATIONS_PATH = os.environ.get(
 )
 LOCALES = ("en", "id", "uz", "ru")
 
-HERO_IMAGE = (
-    "https://images.unsplash.com/photo-1772714601002-fbb0fea8a911"
-    "?crop=entropy&cs=srgb&fm=jpg&q=80&w=1800&fit=crop"
+EDITORIAL_SLUGS = (
+    "modest-styling-guide",
+    "hijab-styling-guide",
+    "tropical-halal-skincare-routine",
+    "new-season-muslimah-edit",
 )
-
-EDITORIAL_IMAGES = {
-    "modest-styling-guide": "https://images.unsplash.com/photo-1552874869-5c39ec9288dc?crop=entropy&cs=srgb&fm=jpg&q=80&w=900&fit=crop",
-    "hijab-styling-guide": "https://images.unsplash.com/photo-1536528947088-d655e462f4d3?crop=entropy&cs=srgb&fm=jpg&q=80&w=900&fit=crop",
-    "tropical-halal-skincare-routine": "https://images.unsplash.com/photo-1670201202833-b0932731628f?crop=entropy&cs=srgb&fm=jpg&q=80&w=900&fit=crop",
-    "new-season-muslimah-edit": "https://images.unsplash.com/photo-1763906802942-8b1959ad0698?crop=entropy&cs=srgb&fm=jpg&q=80&w=900&fit=crop",
-}
 
 EDITORIAL_LABELS = {
     "modest-styling-guide": {"en": "Guide", "id": "Panduan", "uz": "Qo'llanma", "ru": "Гид"},
@@ -234,6 +229,19 @@ async def seed():
     async with SessionLocal() as session:
         existing = await session.scalar(select(func.count(CmsContentEntry.id)))
         if existing:
+            # Remove only legacy remote image fallbacks. CMS-linked/local media
+            # remains authoritative and is never overwritten by a seed rerun.
+            entries = (await session.execute(select(CmsContentEntry))).scalars().all()
+            changed = False
+            for entry in entries:
+                payload = dict(entry.payload or {})
+                image_url = payload.get("image_url")
+                if isinstance(image_url, str) and image_url.startswith(("http://", "https://")):
+                    payload.pop("image_url", None)
+                    entry.payload = payload
+                    changed = True
+            if changed:
+                await session.commit()
             print("cms seed: entries already exist, skipping (idempotent)")
             return
 
@@ -276,7 +284,7 @@ async def seed():
                 for loc in LOCALES
             },
             cta_url="/shop", secondary_cta_url="/shop",
-            payload={"image_url": HERO_IMAGE},
+            payload={},
         )
         # homepage sections (visibility/order)
         for idx, key in enumerate(SECTION_KEYS):
@@ -284,7 +292,7 @@ async def seed():
                             {loc: {"title": key.replace("_", " ").title()} for loc in LOCALES},
                             sort_order=idx)
         # stories & guides
-        for idx, slug in enumerate(EDITORIAL_IMAGES):
+        for idx, slug in enumerate(EDITORIAL_SLUGS):
             await add_entry(
                 "story", f"Story: {slug}", slug,
                 {
@@ -297,7 +305,7 @@ async def seed():
                     for loc in LOCALES
                 },
                 sort_order=idx, cta_url="/shop",
-                payload={"image_url": EDITORIAL_IMAGES[slug]},
+                payload={},
             )
         # stories section title
         await add_entry(

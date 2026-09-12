@@ -81,6 +81,9 @@ class Category(TimestampMixin, Base):
     parent_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("categories.id"), nullable=True, index=True
     )
+    media_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("cms_media_assets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -166,6 +169,9 @@ class ProductVariant(TimestampMixin, Base):
     stock_quantity: Mapped[int] = mapped_column(Integer, default=0)
     price_override: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     sale_price_override: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    media_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("cms_media_assets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 

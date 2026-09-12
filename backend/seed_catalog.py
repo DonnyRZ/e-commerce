@@ -21,11 +21,9 @@ from db.models import (
 from db.session import SessionLocal
 
 
-def img(photo_id, w=800):
-    return (
-        f"https://images.unsplash.com/photo-{photo_id}"
-        f"?crop=entropy&cs=srgb&fm=jpg&q=80&w={w}&fit=crop"
-    )
+def img(*_args, **_kwargs):
+    """Legacy seed signature; visual assets are imported through CMS."""
+    return None
 
 
 DEPARTMENTS = [
@@ -413,7 +411,11 @@ async def upsert_category(session, *, slug, kind, department, names, sort_order,
         existing.department = department
         existing.sort_order = sort_order
         existing.parent_id = parent_id
-        existing.image_url = image_url
+        # Never replace a CMS-managed image on a repeat seed.
+        if image_url is not None and not existing.media_id:
+            existing.image_url = image_url
+        if existing.image_url and not existing.media_id and str(existing.image_url).startswith(("http://", "https://")):
+            existing.image_url = None
         existing.is_active = True
         cat = existing
         await session.execute(
@@ -428,7 +430,7 @@ async def upsert_category(session, *, slug, kind, department, names, sort_order,
             department=department,
             sort_order=sort_order,
             parent_id=parent_id,
-            image_url=image_url,
+            image_url=None,
         )
         session.add(cat)
         await session.flush()
@@ -450,7 +452,6 @@ async def upsert_product(session, spec, owner_id, cat_ids):
         currency="UZS",
         attributes=spec["attributes"],
         tags=spec["tags"],
-        media=[{"url": u, "alt": spec["slug"], "sort_order": i} for i, u in enumerate(spec["media"])],
         status="active",
         featured=spec["featured"],
         bestseller=spec["bestseller"],
@@ -459,6 +460,16 @@ async def upsert_product(session, spec, owner_id, cat_ids):
     if existing:
         for k, v in fields.items():
             setattr(existing, k, v)
+        # External demo images are not allowed to survive a seed rerun.
+        existing.media = [
+            item for item in (existing.media or [])
+            if not (
+                isinstance(item, dict)
+                and isinstance(item.get("url"), str)
+                and item["url"].startswith(("http://", "https://"))
+                and not item.get("media_id")
+            )
+        ]
         product = existing
         await session.execute(
             ProductTranslation.__table__.delete().where(
@@ -466,7 +477,7 @@ async def upsert_product(session, spec, owner_id, cat_ids):
             )
         )
     else:
-        product = Product(slug=spec["slug"], **fields)
+        product = Product(slug=spec["slug"], media=[], **fields)
         session.add(product)
         await session.flush()
     for locale, (name, desc) in spec["translations"].items():
@@ -487,6 +498,8 @@ async def upsert_product(session, spec, owner_id, cat_ids):
             existing_variant.stock_quantity = v["stock_quantity"]
             existing_variant.price_override = v.get("price_override")
             existing_variant.is_active = True
+            if existing_variant.image_url and not existing_variant.media_id and str(existing_variant.image_url).startswith(("http://", "https://")):
+                existing_variant.image_url = None
         else:
             session.add(
                 ProductVariant(
