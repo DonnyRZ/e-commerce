@@ -192,7 +192,7 @@ def _new_product_payload(sku_prefix):
         "category_id": category_id, "product_type": "apparel", "brand": "M8 Test",
         "base_price": 250000, "compare_at_price": 300000, "status": "draft",
         "attributes": {"material": "cotton"}, "tags": ["test"],
-        "media": [{"url": "https://images.unsplash.com/photo-1434389677669-e08b4cac3105?w=800"}],
+        "media": [{"url": "/media/test-fixture.jpg"}],
         "translations": {
             "en": {"name": f"M8 Test Hoodie {sku_prefix}", "short_description": "Test", "description": "Test desc"},
             "id": {"name": f"Hoodie Uji {sku_prefix}"},

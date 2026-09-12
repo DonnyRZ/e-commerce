@@ -106,7 +106,7 @@ def test_product_crud_flow(admin):
         "brand": "MC Test",
         "base_price": 99000,
         "status": "draft",
-        "media": [{"url": "https://images.unsplash.com/photo-1772714601002-fbb0fea8a911?w=800"}],
+        "media": [{"url": "/media/test-fixture.jpg"}],
         "translations": {
             "en": {"name": f"Admin Test Product {tag}"},
             "id": {"name": f"Produk Uji {tag}"},
