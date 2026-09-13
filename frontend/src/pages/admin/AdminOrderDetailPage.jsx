@@ -64,7 +64,7 @@ export default function AdminOrderDetailPage() {
 
   return (
     <div data-testid="admin-order-detail">
-      <Link to="/admin/orders" className="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 hover:text-neutral-900" data-testid="order-back">
+      <Link to="/orders" className="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 hover:text-neutral-900" data-testid="order-back">
         <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
         Back to orders
       </Link>

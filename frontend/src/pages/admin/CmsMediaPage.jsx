@@ -10,6 +10,11 @@ import { inputClass } from "./adminUtils";
 
 const LOCALES = ["en", "id", "uz", "ru"];
 const fmtSize = (bytes) => (bytes > 1024 * 1024 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`);
+const cmsPath = (href) => {
+  if (!href) return "/";
+  const normalized = href.startsWith("/admin/") ? href.slice("/admin".length) : href;
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
+};
 
 function MediaEditor({ asset, onClose }) {
   const queryClient = useQueryClient();
@@ -180,14 +185,14 @@ export default function CmsMediaPage() {
                 <p className="text-[10px] text-neutral-400">
                   {fmtSize(m.file_size)}{m.width ? ` · ${m.width}×${m.height}` : ""} · used {m.usage_count}×
                 </p>
-                {m.usage?.length ? <div className="mt-1 flex flex-wrap gap-1">{m.usage.slice(0, 3).map((u) => <Link key={`${u.type}-${u.id}`} to={u.href} className="rounded bg-neutral-100 px-1.5 py-0.5 text-[9px] text-neutral-500 hover:text-[#145A46]">{u.type}</Link>)}{m.usage.length > 3 ? <span className="px-1 text-[9px] text-neutral-400">+{m.usage.length - 3}</span> : null}</div> : <span className="mt-1 block text-[9px] text-amber-600">Not used yet</span>}
+                {m.usage?.length ? <div className="mt-1 flex flex-wrap gap-1">{m.usage.slice(0, 3).map((u) => <Link key={`${u.type}-${u.id}`} to={cmsPath(u.href)} className="rounded bg-neutral-100 px-1.5 py-0.5 text-[9px] text-neutral-500 hover:text-[#145A46]">{u.type}</Link>)}{m.usage.length > 3 ? <span className="px-1 text-[9px] text-neutral-400">+{m.usage.length - 3}</span> : null}</div> : <span className="mt-1 block text-[9px] text-amber-600">Not used yet</span>}
               </div>
             ))}
       </div>
       {!isLoading && !items.length ? (
         <div className="mt-5 border border-neutral-200 bg-white px-5 py-12 text-center text-sm text-neutral-400" data-testid="media-empty">
           <p>No reusable assets found.</p>
-          <Link to="/admin/products" className="mt-3 inline-block font-medium text-[#145A46] hover:underline">Go to Products to upload product images</Link>
+          <Link to="/products" className="mt-3 inline-block font-medium text-[#145A46] hover:underline">Go to Products to upload product images</Link>
         </div>
       ) : null}
       {data?.total > pageSize ? (

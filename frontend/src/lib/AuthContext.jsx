@@ -59,7 +59,9 @@ export function AuthProvider({ children }) {
     async login(email, password) {
       const u = await authLogin(email, password);
       queryClient.setQueryData(["auth", "me"], u);
-      await mergeGuestCart(queryClient);
+      // Admin sessions are for operations only and must never inherit a
+      // shopper's guest cart or wishlist state.
+      if (u.role !== "admin") await mergeGuestCart(queryClient);
       return u;
     },
     async register(data) {

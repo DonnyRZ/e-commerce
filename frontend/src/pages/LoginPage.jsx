@@ -7,7 +7,7 @@ import BrandLogo from "@/components/brand/BrandLogo";
 
 export default function LoginPage() {
   const { t } = useI18n();
-  const { login } = useAuth();
+  const { login, logout } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -20,7 +20,12 @@ export default function LoginPage() {
     setBusy(true);
     try {
       const authenticatedUser = await login(email, password);
-      navigate(authenticatedUser.role === "admin" ? "/admin" : "/account");
+      if (authenticatedUser.role === "admin") {
+        await logout();
+        setError(t("auth.adminOnly"));
+        return;
+      }
+      navigate("/account");
     } catch (err) {
       setError(t(authErrorKey(err)));
     } finally {

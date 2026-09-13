@@ -43,7 +43,7 @@ function ReviewCard({ item, onSaved }) {
     <article className="border border-neutral-200 bg-white p-5" data-testid={`review-card-${item.payment_id}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Link to={`/admin/orders/${item.order_number}`} className="font-semibold text-[#145A46] hover:underline" data-testid={`review-order-${item.order_number}`}>
+          <Link to={`/orders/${item.order_number}`} className="font-semibold text-[#145A46] hover:underline" data-testid={`review-order-${item.order_number}`}>
             {item.order_number}
           </Link>
           <p className="mt-0.5 text-xs text-neutral-400">{fmtDate(item.created_at)} · txn {item.merchant_trans_id.slice(0, 12)}…</p>

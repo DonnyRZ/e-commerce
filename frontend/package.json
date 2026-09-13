@@ -64,6 +64,8 @@
     "start": "craco start",
     "lint": "eslint src",
     "build": "craco build",
+    "build:storefront": "node scripts/build-frontend.mjs storefront",
+    "build:cms": "node scripts/build-frontend.mjs cms",
     "test": "craco test",
     "test:ci": "craco test --watchAll=false --passWithNoTests"
   },

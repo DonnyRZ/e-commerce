@@ -24,6 +24,10 @@ const SIZE_STYLES = {
   },
 };
 
+const assetBase = (process.env.PUBLIC_URL || "").replace(/\/$/, "");
+
+const assetPath = (path) => `${assetBase}${path}`;
+
 export default function BrandLogo({
   variant = "full",
   size = "md",
@@ -42,7 +46,7 @@ export default function BrandLogo({
       className={`inline-flex min-w-0 items-center ${styles.lockup} ${className}`}
     >
       <img
-        src={source.src}
+        src={assetPath(source.src)}
         width={source.px}
         height={source.px}
         alt={isMarkOnly && !to ? label : ""}

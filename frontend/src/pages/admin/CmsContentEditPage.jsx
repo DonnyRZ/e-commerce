@@ -191,7 +191,7 @@ export default function CmsContentEditPage() {
         const created = await createCmsContent({ content_type: contentType, ...buildPayload() });
         toast.success("Draft created");
         invalidateCms();
-        navigate(`/admin/cms/${created.id}`, { replace: true });
+        navigate(`/cms/${created.id}`, { replace: true });
         return;
       }
       await updateCmsContent(entryId, buildPayload());
@@ -243,7 +243,7 @@ export default function CmsContentEditPage() {
 
   return (
     <div data-testid="cms-content-editor">
-      <Link to="/admin/cms" className="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 hover:text-neutral-900" data-testid="cms-editor-back">
+      <Link to="/cms" className="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 hover:text-neutral-900" data-testid="cms-editor-back">
         <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
         Back to content
       </Link>

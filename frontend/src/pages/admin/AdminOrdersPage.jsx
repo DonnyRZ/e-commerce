@@ -96,7 +96,7 @@ export default function AdminOrdersPage() {
               : items.map((o) => (
                   <tr key={o.order_number} className="border-b border-neutral-50 hover:bg-neutral-50" data-testid={`order-row-${o.order_number}`}>
                     <td className="px-5 py-3">
-                      <Link to={`/admin/orders/${o.order_number}`} className="font-medium text-[#145A46] hover:underline" data-testid={`order-open-${o.order_number}`}>
+                      <Link to={`/orders/${o.order_number}`} className="font-medium text-[#145A46] hover:underline" data-testid={`order-open-${o.order_number}`}>
                         {o.order_number}
                       </Link>
                       {o.is_guest ? <span className="ml-2 text-[10px] uppercase tracking-wide text-neutral-400">guest</span> : null}

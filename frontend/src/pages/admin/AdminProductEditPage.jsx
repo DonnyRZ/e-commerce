@@ -245,7 +245,7 @@ export default function AdminProductEditPage() {
         });
         toast.success("Product created");
         queryClient.invalidateQueries({ queryKey: ["admin-products"] });
-        navigate(`/admin/products/${created.id}`, { replace: true });
+        navigate(`/products/${created.id}`, { replace: true });
         return;
       }
       await updateAdminProduct(productId, base);
@@ -309,7 +309,7 @@ export default function AdminProductEditPage() {
 
   return (
     <div data-testid="admin-product-editor">
-      <Link to="/admin/products" className="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 hover:text-neutral-900" data-testid="editor-back">
+      <Link to="/products" className="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 hover:text-neutral-900" data-testid="editor-back">
         <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
         Back to products
       </Link>

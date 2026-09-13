@@ -2,6 +2,9 @@
 const path = require("path");
 require("dotenv").config();
 
+const frontendTarget = process.env.FRONTEND_TARGET === "cms" ? "cms" : "storefront";
+const htmlTemplate = frontendTarget === "cms" ? "cms.html" : "index.html";
+
 // Environment variable overrides
 const config = {
   enableHealthCheck: process.env.ENABLE_HEALTH_CHECK === "true",
@@ -66,6 +69,10 @@ if (config.enableHealthCheck) {
 }
 
 let webpackConfig = {
+  entry: path.resolve(
+    __dirname,
+    frontendTarget === "cms" ? "src/cms/index.js" : "src/index.js",
+  ),
   eslint: {
     configure: {
       extends: ["plugin:react-hooks/recommended"],
@@ -80,6 +87,25 @@ let webpackConfig = {
       '@': path.resolve(__dirname, 'src'),
     },
     configure: (webpackConfig) => {
+
+      // The storefront and CMS are separate application entry points. Keeping
+      // the entry selection here ensures the storefront bundle never imports
+      // Admin/CMS modules.
+      webpackConfig.entry = path.resolve(
+        __dirname,
+        frontendTarget === "cms" ? "src/cms/index.js" : "src/index.js",
+      );
+
+      const htmlPlugin = webpackConfig.plugins.find(
+        (plugin) => plugin.constructor?.name === "HtmlWebpackPlugin",
+      );
+      if (htmlPlugin?.options) {
+        htmlPlugin.options.template = path.resolve(
+          __dirname,
+          "public",
+          htmlTemplate,
+        );
+      }
 
       // Add ignored patterns to reduce watched directories
         webpackConfig.watchOptions = {
