@@ -31,19 +31,10 @@ BASE_CURRENCY = os.environ.get("BASE_CURRENCY", "UZS")
 SUPPORTED_LOCALES = ("id", "en", "uz", "ru")
 DEFAULT_LOCALE = "en"
 
-PAYMENT_PROVIDER = os.environ.get("PAYMENT_PROVIDER", "click")
-CLICK_MODE = os.environ.get("CLICK_MODE", "mock")
-CHECKOUT_ENABLED = os.environ.get("CHECKOUT_ENABLED", "true").strip().lower() == "true"
-CLICK_SERVICE_ID = os.environ.get("CLICK_SERVICE_ID", "")
-CLICK_MERCHANT_ID = os.environ.get("CLICK_MERCHANT_ID", "")
-CLICK_MERCHANT_USER_ID = os.environ.get("CLICK_MERCHANT_USER_ID", "")
-CLICK_SECRET_KEY = os.environ.get("CLICK_SECRET_KEY", "")
-CLICK_MOCK_SECRET_KEY = os.environ.get("CLICK_MOCK_SECRET_KEY", "")
-CLICK_API_BASE_URL = os.environ.get(
-    "CLICK_API_BASE_URL", "https://api.click.uz/v2/merchant/"
-).rstrip("/")
-CLICK_PAYMENT_URL = os.environ.get("CLICK_PAYMENT_URL", "")
-CLICK_RETURN_URL = os.environ.get("CLICK_RETURN_URL", "")
+# Checkout stays fail-closed until a payment method is selected and implemented.
+# Keeping this as a code-level default prevents stale environment files from
+# accidentally creating orders or inventory reservations.
+CHECKOUT_ENABLED = False
 
 INVENTORY_RESERVATION_TTL_MINUTES = int(
     os.environ.get("INVENTORY_RESERVATION_TTL_MINUTES", "30")
@@ -83,9 +74,8 @@ def _valid_url(value: str, *, https_only: bool = False) -> bool:
 def validate_runtime_config(*, strict: bool | None = None) -> list[str]:
     """Return deployment configuration errors and optionally fail closed.
 
-    Development and test environments may intentionally use the mock providers.
-    Production never may. Keeping this check in one place makes the readiness
-    probe and process startup agree on what is safe to deploy.
+    Keeping this check in one place makes the readiness probe and process
+    startup agree on what is safe to deploy.
     """
 
     production = APP_ENV == "production"
@@ -109,15 +99,6 @@ def validate_runtime_config(*, strict: bool | None = None) -> list[str]:
         errors.append("SESSION_COOKIE_SECURE must be true in production")
     if production and (not TRUSTED_HOSTS or "*" in TRUSTED_HOSTS):
         errors.append("production TRUSTED_HOSTS must be explicit")
-    if not CHECKOUT_ENABLED:
-        if PAYMENT_PROVIDER != "disabled":
-            errors.append(
-                "PAYMENT_PROVIDER must be disabled when CHECKOUT_ENABLED=false"
-            )
-        if CLICK_MODE != "disabled":
-            errors.append("CLICK_MODE must be disabled when CHECKOUT_ENABLED=false")
-    elif PAYMENT_PROVIDER == "disabled":
-        errors.append("PAYMENT_PROVIDER=disabled requires CHECKOUT_ENABLED=false")
     if RATE_LIMIT_BACKEND not in {"memory", "redis"}:
         errors.append("RATE_LIMIT_BACKEND must be memory or redis")
     if production and RATE_LIMIT_BACKEND != "redis":
@@ -129,29 +110,9 @@ def validate_runtime_config(*, strict: bool | None = None) -> list[str]:
     if production and (len(jwt_secret) < 32 or jwt_secret.lower() in {"change-me", "secret"}):
         errors.append("production JWT_SECRET must be a unique value of at least 32 characters")
 
+    if production and CHECKOUT_ENABLED:
+        errors.append("checkout must remain disabled until a payment method is configured")
     if production:
-        if CHECKOUT_ENABLED:
-            if PAYMENT_PROVIDER != "click":
-                errors.append("production PAYMENT_PROVIDER must be click")
-            if CLICK_MODE not in {"test", "production"}:
-                errors.append("production CLICK_MODE must be test or production")
-            for name, value in {
-                "CLICK_SERVICE_ID": CLICK_SERVICE_ID,
-                "CLICK_MERCHANT_ID": CLICK_MERCHANT_ID,
-                "CLICK_MERCHANT_USER_ID": CLICK_MERCHANT_USER_ID,
-                "CLICK_SECRET_KEY": CLICK_SECRET_KEY,
-                "CLICK_PAYMENT_URL": CLICK_PAYMENT_URL,
-                "CLICK_RETURN_URL": CLICK_RETURN_URL,
-                "CLICK_API_BASE_URL": CLICK_API_BASE_URL,
-            }.items():
-                if not value:
-                    errors.append(f"{name} is required in production")
-            if not _valid_url(CLICK_PAYMENT_URL, https_only=True):
-                errors.append("CLICK_PAYMENT_URL must be an HTTPS URL in production")
-            if not _valid_url(CLICK_RETURN_URL, https_only=True):
-                errors.append("CLICK_RETURN_URL must be an HTTPS URL in production")
-            if not _valid_url(CLICK_API_BASE_URL, https_only=True):
-                errors.append("CLICK_API_BASE_URL must be an HTTPS URL in production")
         if NOTIFICATION_PROVIDER == "mock":
             errors.append("NOTIFICATION_PROVIDER=mock is not allowed in production")
         if NOTIFICATION_PROVIDER == "smtp":

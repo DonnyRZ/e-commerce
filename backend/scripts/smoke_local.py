@@ -1,15 +1,14 @@
-"""Repeatable local pre-deployment smoke test.
+"""Repeatable local storefront/Admin smoke test.
 
-Run against an isolated PostgreSQL database and a running API server. The
-script deliberately exercises the public storefront, guest checkout, payment
-state transitions, admin access, refund, and the single-owner route boundary.
+Run against an isolated database and a running API server. The current local
+release intentionally keeps checkout disabled until a payment workflow is
+selected and implemented.
 """
 
 from __future__ import annotations
 
 import os
 import sys
-import uuid
 
 import requests
 
@@ -31,88 +30,23 @@ def check(response: requests.Response, expected: int = 200) -> dict:
     return response.json()
 
 
-def post(session: requests.Session, path: str, payload: dict, expected: int = 200):
-    return check(session.post(f"{BASE}{path}", json=payload, timeout=TIMEOUT), expected)
-
-
-def guest_order(scenario: str) -> tuple[requests.Session, dict, dict]:
-    session = requests.Session()
-    products = check(
-        session.get(
-            f"{BASE}/api/v1/catalog/products",
-            params={"limit": 1, "availability": "in_stock"},
-            timeout=TIMEOUT,
-        )
-    )
-    product = products["items"][0]
-    detail = check(
-        session.get(f"{BASE}/api/v1/catalog/products/{product['slug']}", timeout=TIMEOUT)
-    )
-    variant = next(v for v in detail["variants"] if v["is_active"] and v["stock_quantity"] > 0)
-    cart = post(
-        session,
-        "/api/v1/cart/items",
-        {"product_id": product["id"], "variant_id": variant["id"], "quantity": 1},
-        201,
-    )
-    assert cart["item_count"] == 1
-    options = check(session.get(f"{BASE}/api/v1/checkout/options", timeout=TIMEOUT))
-    assert options["payment_mode"] == "mock"
-    check(
-        session.post(
-            f"{BASE}/api/v1/checkout/quote",
-            json={"shipping_method": "standard"},
-            timeout=TIMEOUT,
-        )
-    )
-    order = post(
-        session,
-        "/api/v1/checkout/orders",
-        {
-            "idempotency_key": f"smoke-{uuid.uuid4().hex}",
-            "shipping_method": "standard",
-            "locale": "en",
-            "email": f"smoke-{uuid.uuid4().hex[:8]}@example.com",
-            "address": {
-                "recipient_name": "Smoke Test",
-                "phone": "+998901234567",
-                "address_line_1": "1 Test Street",
-                "city": "Tashkent",
-                "state_province": "Tashkent",
-                "postal_code": "100000",
-                "country_code": "UZ",
-            },
-        },
-        201,
-    )
-    payment = post(
-        session,
-        "/api/v1/payments/mock/pay",
-        {
-            "merchant_trans_id": order["payment"]["merchant_trans_id"],
-            "order_number": order["order_number"],
-            "access_token": order["access_token"],
-            "scenario": scenario,
-        },
-    )
-    tracked = check(
-        session.get(
-            f"{BASE}/api/v1/orders/track",
-            params={"order_number": order["order_number"], "token": order["access_token"]},
-            timeout=TIMEOUT,
-        )
-    )
-    assert tracked["payment_state"] == payment["order_payment_state"]
-    return session, order, payment
-
-
 def main() -> int:
     if not ADMIN_EMAIL or not ADMIN_PASSWORD:
         raise SystemExit("SMOKE_ADMIN_EMAIL and SMOKE_ADMIN_PASSWORD are required")
 
     public = requests.Session()
     ready = check(public.get(f"{BASE}/api/ready", timeout=TIMEOUT))
-    assert all(value == "up" for value in ready["checks"].values()), ready
+    assert ready["checks"]["payment"] == "disabled", ready
+    assert ready["checkout_enabled"] is False, ready
+    assert all(
+        value == "up" or (name == "payment" and value == "disabled")
+        for name, value in ready["checks"].items()
+    ), ready
+    schema = check(public.get(f"{BASE}/openapi.json", timeout=TIMEOUT))
+    assert not any(
+        path.startswith("/api/v1/payments/") for path in schema.get("paths", {})
+    )
+    assert not any(path.endswith("/refund") for path in schema.get("paths", {}))
     check(public.get(f"{BASE}/api/status", timeout=TIMEOUT), 404)
     check(public.get(f"{BASE}/api/v1/seller/dashboard", timeout=TIMEOUT), 404)
     assert check(public.get(f"{BASE}/api/v1/catalog/departments", timeout=TIMEOUT))
@@ -120,38 +54,64 @@ def main() -> int:
     assert check(public.get(f"{BASE}/api/v1/cms/public/pages/about", timeout=TIMEOUT))["content_type"] == "page"
     assert check(public.get(f"{BASE}/api/v1/cms/public/faq", timeout=TIMEOUT))["items"]
 
-    _, failed_order, failed_payment = guest_order("FAILED")
-    assert failed_payment["payment_status"] == "failed"
-    assert failed_payment["order_payment_state"] == "failed"
-    assert failed_order["access_token"]
-
-    _, paid_order, paid_payment = guest_order("SUCCESS")
-    assert paid_payment["payment_status"] == "paid"
-    assert paid_payment["order_payment_state"] == "paid"
+    products = check(
+        public.get(
+            f"{BASE}/api/v1/catalog/products",
+            params={"limit": 1, "availability": "in_stock"},
+            timeout=TIMEOUT,
+        )
+    )
+    product = products["items"][0]
+    detail = check(public.get(f"{BASE}/api/v1/catalog/products/{product['slug']}", timeout=TIMEOUT))
+    variant = next(v for v in detail["variants"] if v["is_active"] and v["stock_quantity"] > 0)
+    cart = check(
+        public.post(
+            f"{BASE}/api/v1/cart/items",
+            json={"product_id": product["id"], "variant_id": variant["id"], "quantity": 1},
+            timeout=TIMEOUT,
+        ),
+        201,
+    )
+    assert cart["item_count"] == 1
+    options = check(public.get(f"{BASE}/api/v1/checkout/options", timeout=TIMEOUT))
+    assert options["checkout_enabled"] is False
+    assert options["payment_methods"] == []
+    assert options["payment_mode"] == "disabled"
+    check(
+        public.post(
+            f"{BASE}/api/v1/checkout/quote",
+            json={"shipping_method": "standard"},
+            timeout=TIMEOUT,
+        ),
+        503,
+    )
+    check(
+        public.post(
+            f"{BASE}/api/v1/checkout/orders",
+            json={"idempotency_key": "smoke-disabled-123", "shipping_method": "standard"},
+            timeout=TIMEOUT,
+        ),
+        503,
+    )
+    check(public.delete(f"{BASE}/api/v1/cart", timeout=TIMEOUT), 204)
 
     admin = requests.Session()
-    login = post(admin, "/api/v1/auth/login", {"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+    login = check(
+        admin.post(
+            f"{BASE}/api/v1/auth/login",
+            json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+            timeout=TIMEOUT,
+        )
+    )
     assert login["role"] == "admin"
     csrf = admin.cookies.get("csrf_token")
     assert csrf
     admin.headers.update({"X-CSRF-Token": csrf})
+    settings = check(admin.get(f"{BASE}/api/v1/admin/settings", timeout=TIMEOUT))
+    assert settings["payment_status"] == "disabled"
     assert check(admin.get(f"{BASE}/api/v1/admin/dashboard", timeout=TIMEOUT))["total_products"] > 0
-    detail = check(admin.get(f"{BASE}/api/v1/admin/orders/{paid_order['order_number']}", timeout=TIMEOUT))
-    assert detail["payment"]["id"]
-    refunded = post(admin, f"/api/v1/admin/payments/{detail['payment']['id']}/refund", {})
-    assert refunded["status"] == "refunded"
-    tracked_refund = check(
-        public.get(
-            f"{BASE}/api/v1/orders/track",
-            params={"order_number": paid_order["order_number"], "token": paid_order["access_token"]},
-            timeout=TIMEOUT,
-        )
-    )
-    assert tracked_refund["payment_state"] == "refunded"
-    audit = check(admin.get(f"{BASE}/api/v1/admin/audit", timeout=TIMEOUT))
-    assert any(row.get("action") == "admin.payment.refund" for row in audit["items"])
 
-    print("LOCAL SMOKE PASS: readiness, public catalog/CMS, seller boundary, guest failure/success, admin refund/audit")
+    print("LOCAL SMOKE PASS: readiness, public catalog/CMS, cart, disabled checkout, admin")
     return 0
 
 

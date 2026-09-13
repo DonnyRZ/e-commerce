@@ -321,10 +321,12 @@ class PaymentEvent(Base):
     payment_id: Mapped[str] = mapped_column(
         ForeignKey("payments.id", ondelete="CASCADE"), index=True
     )
-    provider: Mapped[str] = mapped_column(String(20), default="click")
-    environment: Mapped[str] = mapped_column(String(12), default="mock")
+    provider: Mapped[str] = mapped_column(String(20), default="unconfigured")
+    environment: Mapped[str] = mapped_column(String(12), default="local")
     event_type: Mapped[str] = mapped_column(String(40))
-    click_trans_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    provider_transaction_id: Mapped[Optional[str]] = mapped_column(
+        String(40), nullable=True
+    )
     provider_error_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     meta: Mapped[dict] = mapped_column(JSONB, default=dict)
     result: Mapped[str] = mapped_column(String(20), default="ok")
@@ -348,14 +350,18 @@ class Payment(TimestampMixin, Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
     order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"), index=True)
-    provider: Mapped[str] = mapped_column(String(20), default="click")
-    environment: Mapped[str] = mapped_column(String(12), default="mock")
+    provider: Mapped[str] = mapped_column(String(20), default="unconfigured")
+    environment: Mapped[str] = mapped_column(String(12), default="local")
     currency: Mapped[str] = mapped_column(String(3), default="UZS")
     amount: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
     merchant_trans_id: Mapped[str] = mapped_column(String(80), unique=True)
-    click_trans_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
-    click_paydoc_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    provider_transaction_id: Mapped[Optional[str]] = mapped_column(
+        String(40), nullable=True, index=True
+    )
+    provider_document_id: Mapped[Optional[str]] = mapped_column(
+        String(40), nullable=True
+    )
     merchant_prepare_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     merchant_confirm_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     provider_reference: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)

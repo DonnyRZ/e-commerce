@@ -1,10 +1,8 @@
 """Test-session bootstrap.
 
-Paid mock orders decrement REAL variant stock; without a reset the dev DB
-drifts to zero across repeated suite runs and every cart-add flow fails.
-This session fixture restores the known seed stock for the hot variants
-used across suites, making the full suite re-runnable. It only touches the
-seed SKUs the suites exercise.
+Some integration tests mutate real seed inventory; without a reset the dev DB
+drifts to zero across repeated suite runs and cart-add flows fail. This session
+fixture restores the known seed stock for the variants used across suites.
 """
 
 import asyncio
@@ -23,9 +21,9 @@ DB_URL = os.environ.get(
 ).replace("postgresql+asyncpg://", "postgresql://", 1)
 
 SEED_STOCK = {
-    "BRS-30ML": 14,      # brightening serum (M7/M8 paid flows)
-    "ACBK-BLK-M": 7,     # abaya (M7.1 race/reacquire flows)
-    "GSOZH-BGE-M": 12,   # hoodie (M6/M7/M8 cart + paid flows)
+    "BRS-30ML": 14,      # brightening serum cart flows
+    "ACBK-BLK-M": 7,     # abaya cart flows
+    "GSOZH-BGE-M": 12,   # hoodie cart flows
     "GSOZH-GRY-XS": 2,   # hoodie low-stock variant (stock-cap tests)
     "GSOZH-NVY-XXL": 12,
     "GSOZH-BLK-XXL": 0,  # OOS fixture variant

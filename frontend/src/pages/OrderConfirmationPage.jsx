@@ -44,7 +44,7 @@ export default function OrderConfirmationPage() {
   if (orderQuery.isError || !order) {
     return (
       <div className="py-16 text-center" data-testid="confirm-invalid">
-        <p className="text-sm text-muted-foreground">{t("mockPay.invalid")}</p>
+        <p className="text-sm text-muted-foreground">{t("paymentPending.invalidBody")}</p>
         <Link
           to="/shop"
           className="mt-5 inline-flex h-11 items-center bg-foreground px-8 text-sm font-semibold text-background hover:bg-primary"

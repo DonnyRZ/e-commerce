@@ -23,14 +23,12 @@ from config import (
     validate_runtime_config,
 )
 from db.session import SessionLocal, engine
-from payments.providers import get_provider
 from notifications import get_notifier
 from storage import get_media_storage
 from rate_limit import check_redis_health, close_redis
 from routers.catalog import router as catalog_router
 from routers.auth import router as auth_router
 from routers.account import router as account_router
-from payments.routes import router as payments_router
 from routers.shop import router as shop_router
 from routers.checkout import router as checkout_router
 from routers.orders import router as orders_router
@@ -68,8 +66,8 @@ logger = logging.getLogger("muslimah_cantik.api")
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # Production must fail before accepting traffic if it is configured with
-    # mock payment/notification/storage providers or unsafe origins.
+    # Production must fail before accepting traffic when its runtime
+    # configuration is unsafe.
     validate_runtime_config(strict=APP_ENV == "production")
     yield
     await close_redis()
@@ -117,17 +115,10 @@ async def _readiness_payload() -> tuple[dict, bool]:
         checks["database"] = "down"
         checks["migrations"] = "down"
 
-    if not CHECKOUT_ENABLED:
-        # The storefront is intentionally live before payment onboarding. A
-        # disabled payment check is healthy by policy; checkout endpoints are
-        # separately hard-blocked and never create orders/reservations.
-        checks["payment"] = "disabled"
-    else:
-        try:
-            get_provider()
-            checks["payment"] = "up"
-        except Exception:
-            checks["payment"] = "down"
+    # Payment is intentionally disabled until a replacement method is
+    # selected and implemented. This is a healthy state; checkout endpoints
+    # are separately hard-blocked and never create orders/reservations.
+    checks["payment"] = "disabled"
 
     try:
         get_notifier()
@@ -160,7 +151,7 @@ async def _readiness_payload() -> tuple[dict, bool]:
         "version": "v1",
         "checks": checks,
         "checkout_enabled": CHECKOUT_ENABLED,
-        "payment_mode": "click" if CHECKOUT_ENABLED else "disabled",
+        "payment_mode": "disabled",
         "config_errors": config_errors if not ready else [],
     }, ready
 
@@ -176,7 +167,6 @@ app.include_router(api_router)
 app.include_router(catalog_router)
 app.include_router(auth_router)
 app.include_router(account_router)
-app.include_router(payments_router)
 app.include_router(shop_router)
 app.include_router(checkout_router)
 app.include_router(orders_router)

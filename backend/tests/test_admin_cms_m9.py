@@ -188,10 +188,10 @@ def test_payment_review_note(admin):
     pid = items[0]["payment_id"]
     r = admin.post(
         f"{API}/admin/payments/{pid}/review-note",
-        json={"note": "Checked against CLICK dashboard — amounts match."},
+        json={"note": "Historical payment record reviewed — amounts match."},
     )
     assert r.status_code == 200, r.text
-    assert r.json()["review_note"].startswith("Checked")
+    assert r.json()["review_note"].startswith("Historical")
 
 
 # ------------------------------ CMS workflow ---------------------------------

@@ -20,7 +20,6 @@ import AccountPage from "@/pages/AccountPage";
 import CartPage from "@/pages/CartPage";
 import WishlistPage from "@/pages/WishlistPage";
 import CheckoutPage from "@/pages/CheckoutPage";
-import MockPaymentPage from "@/pages/MockPaymentPage";
 import PaymentPendingPage from "@/pages/PaymentPendingPage";
 import OrderConfirmationPage from "@/pages/OrderConfirmationPage";
 import OrdersPage from "@/pages/OrdersPage";
@@ -50,7 +49,6 @@ function App() {
               <Route path="/orders" element={<OrdersPage />} />
               <Route path="/orders/:orderNumber" element={<OrderDetailPage />} />
               <Route path="/checkout" element={<CheckoutPage />} />
-              <Route path="/checkout/payment/mock" element={<MockPaymentPage />} />
               <Route path="/payment-pending" element={<PaymentPendingPage />} />
               <Route path="/order-confirmation" element={<OrderConfirmationPage />} />
               <Route path="*" element={<PlaceholderPage titleKey="errors.notFound" />} />

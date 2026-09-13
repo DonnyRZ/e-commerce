@@ -21,7 +21,6 @@ from cms.service import audit, media_url
 from config import (
     BASE_CURRENCY,
     CHECKOUT_ENABLED,
-    CLICK_MODE,
     INVENTORY_RESERVATION_TTL_MINUTES,
     SHIPPING_PROVIDER,
 )
@@ -40,8 +39,6 @@ from db.models import (
     User,
 )
 from db.session import get_session
-from payments.providers import get_provider
-from payments.service import PaymentService
 from routers.seller import (
     InventoryIn,
     ProductCreateIn,
@@ -923,8 +920,6 @@ async def admin_get_order(
         "payment": (
             {
                 "id": payment.id,
-                "provider": payment.provider,
-                "environment": payment.environment,
                 "status": payment.status,
                 "amount": payment.amount,
                 "merchant_trans_id": payment.merchant_trans_id,
@@ -1143,45 +1138,6 @@ async def admin_payment_review_note(
     return {"payment_id": payment.id, "review_note": payment.review_note}
 
 
-@router.post("/payments/{payment_id}/refund")
-async def admin_refund(
-    payment_id: str,
-    user: User = Depends(require_admin),
-    session: AsyncSession = Depends(get_session),
-    _: None = Depends(csrf_protect),
-):
-    if not CHECKOUT_ENABLED:
-        raise HTTPException(status_code=503, detail="checkout_unavailable")
-    payment = await session.get(Payment, payment_id)
-    if not payment:
-        raise HTTPException(status_code=404, detail="payment_not_found")
-    if payment.status != "paid":
-        raise HTTPException(
-            status_code=409,
-            detail={"error": "not_refundable", "status": payment.status},
-        )
-    service = PaymentService(session, get_provider())
-    from payments.errors import ClickProtocolError
-
-    try:
-        refunded = await service.refund(
-            payment.merchant_trans_id,
-            note="admin refund",
-            commit=False,
-        )
-    except ClickProtocolError as exc:
-        # Preserve the provider failure event while keeping the local payment
-        # state paid until the provider confirms the reversal.
-        await session.commit()
-        raise HTTPException(
-            status_code=502,
-            detail={"error": "provider_refund_failed", "code": exc.code},
-        )
-    await audit(session, user.id, "admin.payment.refund", "payment", payment.id, None)
-    await session.commit()
-    return {"payment_id": refunded.id, "status": refunded.status}
-
-
 # ------------------------------ audit / settings ----------------------------
 
 
@@ -1240,8 +1196,7 @@ async def admin_settings(user: User = Depends(require_admin)):
         "business_model": "single_vendor",
         "currency": BASE_CURRENCY,
         "checkout_enabled": CHECKOUT_ENABLED,
-        "payment_provider": "click" if CHECKOUT_ENABLED else "disabled",
-        "click_mode": CLICK_MODE,
+        "payment_status": "disabled",
         "shipping_provider": SHIPPING_PROVIDER,
         "shipping_methods": list(_METHODS),
         "free_standard_threshold": FREE_STANDARD_THRESHOLD,

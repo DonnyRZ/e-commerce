@@ -41,7 +41,7 @@ export default function ProductCard({ product }) {
               data-testid={`badge-preview-${product.slug || product.id}`}
               className="bg-[#FDF7E9] px-2 py-0.5 text-[11px] font-semibold tracking-wide text-[#02422C] shadow-sm"
             >
-              {t("product.preview")}
+              {t("product.catalog")}
             </span>
           ) : null}
           {product.badge ? (
@@ -90,7 +90,7 @@ export default function ProductCard({ product }) {
       </p>
       {product.isDemo ? (
         <p data-testid={`preview-label-${product.slug || product.id}`} className="mt-0.5 text-[11px] text-primary">
-          {t("product.previewLabel")}
+          {t("product.catalogLabel")}
         </p>
       ) : null}
       <h3 className="mt-0.5 text-sm font-medium leading-snug">
@@ -103,14 +103,14 @@ export default function ProductCard({ product }) {
         compareAt={product.compareAt}
         className="mt-1"
       />
-      {!product.isDemo && product.stockState === "out_of_stock" ? (
+      {product.stockState === "out_of_stock" ? (
         <p
           data-testid={`stock-out-${product.slug || product.id}`}
           className="mt-1 text-xs font-medium text-destructive"
         >
           {t("product.outOfStock")}
         </p>
-      ) : !product.isDemo && product.stockState === "low_stock" ? (
+      ) : product.stockState === "low_stock" ? (
         <p
           data-testid={`stock-low-${product.slug || product.id}`}
           className="mt-1 text-xs font-medium text-primary"

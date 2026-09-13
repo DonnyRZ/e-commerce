@@ -173,15 +173,13 @@ export default function ProductPage() {
     checkoutOptionsQuery.isError ||
     (checkoutOptionsQuery.isSuccess &&
       checkoutOptionsQuery.data?.checkout_enabled === false);
-  const checkoutEnabled = !checkoutUnavailable && checkoutOptionsQuery.isSuccess;
-  const productUnavailable = product.is_demo || checkoutUnavailable;
 
   const category = product.category;
   const department = category?.department;
   const ancestors = category?.ancestors || (department ? [department] : []);
 
   const addToCart = async () => {
-    if (!checkoutEnabled || !selectedVariant || outOfStock) return;
+    if (!selectedVariant || outOfStock) return;
     try {
       await addCartItem({
         product_id: product.id,
@@ -345,7 +343,7 @@ export default function ProductPage() {
           <div className="flex items-center gap-2">
             {product.is_demo ? (
               <span data-testid="pdp-badge-preview" className="bg-[#FDF7E9] px-2 py-0.5 text-[11px] font-semibold tracking-wide text-[#02422C]">
-                {t("product.preview")}
+                {t("product.catalog")}
               </span>
             ) : null}
             {product.new_arrival ? (
@@ -372,7 +370,7 @@ export default function ProductPage() {
           </h1>
           {product.is_demo ? (
             <p data-testid="pdp-preview-notice" className="mt-2 text-sm leading-relaxed text-primary">
-              {t("pdp.previewNotice")}
+              {t("pdp.catalogNotice")}
             </p>
           ) : null}
           <p data-testid="pdp-sku" className="mt-1 text-xs text-muted-foreground">
@@ -443,11 +441,7 @@ export default function ProductPage() {
           ))}
 
           <div className="mt-5" data-testid="pdp-stock">
-            {product.is_demo ? (
-              <p data-testid="pdp-preview-stock" className="text-sm font-medium text-primary">
-                {t("pdp.preview")}
-              </p>
-            ) : outOfStock ? (
+            {outOfStock ? (
               <p data-testid="pdp-stock-out" className="text-sm font-medium text-destructive">
                 {t("product.outOfStock")}
               </p>
@@ -495,18 +489,12 @@ export default function ProductPage() {
             <button
               type="button"
               data-testid="pdp-add-to-cart"
-              disabled={productUnavailable || !selectedVariant || outOfStock}
+              disabled={!selectedVariant || outOfStock}
               onClick={addToCart}
               className="flex h-12 flex-1 items-center justify-center gap-2 bg-foreground text-sm font-semibold text-background transition-colors hover:bg-primary disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ShoppingBag className="h-4 w-4" aria-hidden="true" />
-              {product.is_demo
-                ? t("pdp.preview")
-                : checkoutUnavailable
-                ? t("pdp.checkoutUnavailable")
-                : outOfStock
-                  ? t("product.outOfStock")
-                  : t("pdp.addToCart")}
+              {outOfStock ? t("product.outOfStock") : t("pdp.addToCart")}
             </button>
             <button
               type="button"
@@ -521,12 +509,12 @@ export default function ProductPage() {
               <Heart className="h-5 w-5" fill={wished ? "currentColor" : "none"} aria-hidden="true" />
             </button>
           </div>
-          {productUnavailable ? (
+          {checkoutUnavailable ? (
             <p
               data-testid="pdp-checkout-unavailable"
               className="mt-3 text-xs leading-relaxed text-muted-foreground"
             >
-              {product.is_demo ? t("pdp.previewNotice") : t("pdp.checkoutUnavailableBody")}
+              {t("pdp.checkoutUnavailableBody")}
             </p>
           ) : null}
 

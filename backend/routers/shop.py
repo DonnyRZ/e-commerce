@@ -238,8 +238,10 @@ async def add_cart_item(
     product = await session.get(Product, payload.product_id)
     if not product or product.status != "active":
         raise HTTPException(status_code=404, detail="product_not_found")
-    if product.is_demo:
-        raise HTTPException(status_code=409, detail="preview_product_unavailable")
+    # Showcase products remain addable so visitors can exercise the cart while
+    # checkout is disabled. The checkout service still rejects demo products,
+    # and the checkout endpoints are currently fail-closed, so this can never
+    # create a sellable order.
     category = await session.scalar(
         select(Category).where(
             Category.id == product.category_id,

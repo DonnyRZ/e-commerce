@@ -53,9 +53,8 @@ run by the one-shot `migrate` service and not on every backend restart.
 ## Required production environment
 
 Copy `deploy/production/marketplace.env.example` to
-`/etc/marketplace/marketplace.env`. For the initial launch while Click is not
-available, keep `CHECKOUT_ENABLED=false`, `PAYMENT_PROVIDER=disabled` and
-`CLICK_MODE=disabled`; do not invent Click credentials. Fill the SMTP
+`/etc/marketplace/marketplace.env`. Keep `CHECKOUT_ENABLED=false` until a
+payment method is selected and implemented. Fill the SMTP
 credentials, database password, and operator bootstrap values required by the
 application, then run:
 
@@ -68,11 +67,9 @@ For Hostinger Email, use `SMTP_HOST=smtp.hostinger.com`, `SMTP_PORT=587`,
 `SMTP_USE_TLS=true`, the complete mailbox address as `SMTP_USERNAME`, and that
 mailbox's password. `SMTP_FROM` should be the verified mailbox address.
 
-When Click becomes available, change the three launch-profile values to
-`CHECKOUT_ENABLED=true`, `PAYMENT_PROVIDER=click` and `CLICK_MODE=test`, add the
-provider credentials, and complete prepare, complete, refund and reconciliation
-certification. Change `CLICK_MODE` to `production` only after that certification
-passes.
+When a payment method is selected, implement and certify its complete workflow
+before enabling checkout. Do not enable checkout by changing an environment
+flag alone.
 
 ## Nginx and HTTPS
 
@@ -90,12 +87,11 @@ The canonical host is `https://shanicantik.com`; `www` redirects to it.
 
 After `/api/ready` is healthy, seed exactly one operator account, then seed the
 catalog and CMS using the repository's backend scripts. Confirm that no seller
-account or seller route is public. For the initial pre-Click launch, test `/`,
+account or seller route is public. While checkout is disabled, test `/`,
 `/shop`, `/login`, `/admin`, mobile navigation, catalog, inventory, CMS and local
 media persistence. Confirm cart and product pages clearly show that online
 purchase is unavailable and that `/api/ready` remains 200 with
-`payment=disabled`. Test guest/authenticated checkout and Click callbacks only
-after the provider is enabled.
+`payment=disabled`. Test checkout only after a payment workflow is implemented.
 
 ## Backup and rollback
 

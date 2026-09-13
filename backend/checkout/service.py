@@ -18,7 +18,7 @@ from typing import Optional
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import BASE_CURRENCY, INVENTORY_RESERVATION_TTL_MINUTES
+from config import BASE_CURRENCY, CHECKOUT_ENABLED, INVENTORY_RESERVATION_TTL_MINUTES
 from db.models import (
     Cart,
     CartItem,
@@ -212,6 +212,12 @@ async def create_order(
     locale: str,
 ):
     """Idempotent: an existing order with the same key is returned unchanged."""
+    if not CHECKOUT_ENABLED:
+        raise CheckoutError(
+            "checkout_unavailable",
+            503,
+            {"message": "Online checkout is temporarily unavailable."},
+        )
     existing = await session.scalar(
         select(Order).where(Order.idempotency_key == idempotency_key)
     )

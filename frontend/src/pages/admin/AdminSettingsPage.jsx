@@ -34,7 +34,7 @@ export default function AdminSettingsPage() {
             <Row label="Store" value={s?.store} testId="setting-store" />
             <Row label="Business model" value={s?.business_model === "single_vendor" ? "Single vendor (this store operates everything)" : s?.business_model} testId="setting-model" />
             <Row label="Base currency" value={s?.currency} testId="setting-currency" />
-            <Row label="Payment provider" value={`CLICK (${s?.click_mode} mode)`} testId="setting-payments" />
+            <Row label="Payment status" value="Disabled until a payment method is configured" testId="setting-payments" />
             <Row label="Shipping provider" value={s?.shipping_provider} testId="setting-shipping" />
             <Row
               label="Shipping methods"

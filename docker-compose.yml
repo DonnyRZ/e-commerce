@@ -40,9 +40,7 @@ services:
       ENFORCE_HTTPS: "false"
       SESSION_COOKIE_SECURE: "false"
       SESSION_COOKIE_SAMESITE: lax
-      PAYMENT_PROVIDER: click
-      CLICK_MODE: mock
-      CLICK_MOCK_SECRET_KEY: local-click-secret
+      CHECKOUT_ENABLED: "false"
       SHIPPING_PROVIDER: mock
       NOTIFICATION_PROVIDER: mock
       MEDIA_STORAGE: local

@@ -158,18 +158,10 @@ export default function CheckoutPage() {
       const res = await placeOrder(payload);
       // idempotency key is single-use per intended checkout — rotate after success
       idempotencyKey.current = newIdempotencyKey();
-      if (res.payment_url) {
-        // Hosted provider flow: the order is only pending until the provider
-        // callback confirms payment. Never show the confirmation page here.
-        window.location.assign(res.payment_url);
-      } else if (res.mock_payment_url) {
-        navigate(res.mock_payment_url);
-      } else {
-        const token = res.access_token
-          ? `&token=${encodeURIComponent(res.access_token)}`
-          : "";
-        navigate(`/payment-pending?order=${encodeURIComponent(res.order_number)}${token}`);
-      }
+      const token = res.access_token
+        ? `&token=${encodeURIComponent(res.access_token)}`
+        : "";
+      navigate(`/payment-pending?order=${encodeURIComponent(res.order_number)}${token}`);
     } catch (err) {
       const d = err?.response?.data?.detail;
       const code = typeof d === "string" ? d : d?.error;
@@ -386,20 +378,6 @@ export default function CheckoutPage() {
             </div>
           </section>
 
-          <section data-testid="checkout-payment">
-            <h2 className="text-sm font-semibold uppercase tracking-wide">
-              {t("checkout.paymentMethod")}
-            </h2>
-            <div
-              data-testid="checkout-payment-click"
-              className="mt-3 flex items-center justify-between border border-foreground p-4 text-sm"
-            >
-              <span className="font-semibold tracking-wide">CLICK</span>
-              <span className="text-xs text-muted-foreground">
-                {options?.payment_mode === "mock" ? t("mockPay.badge") : "click.uz"}
-              </span>
-            </div>
-          </section>
         </div>
 
         <aside

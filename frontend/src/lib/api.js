@@ -149,9 +149,6 @@ export const getCheckoutQuote = (shippingMethod) =>
 export const placeOrder = (data) =>
   api.post("/v1/checkout/orders", data).then((r) => r.data);
 
-export const mockPay = (data) =>
-  api.post("/v1/payments/mock/pay", data).then((r) => r.data);
-
 export const trackOrder = (orderNumber, token) =>
   api.get("/v1/orders/track", { params: { order_number: orderNumber, token } }).then((r) => r.data);
 
@@ -203,8 +200,6 @@ export const getAdminPaymentsReview = () =>
   api.get("/v1/admin/payments/review").then((r) => r.data);
 export const addAdminReviewNote = (paymentId, note) =>
   api.post(`/v1/admin/payments/${paymentId}/review-note`, { note }).then((r) => r.data);
-export const adminRefund = (paymentId) =>
-  api.post(`/v1/admin/payments/${paymentId}/refund`).then((r) => r.data);
 export const getAdminAudit = (params) =>
   api.get("/v1/admin/audit", { params }).then((r) => r.data);
 export const getAdminSettings = () =>

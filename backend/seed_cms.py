@@ -128,10 +128,10 @@ NAV_ITEMS = [
 
 PAGES = {
     "about": {
-        "en": ("About MUSLIMAH CANTIK", "MUSLIMAH CANTIK is a single-vendor boutique for modest fashion and tropical halal skincare, operated from Tashkent. We curate quality pieces and serve customers across Uzbekistan with CLICK payments and UZS pricing."),
-        "id": ("Tentang MUSLIMAH CANTIK", "MUSLIMAH CANTIK adalah butik vendor tunggal untuk busana muslimah dan skincare halal tropis, beroperasi dari Tashkent. Kami melayani pelanggan di seluruh Uzbekistan dengan pembayaran CLICK dan harga UZS."),
-        "uz": ("MUSLIMAH CANTIK haqida", "MUSLIMAH CANTIK — muslimona moda va tropik halol teri parvarishiga ixtisoslashgan yagona vendor butik. Toshkentdan butun O'zbekiston bo'ylab CLICK to'lovi va UZS narxlari bilan xizmat ko'rsatamiz."),
-        "ru": ("О MUSLIMAH CANTIK", "MUSLIMAH CANTIK — монобрендовый бутик мусульманской моды и тропического халяль-ухода из Ташкента. Мы обслуживаем клиентов по всему Узбекистану с оплатой CLICK и ценами в сумах."),
+        "en": ("About MUSLIMAH CANTIK", "MUSLIMAH CANTIK is a single-vendor boutique for modest fashion and tropical halal skincare, operated from Tashkent. We curate quality pieces and serve customers across Uzbekistan with UZS pricing."),
+        "id": ("Tentang MUSLIMAH CANTIK", "MUSLIMAH CANTIK adalah butik vendor tunggal untuk busana muslimah dan skincare halal tropis, beroperasi dari Tashkent. Kami melayani pelanggan di seluruh Uzbekistan dengan harga UZS."),
+        "uz": ("MUSLIMAH CANTIK haqida", "MUSLIMAH CANTIK — muslimona moda va tropik halol teri parvarishiga ixtisoslashgan yagona vendor butik. Toshkentdan butun O'zbekiston bo'ylab UZS narxlari bilan xizmat ko'rsatamiz."),
+        "ru": ("О MUSLIMAH CANTIK", "MUSLIMAH CANTIK — монобрендовый бутик мусульманской моды и тропического халяль-ухода из Ташкента. Мы обслуживаем клиентов по всему Узбекистану с ценами в сумах."),
     },
     "contact": {
         "en": ("Contact Us", "Reach our team at contact@shanicantik.com. We reply within one business day."),
@@ -152,16 +152,16 @@ PAGES = {
         "ru": ("Возврат", "Неиспользованные товары в оригинальной упаковке можно вернуть в течение 14 дней после доставки. Свяжитесь с нами для оформления возврата."),
     },
     "privacy": {
-        "en": ("Privacy Policy", "We store only the data required to process your orders (contact and delivery details). Payment data is processed by CLICK; we never see or store card data."),
-        "id": ("Kebijakan Privasi", "Kami hanya menyimpan data yang diperlukan untuk memproses pesanan Anda (kontak dan alamat pengiriman). Data pembayaran diproses oleh CLICK; kami tidak pernah melihat atau menyimpan data kartu."),
-        "uz": ("Maxfiylik siyosati", "Biz faqat buyurtmalaringizni qayta ishlash uchun zarur ma'lumotlarni saqlaymiz (aloqa va yetkazish ma'lumotlari). To'lov ma'lumotlarini CLICK qayta ishlaydi; biz karta ma'lumotlarini ko'rmaymiz va saqlamaymiz."),
-        "ru": ("Политика конфиденциальности", "Мы храним только данные, необходимые для обработки заказов (контакты и адрес доставки). Платёжные данные обрабатывает CLICK; мы не видим и не храним данные карт."),
+        "en": ("Privacy Policy", "We store only the data required to process your orders, including contact and delivery details. Payment details are not collected while online checkout is unavailable."),
+        "id": ("Kebijakan Privasi", "Kami hanya menyimpan data yang diperlukan untuk memproses pesanan, termasuk kontak dan alamat pengiriman. Data pembayaran tidak dikumpulkan selama checkout online belum tersedia."),
+        "uz": ("Maxfiylik siyosati", "Biz buyurtmalarni qayta ishlash uchun zarur bo'lgan ma'lumotlarni, jumladan aloqa va yetkazish ma'lumotlarini saqlaymiz. Onlayn checkout mavjud bo'lmaganda to'lov ma'lumotlari yig'ilmaydi."),
+        "ru": ("Политика конфиденциальности", "Мы храним только данные, необходимые для обработки заказов, включая контактные данные и адрес доставки. Пока онлайн-оформление недоступно, платёжные данные не собираются."),
     },
     "terms": {
-        "en": ("Terms of Service", "By ordering from MUSLIMAH CANTIK you agree to our pricing in UZS, CLICK payment processing, and the shipping/returns terms published on this page."),
-        "id": ("Syarat Layanan", "Dengan memesan di MUSLIMAH CANTIK, Anda menyetujui harga dalam UZS, pemrosesan pembayaran CLICK, serta ketentuan pengiriman/pengembalian yang dipublikasikan di halaman ini."),
-        "uz": ("Foydalanish shartlari", "MUSLIMAH CANTIK dan buyurtma berish orqali siz UZS narxlariga, CLICK to'lov qayta ishlashga va bu sahifada e'lon qilingan yetkazish/qaytarish shartlariga rozilik bildirasiz."),
-        "ru": ("Условия использования", "Оформляя заказ в MUSLIMAH CANTIK, вы соглашаетесь с ценами в сумах, обработкой платежей CLICK и условиями доставки/возврата, опубликованными на этой странице."),
+        "en": ("Terms of Service", "By ordering from MUSLIMAH CANTIK you agree to our pricing in UZS and the shipping and returns terms published on this page. Online ordering is currently paused."),
+        "id": ("Syarat Layanan", "Dengan memesan di MUSLIMAH CANTIK, Anda menyetujui harga dalam UZS serta ketentuan pengiriman dan pengembalian yang dipublikasikan di halaman ini. Pemesanan online sedang ditangguhkan."),
+        "uz": ("Foydalanish shartlari", "MUSLIMAH CANTIK dan buyurtma berish orqali siz UZS narxlariga hamda bu sahifada e'lon qilingan yetkazish va qaytarish shartlariga rozilik bildirasiz. Onlayn buyurtma hozircha to'xtatilgan."),
+        "ru": ("Условия использования", "Оформляя заказ в MUSLIMAH CANTIK, вы соглашаетесь с ценами в сумах и условиями доставки и возврата, опубликованными на этой странице. Онлайн-заказы временно приостановлены."),
     },
 }
 
@@ -175,10 +175,10 @@ FAQ_ITEMS = [
             "ru": "Какие способы оплаты вы принимаете?",
         },
         "a": {
-            "en": "We accept CLICK payments in UZS. Card details are processed securely by CLICK.",
-            "id": "Kami menerima pembayaran CLICK dalam UZS. Data kartu diproses dengan aman oleh CLICK.",
-            "uz": "Biz UZS da CLICK to'lovlarini qabul qilamiz. Karta ma'lumotlari CLICK tomonidan xavfsiz qayta ishlanadi.",
-            "ru": "Мы принимаем оплату через CLICK в сумах. Данные карт безопасно обрабатываются CLICK.",
+            "en": "Online payment is not available yet. Please contact our team if you have a question about a product.",
+            "id": "Pembayaran online belum tersedia. Silakan hubungi tim kami jika Anda memiliki pertanyaan tentang produk.",
+            "uz": "Onlayn to'lov hali mavjud emas. Mahsulot haqida savolingiz bo'lsa, jamoamizga murojaat qiling.",
+            "ru": "Онлайн-оплата пока недоступна. Если у вас есть вопрос о товаре, свяжитесь с нашей командой.",
         },
     },
     {
