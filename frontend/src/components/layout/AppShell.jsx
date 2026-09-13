@@ -5,7 +5,7 @@ import Footer from "./Footer";
 
 export default function AppShell() {
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div className="flex min-h-screen flex-col overflow-x-hidden bg-background text-foreground">
       <AnnouncementBar />
       <Header />
       <main
