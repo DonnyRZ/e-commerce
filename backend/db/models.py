@@ -129,6 +129,9 @@ class Product(TimestampMixin, Base):
     tags: Mapped[list] = mapped_column(JSONB, default=list)
     media: Mapped[list] = mapped_column(JSONB, default=list)
     status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
+    # Demo catalog items are visible for storefront/showcase QA but must never
+    # be treated as commercially available products.
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", index=True)
     featured: Mapped[bool] = mapped_column(Boolean, default=False)
     bestseller: Mapped[bool] = mapped_column(Boolean, default=False)
     new_arrival: Mapped[bool] = mapped_column(Boolean, default=False, index=True)

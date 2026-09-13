@@ -329,6 +329,7 @@ async def _product_payload(session: AsyncSession, product: Product) -> dict:
         "tags": product.tags or [],
         "media": product.media or [],
         "translations": _translation_map(translations),
+        "is_demo": product.is_demo,
         "variants": [
             {
                 "id": v.id,

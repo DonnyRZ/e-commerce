@@ -256,6 +256,7 @@ async def admin_list_products(
                 "slug": product.slug,
                 "name": names.get(locale) or names.get("en") or product.slug,
                 "status": product.status,
+                "is_demo": product.is_demo,
                 "base_price": product.base_price,
                 "category_id": product.category_id,
                 "brand": product.brand,

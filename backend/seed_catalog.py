@@ -446,6 +446,344 @@ PRODUCTS = [
 ]
 
 
+# Showcase-only products keep the storefront visually complete while the
+# owner is still preparing the real product master. They are deliberately
+# Muslimah-only, use stable DEMO SKUs, and are protected from checkout by the
+# application. The local image paths are a safe fallback; the deployment
+# import maps the same files to CMS media_id values.
+DEMO_PRODUCTS = [
+    {
+        "slug": "demo-gamis-batik-emerald-puspa",
+        "category": "gamis-batik",
+        "product_type": "batik",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 899000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "batik", "gamis"],
+        "attributes": {
+            "material": "Batik cotton-silk blend",
+            "motif": "Emerald Puspa botanical",
+            "care": "Hand wash cold; hang dry",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/batik/demo-gamis-batik-emerald-puspa.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/batik/demo-gamis-batik-emerald-puspa-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": True,
+        "bestseller": False,
+        "featured": True,
+        "is_demo": True,
+        "translations": {
+            "en": ("Emerald Puspa Batik Gamis", "A showcase concept for a graceful full-length batik gamis."),
+            "id": ("Gamis Batik Emerald Puspa", "Contoh katalog gamis batik panjang dengan motif botani yang anggun."),
+            "uz": ("Emerald Puspa batikli gamis", "Nafis botanika naqshli uzun batikli gamis katalog namunasi."),
+            "ru": ("Батиковый гамис Emerald Puspa", "Витринная модель длинного гамиса с изящным растительным узором."),
+        },
+        "variants": [
+            {"sku": "DEMO-BATIK-GAMIS-EMERALD-S", "option_values": {"color": "Emerald", "size": "S"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-GAMIS-EMERALD-M", "option_values": {"color": "Emerald", "size": "M"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-GAMIS-EMERALD-L", "option_values": {"color": "Emerald", "size": "L"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-tunik-batik-emerald-puspa",
+        "category": "tunik-batik",
+        "product_type": "batik",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 649000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "batik", "tunik"],
+        "attributes": {
+            "material": "Batik cotton-silk blend",
+            "motif": "Emerald Puspa botanical",
+            "care": "Hand wash cold; hang dry",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/batik/demo-tunik-batik-emerald-puspa.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/batik/demo-tunik-batik-emerald-puspa-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": True,
+        "bestseller": False,
+        "featured": False,
+        "is_demo": True,
+        "translations": {
+            "en": ("Emerald Puspa Batik Tunic", "A showcase concept for a polished long batik tunic."),
+            "id": ("Tunik Batik Emerald Puspa", "Contoh katalog tunik batik panjang dengan siluet rapi dan motif botani."),
+            "uz": ("Emerald Puspa batikli tunika", "Nafis siluetli uzun batikli tunika katalog namunasi."),
+            "ru": ("Батиковая туника Emerald Puspa", "Витринная модель длинной батиковой туники с растительным узором."),
+        },
+        "variants": [
+            {"sku": "DEMO-BATIK-TUNIK-EMERALD-S", "option_values": {"color": "Emerald", "size": "S"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-TUNIK-EMERALD-M", "option_values": {"color": "Emerald", "size": "M"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-TUNIK-EMERALD-L", "option_values": {"color": "Emerald", "size": "L"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-outer-batik-emerald-puspa",
+        "category": "outer-cardigan-batik",
+        "product_type": "batik",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 799000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "batik", "outer", "cardigan"],
+        "attributes": {
+            "material": "Batik cotton-silk blend",
+            "motif": "Emerald Puspa botanical",
+            "care": "Hand wash cold; hang dry",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/batik/demo-outer-batik-emerald-puspa.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/batik/demo-outer-batik-emerald-puspa-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": False,
+        "bestseller": False,
+        "featured": True,
+        "is_demo": True,
+        "translations": {
+            "en": ("Emerald Puspa Batik Outer", "A showcase concept for a flowing open-front batik outer."),
+            "id": ("Outer Batik Emerald Puspa", "Contoh katalog outer batik panjang dengan lapisan dalam warna ivory."),
+            "uz": ("Emerald Puspa batikli outer", "Ivory ichki qatlamli uzun batikli outer katalog namunasi."),
+            "ru": ("Батиковый кардиган Emerald Puspa", "Витринная модель длинного открытого кардигана из батика."),
+        },
+        "variants": [
+            {"sku": "DEMO-BATIK-OUTER-EMERALD-S", "option_values": {"color": "Emerald", "size": "S"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-OUTER-EMERALD-M", "option_values": {"color": "Emerald", "size": "M"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-OUTER-EMERALD-L", "option_values": {"color": "Emerald", "size": "L"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-setelan-batik-emerald-puspa",
+        "category": "setelan-one-set-batik",
+        "product_type": "batik",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 949000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "batik", "setelan"],
+        "attributes": {
+            "material": "Batik cotton-silk blend",
+            "motif": "Emerald Puspa botanical",
+            "care": "Hand wash cold; hang dry",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/batik/demo-setelan-batik-emerald-puspa.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/batik/demo-setelan-batik-emerald-puspa-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": True,
+        "bestseller": False,
+        "featured": False,
+        "is_demo": True,
+        "translations": {
+            "en": ("Emerald Puspa Batik Set", "A showcase concept for a coordinated batik tunic and wide-leg set."),
+            "id": ("Setelan Batik Emerald Puspa", "Contoh katalog setelan batik dengan atasan tunik dan celana lebar."),
+            "uz": ("Emerald Puspa batikli komplekt", "Tunika va keng shimdan iborat batikli komplekt katalog namunasi."),
+            "ru": ("Батиковый комплект Emerald Puspa", "Витринный комплект из туники и широких брюк с единым узором."),
+        },
+        "variants": [
+            {"sku": "DEMO-BATIK-SET-EMERALD-S", "option_values": {"color": "Emerald", "size": "S"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-SET-EMERALD-M", "option_values": {"color": "Emerald", "size": "M"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-SET-EMERALD-L", "option_values": {"color": "Emerald", "size": "L"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-rok-batik-panjang-emerald-puspa",
+        "category": "rok-batik-panjang",
+        "product_type": "batik",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 499000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "batik", "rok"],
+        "attributes": {
+            "material": "Batik cotton-silk blend",
+            "motif": "Emerald Puspa botanical",
+            "care": "Hand wash cold; hang dry",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/batik/demo-rok-batik-panjang-emerald-puspa.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/batik/demo-rok-batik-panjang-emerald-puspa-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": False,
+        "bestseller": False,
+        "featured": False,
+        "is_demo": True,
+        "translations": {
+            "en": ("Emerald Puspa Long Batik Skirt", "A showcase concept for a full-length flowing batik skirt."),
+            "id": ("Rok Batik Panjang Emerald Puspa", "Contoh katalog rok batik panjang dengan jatuh kain yang anggun."),
+            "uz": ("Emerald Puspa uzun batik yubkasi", "Nafis tushadigan uzun batik yubka katalog namunasi."),
+            "ru": ("Длинная батиковая юбка Emerald Puspa", "Витринная модель длинной струящейся юбки из батика."),
+        },
+        "variants": [
+            {"sku": "DEMO-BATIK-ROK-EMERALD-S", "option_values": {"color": "Emerald", "size": "S"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-ROK-EMERALD-M", "option_values": {"color": "Emerald", "size": "M"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-ROK-EMERALD-L", "option_values": {"color": "Emerald", "size": "L"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-hijab-pashmina-batik-emerald-puspa",
+        "category": "hijab-pashmina-batik",
+        "product_type": "batik",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 249000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "batik", "hijab", "pashmina"],
+        "attributes": {
+            "material": "Lightweight woven fabric",
+            "motif": "Emerald Puspa botanical",
+            "care": "Hand wash cold; lay flat to dry",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/batik/demo-hijab-pashmina-batik-emerald-puspa.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/batik/demo-hijab-pashmina-batik-emerald-puspa-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": True,
+        "bestseller": False,
+        "featured": False,
+        "is_demo": True,
+        "translations": {
+            "en": ("Emerald Puspa Batik Pashmina", "A showcase concept for a lightweight patterned batik pashmina."),
+            "id": ("Hijab Pashmina Batik Emerald Puspa", "Contoh katalog pashmina batik ringan dengan motif botani."),
+            "uz": ("Emerald Puspa batikli pashmina", "Botanika naqshli yengil batik pashmina katalog namunasi."),
+            "ru": ("Батиковая пашмина Emerald Puspa", "Витринная модель лёгкой пашмины с растительным батиковым узором."),
+        },
+        "variants": [
+            {"sku": "DEMO-BATIK-HIJAB-EMERALD-OS", "option_values": {"color": "Emerald", "size": "One Size"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-musk-thaharah",
+        "category": "musk-thaharah",
+        "product_type": "parfum",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 189000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "parfum", "musk"],
+        "attributes": {
+            "fragrance_family": "Clean musk",
+            "notes": "Soft musk, cotton, white florals",
+            "usage": "Personal fragrance preview",
+            "volume": "30 ml",
+            "format": "Perfume oil",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/parfum/demo-musk-thaharah.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/parfum/demo-musk-thaharah-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": True,
+        "bestseller": False,
+        "featured": True,
+        "is_demo": True,
+        "translations": {
+            "en": ("Musk Thaharah", "A showcase concept for a clean, soft musk fragrance."),
+            "id": ("Musk Thaharah", "Contoh katalog aroma musk yang bersih dan lembut."),
+            "uz": ("Musk Thaharah", "Toza va mayin musk hidining katalog namunasi."),
+            "ru": ("Муск Тахара", "Витринная концепция чистого и мягкого мускусного аромата."),
+        },
+        "variants": [
+            {"sku": "DEMO-PARFUM-MUSK-30ML", "option_values": {"volume": "30 ml", "format": "Perfume oil"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-soft-floral-powdery",
+        "category": "soft-floral-powdery",
+        "product_type": "parfum",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 229000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "parfum", "floral", "powdery"],
+        "attributes": {
+            "fragrance_family": "Soft floral and powdery",
+            "notes": "Blush rose, white blossoms, soft powder",
+            "usage": "Light daily aroma preview",
+            "volume": "30 ml",
+            "format": "Eau de parfum",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/parfum/demo-soft-floral-powdery.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/parfum/demo-soft-floral-powdery-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": False,
+        "bestseller": True,
+        "featured": False,
+        "is_demo": True,
+        "translations": {
+            "en": ("Soft Floral & Powdery", "A showcase concept for a light floral aroma for every day."),
+            "id": ("Soft Floral & Powdery", "Contoh katalog aroma floral lembut dan powdery untuk harian."),
+            "uz": ("Soft Floral va Powdery", "Har kun uchun yengil floral va pudrali hid katalog namunasi."),
+            "ru": ("Мягкий цветочный и пудровый", "Витринная концепция лёгкого цветочного аромата на каждый день."),
+        },
+        "variants": [
+            {"sku": "DEMO-PARFUM-FLORAL-30ML", "option_values": {"volume": "30 ml", "format": "Eau de parfum"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-gourmand-rich-oriental",
+        "category": "gourmand-rich-oriental",
+        "product_type": "parfum",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 279000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "parfum", "gourmand", "oriental"],
+        "attributes": {
+            "fragrance_family": "Gourmand and rich oriental",
+            "notes": "Amber, vanilla, dark chocolate, rose",
+            "usage": "Private or home aroma preview",
+            "volume": "30 ml",
+            "format": "Eau de parfum",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/parfum/demo-gourmand-rich-oriental.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/parfum/demo-gourmand-rich-oriental-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": True,
+        "bestseller": False,
+        "featured": False,
+        "is_demo": True,
+        "translations": {
+            "en": ("Gourmand & Rich Oriental", "A showcase concept for a warm, rich oriental fragrance."),
+            "id": ("Gourmand & Rich Oriental", "Contoh katalog aroma oriental kaya dengan nuansa gourmand."),
+            "uz": ("Gourmand va boy sharqona", "Boy sharqona va gourmand hidining katalog namunasi."),
+            "ru": ("Гурманский и насыщенный восточный", "Витринная концепция тёплого насыщенного восточного аромата."),
+        },
+        "variants": [
+            {"sku": "DEMO-PARFUM-GOURMAND-30ML", "option_values": {"volume": "30 ml", "format": "Eau de parfum"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-alcohol-free-spray",
+        "category": "parfum-semprot-bebas-alkohol",
+        "product_type": "parfum",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 219000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "parfum", "alcohol-free", "spray"],
+        "attributes": {
+            "fragrance_family": "Fresh soft floral",
+            "notes": "White blossoms, green leaves, pale citrus",
+            "usage": "Light spray aroma preview",
+            "volume": "50 ml",
+            "format": "Alcohol-free spray",
+            "alcohol_free": True,
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/parfum/demo-alcohol-free-spray.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/parfum/demo-alcohol-free-spray-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": False,
+        "bestseller": False,
+        "featured": False,
+        "is_demo": True,
+        "translations": {
+            "en": ("Alcohol-Free Spray Perfume", "A showcase concept for a fresh, alcohol-free spray format."),
+            "id": ("Parfum Semprot Bebas Alkohol", "Contoh katalog parfum semprot ringan tanpa alkohol."),
+            "uz": ("Spirtsiz purkaladigan atir", "Spirtsiz yengil purkaladigan atir katalog namunasi."),
+            "ru": ("Спрей-парфюм без спирта", "Витринная концепция лёгкого спрей-парфюма без спирта."),
+        },
+        "variants": [
+            {"sku": "DEMO-PARFUM-SPRAY-50ML", "option_values": {"volume": "50 ml", "format": "Alcohol-free spray"}, "stock_quantity": 0},
+        ],
+    },
+]
+
+
 async def upsert_category(
     session,
     *,
@@ -510,6 +848,7 @@ async def upsert_product(session, spec, owner_id, cat_ids):
         attributes=spec["attributes"],
         tags=spec["tags"],
         status="active",
+        is_demo=spec.get("is_demo", True),
         featured=spec["featured"],
         bestseller=spec["bestseller"],
         new_arrival=spec["new_arrival"],
@@ -534,13 +873,15 @@ async def upsert_product(session, spec, owner_id, cat_ids):
             )
         ]
         product = existing
+        if not product.media:
+            product.media = list(spec.get("media", []))
         await session.execute(
             ProductTranslation.__table__.delete().where(
                 ProductTranslation.product_id == product.id
             )
         )
     else:
-        product = Product(slug=spec["slug"], media=[], **fields)
+        product = Product(slug=spec["slug"], media=list(spec.get("media", [])), **fields)
         session.add(product)
         await session.flush()
     for locale, (name, desc) in spec["translations"].items():
@@ -643,7 +984,7 @@ async def seed():
                 is_active=True,
             )
             for leaf_slug, leaf_order, leaf_names in leaf_specs:
-                await upsert_category(
+                cat_ids[leaf_slug] = await upsert_category(
                     session,
                     slug=leaf_slug,
                     kind="category",
@@ -654,7 +995,7 @@ async def seed():
                     is_active=True,
                 )
 
-        for spec in PRODUCTS:
+        for spec in [*PRODUCTS, *DEMO_PRODUCTS]:
             await upsert_product(session, spec, owner.id, cat_ids)
 
         await session.commit()

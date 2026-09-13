@@ -35,18 +35,28 @@ export default function ProductCard({ product }) {
             className="aspect-[3/4] w-full object-cover"
           />
         </Link>
-        {product.badge ? (
-          <span
-            data-testid={`badge-${product.badge}-${product.slug || product.id}`}
-            className={`absolute left-2 top-2 px-2 py-0.5 text-[11px] font-semibold tracking-wide ${
-              product.badge === "sale"
-                ? "bg-primary text-primary-foreground"
-                : "bg-foreground text-background"
-            }`}
-          >
-            {t(`product.${product.badge}`)}
-          </span>
-        ) : null}
+        <div className="absolute left-2 top-2 flex flex-wrap gap-1">
+          {product.isDemo ? (
+            <span
+              data-testid={`badge-preview-${product.slug || product.id}`}
+              className="bg-[#FDF7E9] px-2 py-0.5 text-[11px] font-semibold tracking-wide text-[#02422C] shadow-sm"
+            >
+              {t("product.preview")}
+            </span>
+          ) : null}
+          {product.badge ? (
+            <span
+              data-testid={`badge-${product.badge}-${product.slug || product.id}`}
+              className={`px-2 py-0.5 text-[11px] font-semibold tracking-wide ${
+                product.badge === "sale"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-foreground text-background"
+              }`}
+            >
+              {t(`product.${product.badge}`)}
+            </span>
+          ) : null}
+        </div>
       </div>
       <div className="mt-2 flex items-center justify-between">
         <div className="flex items-center gap-1.5" data-testid={`swatches-${product.slug || product.id}`}>
@@ -78,6 +88,11 @@ export default function ProductCard({ product }) {
       <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
         {product.meta}
       </p>
+      {product.isDemo ? (
+        <p data-testid={`preview-label-${product.slug || product.id}`} className="mt-0.5 text-[11px] text-primary">
+          {t("product.previewLabel")}
+        </p>
+      ) : null}
       <h3 className="mt-0.5 text-sm font-medium leading-snug">
         <Link to={href} className="hover:underline">
           {product.name}
@@ -88,14 +103,14 @@ export default function ProductCard({ product }) {
         compareAt={product.compareAt}
         className="mt-1"
       />
-      {product.stockState === "out_of_stock" ? (
+      {!product.isDemo && product.stockState === "out_of_stock" ? (
         <p
           data-testid={`stock-out-${product.slug || product.id}`}
           className="mt-1 text-xs font-medium text-destructive"
         >
           {t("product.outOfStock")}
         </p>
-      ) : product.stockState === "low_stock" ? (
+      ) : !product.isDemo && product.stockState === "low_stock" ? (
         <p
           data-testid={`stock-low-${product.slug || product.id}`}
           className="mt-1 text-xs font-medium text-primary"

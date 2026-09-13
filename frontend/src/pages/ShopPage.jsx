@@ -135,6 +135,9 @@ export default function ShopPage() {
 
   const data = productsQuery.data;
   const products = (data?.items || []).map((p) => toCardProduct(p, locale));
+  const hasActiveFilters = [
+    "q", "badge", "min_price", "max_price", "color", "size", "volume", "motif", "format", "availability",
+  ].some((key) => params[key]);
 
   return (
     <div data-testid="shop-page" className="py-6 lg:py-10">
@@ -223,7 +226,10 @@ export default function ShopPage() {
           ) : productsQuery.isError ? (
             <ErrorState onRetry={() => productsQuery.refetch()} />
           ) : products.length === 0 ? (
-            <EmptyState title={t("plp.noResults")} />
+            <EmptyState
+              title={t(hasActiveFilters ? "plp.noResults" : "plp.noProducts")}
+              description={t(hasActiveFilters ? "plp.noResultsHint" : "plp.noProductsHint")}
+            />
           ) : (
             <>
               <ProductGrid products={products} />

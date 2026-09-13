@@ -77,6 +77,7 @@ def _product_out(p: Product) -> dict:
         "tags": p.tags or [],
         "media": p.media or [],
         "status": p.status,
+        "is_demo": p.is_demo,
         "featured": p.featured,
         "bestseller": p.bestseller,
         "new_arrival": p.new_arrival,

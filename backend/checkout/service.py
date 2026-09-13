@@ -140,6 +140,7 @@ async def compute_cart_totals(
             or not variant.is_active
             or not product
             or product.status != "active"
+            or product.is_demo
             or not category
         ):
             raise CheckoutError("unavailable_item", 409, {"variant_id": row.variant_id})
