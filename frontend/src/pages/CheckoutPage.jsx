@@ -14,6 +14,7 @@ import {
 import { pickLocalized } from "@/lib/localize";
 import EmptyState from "@/components/common/EmptyState";
 import PriceDisplay from "@/components/common/PriceDisplay";
+import ImageWithFallback from "@/components/common/ImageWithFallback";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const fieldClass =
@@ -96,7 +97,7 @@ function AddressFields({ value, onChange, testPrefix }) {
 export default function CheckoutPage() {
   const { t, locale } = useI18n();
   const { user } = useAuth();
-  const { cart, cartLoading } = useShop();
+  const { cart, cartLoading, guestCartMode } = useShop();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const idempotencyKey = useRef(newIdempotencyKey());
@@ -108,8 +109,8 @@ export default function CheckoutPage() {
   const [placing, setPlacing] = useState(false);
 
   const optionsQuery = useQuery({
-    queryKey: ["checkout-options"],
-    queryFn: getCheckoutOptions,
+    queryKey: ["checkout-options", guestCartMode ? "guest" : "customer"],
+    queryFn: () => getCheckoutOptions({ guest: guestCartMode }),
   });
   // Keep the UI aligned with the server and fail closed if the status call
   // fails. The backend remains the final enforcement point.
@@ -122,8 +123,8 @@ export default function CheckoutPage() {
   });
   const hasItems = Boolean(cart?.item_count);
   const quoteQuery = useQuery({
-    queryKey: ["checkout-quote", shippingMethod],
-    queryFn: () => getCheckoutQuote(shippingMethod),
+    queryKey: ["checkout-quote", guestCartMode ? "guest" : "customer", shippingMethod],
+    queryFn: () => getCheckoutQuote(shippingMethod, { guest: guestCartMode }),
     enabled: hasItems && optionsQuery.isSuccess && checkoutEnabled,
     retry: false,
   });
@@ -162,7 +163,7 @@ export default function CheckoutPage() {
       } else {
         payload.address = addr;
       }
-      const res = await placeOrder(payload);
+      const res = await placeOrder(payload, { guest: guestCartMode });
       // idempotency key is single-use per intended checkout — rotate after success
       idempotencyKey.current = newIdempotencyKey();
       const token = res.access_token
@@ -397,7 +398,7 @@ export default function CheckoutPage() {
           <ul className="mt-4 space-y-3">
             {items.map((item) => (
               <li key={item.id} className="flex gap-3" data-testid={`checkout-item-${item.id}`}>
-                <img
+                <ImageWithFallback
                   src={item.image_url}
                   alt=""
                   loading="lazy"

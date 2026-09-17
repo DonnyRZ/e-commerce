@@ -8,6 +8,7 @@ No payment secrets are ever exposed; payment events are sanitized.
 """
 
 from datetime import datetime, timezone
+import re
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -47,11 +48,16 @@ from routers.seller import (
     VariantUpdateIn,
     _bad_request,
     _check_skus,
+    _normalize_sku,
     _product_payload,
     _stock_state,
     _validate_category,
+    _validate_active_product_payload,
+    _ensure_existing_product_is_publishable,
+    _validate_existing_variant_prices,
     _validate_local_media_url,
     _validate_media,
+    _normalize_option_values,
     _validate_price_order,
     _validate_product_type,
     _validate_variant_prices,
@@ -66,6 +72,7 @@ require_admin = require_roles("admin")
 
 ORDER_TRANSITIONS = {"paid": "processing", "processing": "shipped", "shipped": "delivered"}
 LOCALES = ("id", "en", "uz", "ru")
+_UNSAFE_TEXT = re.compile(r"[<>]")
 
 
 def _now():
@@ -84,7 +91,11 @@ async def _resolve_media_url(session: AsyncSession, media_id: Optional[str]) -> 
     """Validate a CMS asset reference and resolve its local browser URL."""
     if not media_id:
         return None
-    asset = await session.get(CmsMediaAsset, media_id)
+    # Product/category mutations lock the asset row so a concurrent media
+    # deletion cannot pass validation and then leave a dangling reference.
+    asset = await session.scalar(
+        select(CmsMediaAsset).where(CmsMediaAsset.id == media_id).with_for_update()
+    )
     if not asset:
         _bad_request("invalid_media")
     return await media_url(session, asset)
@@ -100,6 +111,18 @@ async def _normalize_product_media(session: AsyncSession, media: list[dict]) -> 
             item["url"] = await _resolve_media_url(session, item["media_id"])
         normalized.append(item)
     return normalized
+
+
+class AdminVariantEditorIn(VariantIn):
+    """A variant row as submitted by the all-in-one product editor."""
+
+    id: Optional[str] = Field(default=None, min_length=8, max_length=40)
+
+
+class AdminProductEditorIn(ProductCreateIn):
+    """Atomic product-editor payload; existing variant ids are optional."""
+
+    variants: list[AdminVariantEditorIn] = Field(min_length=1)
 
 
 # ------------------------------ dashboard -----------------------------------
@@ -277,13 +300,18 @@ async def admin_create_product(
     normalized_media = await _normalize_product_media(session, payload.media)
     if payload.status not in ("draft", "active", "inactive"):
         _bad_request("invalid_status")
+    _validate_active_product_payload(payload.status, payload.translations, payload.variants)
     await _validate_category(session, payload.category_id, payload.product_type)
     _validate_price_order(payload.base_price, payload.compare_at_price)
+    normalized_skus = [_normalize_sku(variant.sku) for variant in payload.variants]
+    normalized_options = [
+        _normalize_option_values(variant.option_values) for variant in payload.variants
+    ]
     for variant in payload.variants:
         _validate_variant_prices(
             variant.price_override, variant.sale_price_override, payload.base_price
         )
-    await _check_skus(session, [v.sku for v in payload.variants])
+    await _check_skus(session, normalized_skus)
     import uuid as _uuid
     import re as _re
 
@@ -308,13 +336,13 @@ async def admin_create_product(
             ProductTranslation(product_id=product.id, locale=locale, name=tr.name,
                 short_description=tr.short_description, description=tr.description)
         )
-    for v in payload.variants:
+    for v, sku, option_values in zip(payload.variants, normalized_skus, normalized_options):
         variant_image_url = await _resolve_media_url(session, v.media_id) if v.media_id else v.image_url
         if not v.media_id:
             _validate_local_media_url(variant_image_url)
         session.add(
             ProductVariant(
-                product_id=product.id, sku=v.sku, option_values=v.option_values,
+                product_id=product.id, sku=sku, option_values=option_values,
                 stock_quantity=v.stock_quantity, price_override=v.price_override,
                 sale_price_override=v.sale_price_override, media_id=v.media_id,
                 image_url=variant_image_url,
@@ -351,7 +379,9 @@ async def admin_update_product(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    product = await session.get(Product, product_id)
+    product = await session.scalar(
+        select(Product).where(Product.id == product_id).with_for_update()
+    )
     if not product:
         raise HTTPException(status_code=404, detail="product_not_found")
     data = payload.model_dump(exclude_unset=True)
@@ -359,7 +389,11 @@ async def admin_update_product(
         _bad_request("invalid_status")
     if "product_type" in data:
         _validate_product_type(data["product_type"])
-    if "category_id" in data or "product_type" in data:
+    if (
+        "category_id" in data
+        or "product_type" in data
+        or data.get("status", product.status) == "active"
+    ):
         await _validate_category(
             session,
             data.get("category_id", product.category_id),
@@ -370,6 +404,9 @@ async def admin_update_product(
     _validate_price_order(
         data.get("base_price", product.base_price),
         data.get("compare_at_price", product.compare_at_price),
+    )
+    await _validate_existing_variant_prices(
+        session, product.id, data.get("base_price", product.base_price)
     )
     translations = data.pop("translations", None)
     if translations:
@@ -393,6 +430,12 @@ async def admin_update_product(
                     ProductTranslation(product_id=product.id, locale=locale, name=tr.name,
                         short_description=tr.short_description, description=tr.description)
                 )
+    await _ensure_existing_product_is_publishable(
+        session,
+        product.id,
+        data.get("status", product.status),
+        translations if translations is not None else None,
+    )
     for field in ("category_id", "product_type", "brand", "base_price",
                   "compare_at_price", "status", "attributes", "tags", "media"):
         if field in data:
@@ -403,6 +446,172 @@ async def admin_update_product(
     return await _product_payload(session, product)
 
 
+@router.put("/products/{product_id}/editor")
+async def admin_save_product_editor(
+    product_id: str,
+    payload: AdminProductEditorIn,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(csrf_protect),
+):
+    """Persist the complete product editor in one transaction.
+
+    The UI edits product fields and all variant rows together. Keeping that
+    operation atomic prevents a later SKU/media/stock failure from leaving a
+    product half-updated after the basics were already committed.
+    """
+
+    product = await session.scalar(
+        select(Product)
+        .where(Product.id == product_id)
+        .with_for_update()
+    )
+    if not product:
+        raise HTTPException(status_code=404, detail="product_not_found")
+
+    _validate_translations(payload.translations, require_en=True)
+    _validate_product_type(payload.product_type)
+    if payload.status not in ("draft", "active", "inactive"):
+        _bad_request("invalid_status")
+    _validate_active_product_payload(payload.status, payload.translations, payload.variants)
+    await _validate_category(session, payload.category_id, payload.product_type)
+    _validate_price_order(payload.base_price, payload.compare_at_price)
+    normalized_media = await _normalize_product_media(session, payload.media)
+
+    normalized_skus = [_normalize_sku(variant.sku) for variant in payload.variants]
+    normalized_options = [
+        _normalize_option_values(variant.option_values) for variant in payload.variants
+    ]
+    variant_ids = [variant.id for variant in payload.variants if variant.id]
+    if len(variant_ids) != len(set(variant_ids)):
+        _bad_request("invalid_variant")
+    await _check_skus(
+        session,
+        normalized_skus,
+        exclude_variant_ids=set(variant_ids),
+    )
+    for variant in payload.variants:
+        _validate_variant_prices(
+            variant.price_override,
+            variant.sale_price_override,
+            payload.base_price,
+        )
+
+    existing_variants = (
+        await session.execute(
+            select(ProductVariant)
+            .where(ProductVariant.product_id == product.id)
+            .with_for_update()
+        )
+    ).scalars().all()
+    existing_by_id = {variant.id: variant for variant in existing_variants}
+    for variant_id in variant_ids:
+        if variant_id not in existing_by_id:
+            _bad_request("invalid_variant")
+    submitted_variant_ids = set(variant_ids)
+    # The editor intentionally does not delete omitted persisted variants. If
+    # one is retained implicitly, its existing price overrides must still be
+    # valid against the new product base price. Submitted rows are validated
+    # below using their new values, which lets a single atomic save lower both
+    # the base price and a variant override together.
+    for existing in existing_variants:
+        if existing.id not in submitted_variant_ids:
+            _validate_variant_prices(
+                existing.price_override,
+                existing.sale_price_override,
+                payload.base_price,
+            )
+    reserved = await _reserved_quantities(session, list(existing_by_id))
+
+    # Apply the product-level portion only after every request-level check has
+    # passed. The transaction remains uncommitted until all variants succeed.
+    product.category_id = payload.category_id
+    product.product_type = payload.product_type
+    product.brand = payload.brand
+    product.base_price = payload.base_price
+    product.compare_at_price = payload.compare_at_price
+    product.status = payload.status
+    product.attributes = payload.attributes
+    product.tags = payload.tags
+    product.media = normalized_media
+
+    existing_translations = {
+        translation.locale: translation
+        for translation in (
+            await session.execute(
+                select(ProductTranslation).where(
+                    ProductTranslation.product_id == product.id
+                )
+            )
+        ).scalars().all()
+    }
+    for locale, translation in payload.translations.items():
+        row = existing_translations.get(locale)
+        if row:
+            row.name = translation.name
+            row.short_description = translation.short_description
+            row.description = translation.description
+        else:
+            session.add(
+                ProductTranslation(
+                    product_id=product.id,
+                    locale=locale,
+                    name=translation.name,
+                    short_description=translation.short_description,
+                    description=translation.description,
+                )
+            )
+
+    for spec, sku, option_values in zip(
+        payload.variants, normalized_skus, normalized_options
+    ):
+        variant = existing_by_id.get(spec.id) if spec.id else None
+        if variant:
+            active_reserved = reserved.get(variant.id, 0)
+            if spec.stock_quantity < active_reserved:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "below_active_reservations",
+                        "active_reservations": active_reserved,
+                        "requested": spec.stock_quantity,
+                    },
+                )
+        else:
+            variant = ProductVariant(product_id=product.id)
+            session.add(variant)
+
+        variant.sku = sku
+        variant.option_values = option_values
+        variant.stock_quantity = spec.stock_quantity
+        variant.price_override = spec.price_override
+        variant.sale_price_override = spec.sale_price_override
+        variant.is_active = spec.is_active
+        variant.media_id = spec.media_id
+        if spec.media_id:
+            variant.image_url = await _resolve_media_url(session, spec.media_id)
+        else:
+            _validate_local_media_url(spec.image_url)
+            variant.image_url = spec.image_url
+
+    await audit(
+        session,
+        user.id,
+        "admin.product.editor.save",
+        "product",
+        product.id,
+        {"fields": ["product", "translations", "variants"], "variant_count": len(payload.variants)},
+    )
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail={"error": "sku_exists"})
+
+    saved = await session.get(Product, product.id)
+    return await _product_payload(session, saved)
+
+
 @router.post("/products/{product_id}/variants", status_code=201)
 async def admin_create_variant(
     product_id: str,
@@ -411,18 +620,22 @@ async def admin_create_variant(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    product = await session.get(Product, product_id)
+    product = await session.scalar(
+        select(Product).where(Product.id == product_id).with_for_update()
+    )
     if not product:
         raise HTTPException(status_code=404, detail="product_not_found")
-    await _check_skus(session, [payload.sku])
+    sku = _normalize_sku(payload.sku)
+    await _check_skus(session, [sku])
     _validate_variant_prices(
         payload.price_override, payload.sale_price_override, product.base_price
     )
+    option_values = _normalize_option_values(payload.option_values)
     variant_image_url = await _resolve_media_url(session, payload.media_id) if payload.media_id else payload.image_url
     if not payload.media_id:
         _validate_local_media_url(variant_image_url)
     variant = ProductVariant(
-        product_id=product.id, sku=payload.sku, option_values=payload.option_values,
+        product_id=product.id, sku=sku, option_values=option_values,
         stock_quantity=payload.stock_quantity, price_override=payload.price_override,
         sale_price_override=payload.sale_price_override,
         media_id=payload.media_id, image_url=variant_image_url,
@@ -435,7 +648,7 @@ async def admin_create_variant(
         await session.commit()
     except IntegrityError:
         await session.rollback()
-        raise HTTPException(status_code=409, detail={"error": "sku_exists", "skus": [payload.sku]})
+        raise HTTPException(status_code=409, detail={"error": "sku_exists", "skus": [sku]})
     return await _product_payload(session, product)
 
 
@@ -447,13 +660,32 @@ async def admin_update_variant(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    variant = await session.get(ProductVariant, variant_id)
-    if not variant:
+    variant_product_id = await session.scalar(
+        select(ProductVariant.product_id).where(ProductVariant.id == variant_id)
+    )
+    if not variant_product_id:
+        raise HTTPException(status_code=404, detail="variant_not_found")
+    # Product editor and inventory mutations use product -> variant lock
+    # ordering. Keep this endpoint in the same order to avoid deadlocks when
+    # an operator edits a product and a variant concurrently.
+    product = await session.scalar(
+        select(Product).where(Product.id == variant_product_id).with_for_update()
+    )
+    variant = await session.scalar(
+        select(ProductVariant)
+        .where(
+            ProductVariant.id == variant_id,
+            ProductVariant.product_id == variant_product_id,
+        )
+        .with_for_update()
+    )
+    if not product or not variant:
         raise HTTPException(status_code=404, detail="variant_not_found")
     data = payload.model_dump(exclude_unset=True)
-    if "sku" in data and data["sku"] != variant.sku:
-        await _check_skus(session, [data["sku"]], exclude_variant_id=variant.id)
-    product = await session.get(Product, variant.product_id)
+    if "sku" in data:
+        data["sku"] = _normalize_sku(data["sku"])
+        if data["sku"] != variant.sku:
+            await _check_skus(session, [data["sku"]], exclude_variant_id=variant.id)
     _validate_variant_prices(
         data.get("price_override", variant.price_override),
         data.get("sale_price_override", variant.sale_price_override),
@@ -463,6 +695,8 @@ async def admin_update_variant(
         data["image_url"] = await _resolve_media_url(session, data["media_id"])
     elif "image_url" in data:
         _validate_local_media_url(data["image_url"])
+    if "option_values" in data:
+        data["option_values"] = _normalize_option_values(data["option_values"])
     for field in ("sku", "option_values", "price_override", "sale_price_override",
                   "media_id", "image_url", "is_active"):
         if field in data:
@@ -486,10 +720,23 @@ async def admin_update_inventory(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    variant = await session.scalar(
-        select(ProductVariant).where(ProductVariant.id == variant_id).with_for_update()
+    variant_product_id = await session.scalar(
+        select(ProductVariant.product_id).where(ProductVariant.id == variant_id)
     )
-    if not variant:
+    if not variant_product_id:
+        raise HTTPException(status_code=404, detail="variant_not_found")
+    product = await session.scalar(
+        select(Product).where(Product.id == variant_product_id).with_for_update()
+    )
+    variant = await session.scalar(
+        select(ProductVariant)
+        .where(
+            ProductVariant.id == variant_id,
+            ProductVariant.product_id == variant_product_id,
+        )
+        .with_for_update()
+    )
+    if not product or not variant:
         raise HTTPException(status_code=404, detail="variant_not_found")
     reserved = await _reserved_quantities(session, [variant.id])
     active_reserved = reserved.get(variant.id, 0)
@@ -546,6 +793,25 @@ class CategoryUpdateIn(BaseModel):
     translations: Optional[dict[str, CategoryTranslationIn]] = None
 
 
+def _validate_category_translations(
+    translations: dict[str, CategoryTranslationIn], *, require_en: bool
+) -> None:
+    """Reject blank or markup-bearing taxonomy labels before persistence."""
+
+    unknown = set(translations) - set(LOCALES)
+    if unknown:
+        _bad_request("invalid_locale", {"locales": sorted(unknown)})
+    if require_en and "en" not in translations:
+        _bad_request("translation_en_required")
+    for locale, translation in translations.items():
+        if not translation.name.strip():
+            _bad_request("translation_name_required", {"locale": locale})
+        if _UNSAFE_TEXT.search(translation.name):
+            _bad_request("unsafe_text", {"locale": locale, "field": "name"})
+        if translation.description and _UNSAFE_TEXT.search(translation.description):
+            _bad_request("unsafe_text", {"locale": locale, "field": "description"})
+
+
 async def _category_payload(session: AsyncSession, category: Category) -> dict:
     translations = (
         await session.execute(
@@ -600,14 +866,26 @@ async def _category_parent(
         return None
 
     root = await session.scalar(
-        select(Category).where(
-            Category.kind == "department", Category.slug == department
+        select(Category)
+        .where(
+            Category.kind == "department",
+            Category.slug == department,
+            Category.parent_id.is_(None),
         )
+        .with_for_update()
     )
     if not root:
         _bad_request("invalid_department", {"allowed": [department]})
 
-    parent = await session.get(Category, requested_parent_id) if requested_parent_id else root
+    parent = (
+        await session.scalar(
+            select(Category)
+            .where(Category.id == requested_parent_id)
+            .with_for_update()
+        )
+        if requested_parent_id
+        else root
+    )
     if not parent:
         _bad_request("invalid_category_parent")
     if current_id and parent.id == current_id:
@@ -616,7 +894,7 @@ async def _category_parent(
         _bad_request("group_parent_must_be_department")
     if kind == "category" and parent.kind not in ("department", "group"):
         _bad_request("category_parent_must_be_department_or_group")
-    parent_root = await get_root_category(session, parent)
+    parent_root = await get_root_category(session, parent, lock=True)
     if not parent_root or parent_root.id != root.id:
         _bad_request("invalid_category_parent")
 
@@ -628,10 +906,34 @@ async def _category_parent(
             if cursor.id in seen:
                 _bad_request("category_parent_cycle")
             seen.add(cursor.id)
-            cursor = await session.get(Category, cursor.parent_id)
+            cursor = await session.scalar(
+                select(Category)
+                .where(Category.id == cursor.parent_id)
+                .with_for_update()
+            )
             if not cursor:
                 _bad_request("invalid_category_parent")
     return parent.id
+
+
+async def _ensure_active_parent_chain(
+    session: AsyncSession, parent_id: Optional[str]
+) -> None:
+    """Reject active categories nested below any inactive ancestor."""
+    seen = set()
+    current_id = parent_id
+    while current_id:
+        if current_id in seen:
+            _bad_request("category_parent_cycle")
+        seen.add(current_id)
+        current = await session.scalar(
+            select(Category).where(Category.id == current_id).with_for_update()
+        )
+        if not current:
+            _bad_request("invalid_category_parent")
+        if not current.is_active:
+            _bad_request("parent_inactive")
+        current_id = current.parent_id
 
 
 @router.get("/categories")
@@ -673,15 +975,9 @@ async def admin_create_category(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    import re as _re
-
-    if not _re.match(r"^[a-z0-9][a-z0-9\-]{1,118}$", payload.slug):
+    if not re.match(r"^[a-z0-9][a-z0-9\-]{1,118}$", payload.slug):
         _bad_request("invalid_slug")
-    unknown = set(payload.translations) - set(LOCALES)
-    if unknown:
-        _bad_request("invalid_locale", {"locales": sorted(unknown)})
-    if "en" not in payload.translations:
-        _bad_request("translation_en_required")
+    _validate_category_translations(payload.translations, require_en=True)
     parent_id = await _category_parent(
         session,
         payload.kind,
@@ -690,9 +986,7 @@ async def admin_create_category(
         payload.slug,
     )
     if payload.is_active and parent_id:
-        parent = await session.get(Category, parent_id)
-        if parent and not parent.is_active:
-            _bad_request("parent_inactive")
+        await _ensure_active_parent_chain(session, parent_id)
     if payload.media_id:
         image_url = await _resolve_media_url(session, payload.media_id)
     else:
@@ -710,15 +1004,21 @@ async def admin_create_category(
         is_active=payload.is_active,
     )
     session.add(category)
-    await session.flush()
-    for locale, tr in payload.translations.items():
-        session.add(
-            CategoryTranslation(category_id=category.id, locale=locale,
-                                name=tr.name, description=tr.description)
-        )
-    await audit(session, user.id, "admin.category.create", "category", category.id,
-                {"slug": category.slug})
-    await session.commit()
+    try:
+        await session.flush()
+        for locale, tr in payload.translations.items():
+            session.add(
+                CategoryTranslation(category_id=category.id, locale=locale,
+                                    name=tr.name, description=tr.description)
+            )
+        await audit(session, user.id, "admin.category.create", "category", category.id,
+                    {"slug": category.slug})
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        # The most likely concurrent conflict is the unique category slug;
+        # expose a stable validation error instead of a raw database 500.
+        raise HTTPException(status_code=409, detail={"error": "slug_exists"})
     return await _category_payload(session, category)
 
 
@@ -730,39 +1030,41 @@ async def admin_update_category(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    category = await session.get(Category, category_id)
+    category = await session.scalar(
+        select(Category).where(Category.id == category_id).with_for_update()
+    )
     if not category:
         raise HTTPException(status_code=404, detail="category_not_found")
     data = payload.model_dump(exclude_unset=True)
     translations = data.pop("translations", None)
-    if "parent_id" in data:
-        data["parent_id"] = await _category_parent(
-            session,
-            category.kind,
-            category.department,
-            data["parent_id"],
-            category.slug,
-            category.id,
-        )
     effective_parent_id = data.get("parent_id", category.parent_id)
+    # Validate the effective hierarchy even when the request only toggles
+    # visibility. Older rows may have been imported before parent-kind and
+    # same-department rules existed.
+    data["parent_id"] = await _category_parent(
+        session,
+        category.kind,
+        category.department,
+        effective_parent_id,
+        category.slug,
+        category.id,
+    )
+    effective_parent_id = data["parent_id"]
     effective_active = data.get("is_active", category.is_active)
     if effective_active and effective_parent_id:
-        parent = await session.get(Category, effective_parent_id)
-        if parent and not parent.is_active:
-            _bad_request("parent_inactive")
+        await _ensure_active_parent_chain(session, effective_parent_id)
     if data.get("is_active") is False:
-        active_children = await session.scalar(
+        active_descendants = await session.scalar(
             select(func.count(Category.id)).where(
-                Category.parent_id == category.id,
+                Category.id.in_(descendant_ids_select(category.id)),
+                Category.id != category.id,
                 Category.is_active.is_(True),
             )
         )
-        if active_children:
+        if active_descendants:
             _bad_request("active_children_present")
     if translations:
-        unknown = set(translations) - set(LOCALES)
-        if unknown:
-            _bad_request("invalid_locale", {"locales": sorted(unknown)})
+        _validate_category_translations(translations, require_en=False)
         existing = {
             t.locale: t
             for t in (
@@ -799,7 +1101,9 @@ async def admin_delete_category(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    category = await session.get(Category, category_id)
+    category = await session.scalar(
+        select(Category).where(Category.id == category_id).with_for_update()
+    )
     if not category:
         raise HTTPException(status_code=404, detail="category_not_found")
     products = await session.scalar(

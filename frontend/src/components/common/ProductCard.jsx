@@ -13,6 +13,7 @@ export default function ProductCard({ product }) {
   const navigate = useNavigate();
   const href = product.href || "/shop";
   const wished = wishlistIds.has(product.id);
+  const colors = Array.isArray(product.colors) ? product.colors : [];
 
   const handleWishlist = async () => {
     try {
@@ -70,7 +71,7 @@ export default function ProductCard({ product }) {
       </div>
       <div className="mt-2 flex items-center justify-between">
         <div className="flex items-center gap-1.5" data-testid={`swatches-${product.slug || product.id}`}>
-          {product.colors.map((color) => (
+          {colors.map((color) => (
             <span
               key={color}
               className="h-3.5 w-3.5 rounded-full border border-border"
@@ -113,7 +114,7 @@ export default function ProductCard({ product }) {
         compareAt={product.compareAt}
         className="mt-1"
       />
-      {product.stockState === "out_of_stock" ? (
+      {product.stockState === "out_of_stock" && !product.isDemo ? (
         <p
           data-testid={`stock-out-${product.slug || product.id}`}
           className="mt-1 text-xs font-medium text-destructive"

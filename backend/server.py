@@ -20,6 +20,7 @@ from config import (
     ENFORCE_HTTPS,
     LOG_LEVEL,
     RATE_LIMIT_BACKEND,
+    TELEGRAM_INQUIRIES_ENABLED,
     TRUSTED_HOSTS,
     validate_runtime_config,
 )
@@ -72,15 +73,20 @@ async def lifespan(_app: FastAPI):
     # Production must fail before accepting traffic when its runtime
     # configuration is unsafe.
     validate_runtime_config(strict=APP_ENV == "production")
-    cleanup_task = asyncio.create_task(telegram_inquiry_cleanup_loop())
+    cleanup_task = (
+        asyncio.create_task(telegram_inquiry_cleanup_loop())
+        if TELEGRAM_INQUIRIES_ENABLED
+        else None
+    )
     try:
         yield
     finally:
-        cleanup_task.cancel()
-        try:
-            await cleanup_task
-        except asyncio.CancelledError:
-            pass
+        if cleanup_task:
+            cleanup_task.cancel()
+            try:
+                await cleanup_task
+            except asyncio.CancelledError:
+                pass
         await close_redis()
         await engine.dispose()
 
@@ -224,7 +230,14 @@ async def request_observability(request, call_next):
 async def no_store_auth_responses(request, call_next):
     response = await call_next(request)
     if request.url.path.startswith(
-        ("/api/v1/auth", "/api/v1/account", "/api/v1/checkout", "/api/v1/orders")
+        (
+            "/api/v1/auth",
+            "/api/v1/account",
+            "/api/v1/cart",
+            "/api/v1/wishlist",
+            "/api/v1/checkout",
+            "/api/v1/orders",
+        )
     ):
         response.headers["Cache-Control"] = "no-store"
     return response

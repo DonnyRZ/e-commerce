@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import BASE_CURRENCY, CHECKOUT_ENABLED, INVENTORY_RESERVATION_TTL_MINUTES
@@ -35,6 +36,7 @@ from db.models import (
 from media import media_item_url
 from shipping.factory import get_shipping_provider
 from shipping.mock import UnknownShippingMethod
+from taxonomy import active_taxonomy_chain
 
 
 class CheckoutError(Exception):
@@ -99,14 +101,51 @@ async def compute_cart_totals(
     lock: bool = False,
 ) -> dict:
     """Recalculate everything from the DB. The client never supplies prices."""
-    await expire_due_reservations(session)
-    rows = (
-        await session.execute(
-            select(CartItem).where(CartItem.cart_id == cart.id).order_by(CartItem.id)
+    if lock:
+        # Cart mutations use this same row as their serialization point. Lock
+        # it before reading items so checkout cannot price a cart while an
+        # add/update/remove request is changing it.
+        locked_cart = await session.scalar(
+            select(Cart).where(Cart.id == cart.id).with_for_update()
         )
-    ).scalars().all()
+        if not locked_cart:
+            raise CheckoutError("cart_not_found", 404)
+        cart = locked_cart
+    await expire_due_reservations(session)
+    item_query = select(CartItem).where(CartItem.cart_id == cart.id).order_by(CartItem.id)
+    if lock:
+        item_query = item_query.with_for_update()
+    rows = (await session.execute(item_query)).scalars().all()
     if not rows:
         raise CheckoutError("empty_cart", 400)
+    # Keep the lock order aligned with admin/cart mutations: cart -> product
+    # -> category ancestry -> variant. Besides making the checks atomic, this
+    # avoids a deadlock where checkout holds a variant while the product
+    # editor holds that product and waits for its variants.
+    product_ids = sorted({r.product_id for r in rows})
+    product_query = (
+        select(Product)
+        .where(Product.id.in_(product_ids))
+        .order_by(Product.id)
+    )
+    if lock:
+        product_query = product_query.with_for_update()
+    products = {
+        product.id: product
+        for product in (await session.execute(product_query)).scalars().all()
+    }
+    category_ids = sorted({product.category_id for product in products.values()})
+    category_query = (
+        select(Category)
+        .where(Category.id.in_(category_ids))
+        .order_by(Category.id)
+    )
+    if lock:
+        category_query = category_query.with_for_update()
+    categories = {
+        category.id: category
+        for category in (await session.execute(category_query)).scalars().all()
+    }
     variant_ids = sorted({r.variant_id for r in rows})
     variant_query = (
         select(ProductVariant)
@@ -116,32 +155,40 @@ async def compute_cart_totals(
     if lock:
         variant_query = variant_query.with_for_update()
     variants = {
-        v.id: v for v in (await session.execute(variant_query)).scalars().all()
+        variant.id: variant
+        for variant in (await session.execute(variant_query)).scalars().all()
     }
     reserved = await _reserved_quantities(session, variant_ids)
     items = []
     subtotal = 0
     for row in rows:
-        variant = variants.get(row.variant_id)
-        product = await session.get(Product, row.product_id) if variant else None
-        category = (
-            await session.scalar(
-                select(Category).where(
-                    Category.id == product.category_id,
-                    Category.kind == "category",
-                    Category.is_active.is_(True),
-                )
+        if (
+            not isinstance(row.quantity, int)
+            or isinstance(row.quantity, bool)
+            or row.quantity < 1
+        ):
+            # Cart rows are mutable state and older/manual imports may predate
+            # the request validation. Never allow a malformed quantity to
+            # create a zero/negative order line or reservation.
+            raise CheckoutError(
+                "invalid_cart_item",
+                409,
+                {"variant_id": row.variant_id},
             )
-            if product
-            else None
-        )
+        variant = variants.get(row.variant_id)
+        product = products.get(row.product_id) if variant else None
+        category = categories.get(product.category_id) if product else None
+        if category and not await active_taxonomy_chain(session, category, lock=lock):
+            category = None
         if (
             not variant
             or not variant.is_active
             or not product
+            or variant.product_id != product.id
             or product.status != "active"
             or product.is_demo
             or not category
+            or category.kind != "category"
         ):
             raise CheckoutError("unavailable_item", 409, {"variant_id": row.variant_id})
         available = variant.stock_quantity - reserved.get(variant.id, 0)
@@ -157,8 +204,10 @@ async def compute_cart_totals(
             )
         unit_price = (
             variant.sale_price_override
-            or variant.price_override
-            or product.base_price
+            if variant.sale_price_override is not None
+            else variant.price_override
+            if variant.price_override is not None
+            else product.base_price
         )
         items.append(
             {
@@ -247,7 +296,24 @@ async def create_order(
         idempotency_key=idempotency_key,
     )
     session.add(order)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError:
+        # Two requests can pass the initial idempotency lookup before either
+        # transaction commits. The database unique constraint is the final
+        # arbiter; recover the winner instead of leaking a 500 to the client.
+        await session.rollback()
+        existing = await session.scalar(
+            select(Order).where(Order.idempotency_key == idempotency_key)
+        )
+        if existing:
+            ensure_idempotent_owner(
+                existing,
+                user_id=user.id if user else None,
+                cart_id=cart.id,
+            )
+            return existing, False
+        raise
     expires_at = now + timedelta(minutes=INVENTORY_RESERVATION_TTL_MINUTES)
     for item in totals["items"]:
         product, variant, row = item["product"], item["variant"], item["row"]
@@ -380,4 +446,8 @@ async def release_reservations(session: AsyncSession, order_id: str) -> None:
 async def clear_source_cart(session: AsyncSession, order: Order) -> None:
     """Clear ONLY the cart that produced this order. DELETE is idempotent."""
     if order.cart_id:
-        await session.execute(delete(CartItem).where(CartItem.cart_id == order.cart_id))
+        cart_id = await session.scalar(
+            select(Cart.id).where(Cart.id == order.cart_id).with_for_update()
+        )
+        if cart_id:
+            await session.execute(delete(CartItem).where(CartItem.cart_id == cart_id))

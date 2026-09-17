@@ -11,6 +11,7 @@ import {
   uploadCmsMedia,
 } from "@/lib/api";
 import { mediaUrl, pickLocalized } from "@/lib/localize";
+import ImageWithFallback from "@/components/common/ImageWithFallback";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill, inputClass } from "./adminUtils";
 
@@ -68,7 +69,7 @@ function MediaPicker({ onSelect, onClose }) {
       <div className="mt-3 grid grid-cols-4 gap-2 sm:grid-cols-6">
         {isLoading ? Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="aspect-square" />) : (data?.items || []).map((m) => (
           <button key={m.id} type="button" onClick={() => onSelect(m)} className="border border-neutral-200 bg-white p-1 text-left hover:border-[#145A46]" data-testid={`category-media-pick-${m.id}`}>
-            <img src={mediaUrl(m.url)} alt={m.translations?.en?.alt_text || m.original_filename} className="aspect-square w-full object-cover" />
+            <ImageWithFallback src={mediaUrl(m.url)} alt={m.translations?.en?.alt_text || m.original_filename} className="aspect-square w-full object-cover" />
             <span className="mt-1 block truncate text-[10px] text-neutral-500">{m.original_filename}</span>
           </button>
         ))}
@@ -301,7 +302,7 @@ export default function AdminCategoriesPage() {
             <div className="sm:col-span-2 xl:col-span-2">
               <label className="mb-1 block text-xs font-medium text-neutral-500">Node image</label>
               <div className="flex flex-wrap items-center gap-3">
-                {form.media_id && form.image_url ? <img src={mediaUrl(form.image_url)} alt="" className="h-12 w-12 border border-neutral-200 object-cover" /> : <div className="flex h-12 w-12 items-center justify-center border border-dashed border-neutral-300 text-[10px] text-neutral-400">None</div>}
+                {form.media_id && form.image_url ? <ImageWithFallback src={mediaUrl(form.image_url)} alt="" className="h-12 w-12 border border-neutral-200 object-cover" /> : <div className="flex h-12 w-12 items-center justify-center border border-dashed border-neutral-300 text-[10px] text-neutral-400">None</div>}
                 <button type="button" onClick={() => setPickerOpen(!pickerOpen)} className="h-10 border border-neutral-300 px-4 text-xs font-semibold hover:border-[#145A46] hover:text-[#145A46]" data-testid="category-media-choose">
                   {pickerOpen ? "Hide library" : "Choose from library"}
                 </button>

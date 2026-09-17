@@ -123,7 +123,7 @@ async def get_current_user(
     if not token:
         header = request.headers.get("Authorization", "")
         if header.startswith("Bearer "):
-            token = header[7:]
+            token = header[7:].strip()
     if not token:
         raise HTTPException(status_code=401, detail="not_authenticated")
     payload = decode_token(token, "access")

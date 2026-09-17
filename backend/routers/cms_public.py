@@ -1,6 +1,8 @@
 """Public CMS API — published content only (drafts never leak), plus
 HMAC-signed time-limited draft preview and media file serving."""
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import select
@@ -68,7 +70,12 @@ async def public_footer(session: AsyncSession = Depends(get_session)):
         await session.execute(
             select(Category)
             .options(selectinload(Category.translations))
-            .where(Category.kind == "department", Category.is_active.is_(True))
+            .where(
+                Category.kind == "department",
+                Category.department == Category.slug,
+                Category.parent_id.is_(None),
+                Category.is_active.is_(True),
+            )
             .order_by(Category.sort_order, Category.slug)
         )
     ).scalars().all()
@@ -164,8 +171,13 @@ async def media_file(key: str, session: AsyncSession = Depends(get_session)):
                 "Cache-Control": "public, max-age=31536000, immutable",
             },
         )
+    file_path = storage.resolve_path(asset.storage_key)
+    if not Path(file_path).is_file():
+        # A DB row can outlive a manually removed local file. Return a stable
+        # 404 instead of turning a missing asset into a framework 500.
+        raise HTTPException(status_code=404, detail="media_not_found")
     return FileResponse(
-        storage.resolve_path(asset.storage_key),
+        file_path,
         media_type=asset.mime_type,
         headers={
             "X-Content-Type-Options": "nosniff",

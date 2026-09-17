@@ -6,12 +6,12 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import (
     PASSWORD_RESET_TTL_SECONDS,
     clear_auth_cookies,
-    create_access_token,
     csrf_protect,
     decode_token,
     get_current_user,
@@ -109,21 +109,31 @@ async def register(
     email = payload.email.lower()
     if payload.preferred_locale not in SUPPORTED_LOCALES:
         raise HTTPException(status_code=422, detail="invalid_locale")
+    first_name = payload.first_name.strip()
+    last_name = payload.last_name.strip()
+    if not first_name:
+        raise HTTPException(status_code=422, detail="first_name_required")
     existing = await session.scalar(select(User.id).where(User.email == email))
     if existing:
         raise HTTPException(status_code=409, detail="email_exists")
     # Role is never taken from the public payload — always customer.
     user = User(
         email=email,
-        first_name=payload.first_name.strip(),
-        last_name=payload.last_name.strip(),
-        full_name=f"{payload.first_name.strip()} {payload.last_name.strip()}".strip(),
+        first_name=first_name,
+        last_name=last_name,
+        full_name=f"{first_name} {last_name}".strip(),
         role="customer",
         preferred_locale=payload.preferred_locale,
         password_hash=hash_password(payload.password),
     )
     session.add(user)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        # The pre-check above is only an optimization; the unique database
+        # constraint is the authority when two registrations race.
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="email_exists")
     set_auth_cookies(response, user)
     return public_user(user)
 
@@ -140,7 +150,11 @@ async def login(
     if await _login_locked(session, identifier):
         raise HTTPException(status_code=429, detail="too_many_attempts")
     user = await session.scalar(select(User).where(User.email == email))
-    if not user or not verify_password(payload.password, user.password_hash or ""):
+    if (
+        not user
+        or not user.is_active
+        or not verify_password(payload.password, user.password_hash or "")
+    ):
         session.add(LoginAttempt(identifier=identifier, email=email))
         await session.commit()
         raise HTTPException(status_code=401, detail="invalid_credentials")
@@ -173,6 +187,13 @@ async def update_me(
     data = payload.model_dump(exclude_unset=True)
     if "preferred_locale" in data and data["preferred_locale"] not in SUPPORTED_LOCALES:
         raise HTTPException(status_code=422, detail="invalid_locale")
+    if "first_name" in data:
+        first_name = (data["first_name"] or "").strip()
+        if not first_name:
+            raise HTTPException(status_code=422, detail="first_name_required")
+        data["first_name"] = first_name
+    if "last_name" in data:
+        data["last_name"] = (data["last_name"] or "").strip()
     for key, value in data.items():
         setattr(user, key, value)
     user.full_name = f"{user.first_name} {user.last_name}".strip()

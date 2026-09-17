@@ -130,7 +130,11 @@ async def _webhook_ready() -> bool:
 
 async def _status(session: AsyncSession) -> dict:
     configuration_ready = _configuration_ready()
-    connection = await _ready_connection(session) if configuration_ready else None
+    connection = (
+        await _ready_connection(session)
+        if TELEGRAM_INQUIRIES_ENABLED and configuration_ready
+        else None
+    )
     business_ready = connection is not None
     webhook_ready = (
         await _webhook_ready()
@@ -180,7 +184,10 @@ async def _limit_inquiry(cart_id: str) -> None:
 
 @router.get("/status")
 async def telegram_status(session: AsyncSession = Depends(get_session)):
-    await _expire_old_snapshots(session)
+    # A disabled optional integration must not make the status endpoint depend
+    # on integration-only tables being migrated.
+    if TELEGRAM_INQUIRIES_ENABLED:
+        await _expire_old_snapshots(session)
     return await _status(session)
 
 
@@ -430,7 +437,7 @@ async def telegram_webhook(
             await session.commit()
         logger.warning("Telegram inquiry delivery failed; update will be retried")
         raise HTTPException(status_code=503, detail="telegram_delivery_failed") from exc
-    except Exception:
+    except Exception as exc:
         # Avoid logging the update body, message text, or Bot API URL/token.
         await session.rollback()
         receipt = await session.get(TelegramUpdateReceipt, update_id)

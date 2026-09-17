@@ -158,14 +158,15 @@ export function AuthProvider({ children, mergeCustomerCartOnRestore = true }) {
     previousUserId.current = currentUserId;
   }, [queryClient, user?.id]);
 
+  const restoredCustomerId = user?.role === "customer" ? user.id : null;
   useEffect(() => {
-    if (mergeCustomerCartOnRestore && user?.role === "customer") {
-      void mergeCustomerCart(user.id);
-    } else if (!user) {
+    if (mergeCustomerCartOnRestore && restoredCustomerId) {
+      void mergeCustomerCart(restoredCustomerId);
+    } else if (!restoredCustomerId) {
       setCartMergeError(false);
       setCartMergeReadyUserId(null);
     }
-  }, [mergeCustomerCart, mergeCustomerCartOnRestore, user?.id, user?.role]);
+  }, [mergeCustomerCart, mergeCustomerCartOnRestore, restoredCustomerId]);
 
   useEffect(() => {
     const handleSessionExpired = (event) => {

@@ -13,6 +13,7 @@ import { useShop } from "@/lib/ShopContext";
 import { pickLocalized } from "@/lib/localize";
 import EmptyState from "@/components/common/EmptyState";
 import ErrorState from "@/components/common/ErrorState";
+import ImageWithFallback from "@/components/common/ImageWithFallback";
 import PriceDisplay from "@/components/common/PriceDisplay";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -112,7 +113,9 @@ export default function CartPage() {
       await updateItem(item.id, next);
     } catch (e) {
       const d = e?.response?.data?.detail;
-      if (d?.error === "insufficient_stock") {
+      if (d?.error === "demo_quantity_limit") {
+        toast.error(t("cart.demoQuantityLimit", { count: d.available }));
+      } else if (d?.error === "insufficient_stock") {
         toast.error(t("cart.exceedsStock", { count: d.available }));
       } else {
         toast.error(t("errors.generic"));
@@ -159,7 +162,7 @@ export default function CartPage() {
               return (
                 <li key={item.id} data-testid={`cart-item-${item.id}`} className="flex gap-4 py-4">
                   <Link to={`/product/${item.slug}`} className="shrink-0">
-                    <img
+                    <ImageWithFallback
                       src={item.image_url}
                       alt={name}
                       loading="lazy"
@@ -180,7 +183,11 @@ export default function CartPage() {
                           {options ? " · " : ""}
                           {item.sku}
                         </p>
-                        {item.availability === "out_of_stock" || item.availability === "unavailable" ? (
+                        {item.availability === "demo" || item.is_demo ? (
+                          <p data-testid={`cart-demo-${item.id}`} className="mt-1 text-xs font-medium text-primary">
+                            {t("pdp.catalogNotice")}
+                          </p>
+                        ) : item.availability === "out_of_stock" || item.availability === "unavailable" || item.availability === "invalid" ? (
                           <p data-testid={`cart-oos-${item.id}`} className="mt-1 text-xs font-medium text-destructive">
                             {t("product.outOfStock")}
                           </p>
@@ -224,7 +231,7 @@ export default function CartPage() {
                           type="button"
                           data-testid={`cart-qty-plus-${item.id}`}
                           aria-label="Increase quantity"
-                          disabled={item.quantity >= item.stock_quantity || cartMutationsBlocked}
+                          disabled={item.quantity >= (item.cart_max_quantity ?? item.stock_quantity) || cartMutationsBlocked}
                           onClick={() => handleQty(item, item.quantity + 1)}
                           className="inline-flex h-9 w-9 items-center justify-center disabled:opacity-30"
                         >

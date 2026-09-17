@@ -9,7 +9,7 @@ export const pickCmsLocalized = (translations, locale, field = "title") => {
 };
 
 export const mediaUrl = (url) => {
-  if (!url) return "";
+  if (typeof url !== "string" || !url) return "";
   if (!url.startsWith("/")) return url;
   const origin = (process.env.REACT_APP_BACKEND_URL || window.location.origin).replace(/\/$/, "");
   return `${origin}${url}`;
@@ -39,7 +39,7 @@ export function toCardProduct(p, locale) {
     image: (typeof firstMedia === "string" ? firstMedia : firstMedia?.url) || "",
     price: p.base_price,
     compareAt: p.compare_at_price,
-    colors: (p.colors || []).map(colorHex),
+    colors: (Array.isArray(p.colors) ? p.colors : []).map(colorHex),
     meta: (p.brand || "").toUpperCase(),
     isDemo: Boolean(p.is_demo),
     badge: p.compare_at_price ? "sale" : p.new_arrival ? "new" : null,

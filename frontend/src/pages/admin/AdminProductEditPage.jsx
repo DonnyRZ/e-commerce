@@ -5,15 +5,13 @@ import { ArrowLeft, ChevronLeft, ChevronRight, ImagePlus, Plus, Trash2 } from "l
 import { toast } from "sonner";
 import {
   createAdminProduct,
-  createAdminVariant,
   getAdminCategories,
   getAdminProduct,
-  updateAdminInventory,
-  updateAdminProduct,
-  updateAdminVariant,
+  saveAdminProductEditor,
   uploadCmsMedia,
 } from "@/lib/api";
 import { mediaUrl, pickLocalized } from "@/lib/localize";
+import ImageWithFallback from "@/components/common/ImageWithFallback";
 import { Skeleton } from "@/components/ui/skeleton";
 import { inputClass } from "./adminUtils";
 
@@ -208,6 +206,37 @@ export default function AdminProductEditPage() {
   const save = async (e) => {
     e.preventDefault();
     if (saving) return;
+
+    const basePrice = Number(form.base_price);
+    const compareAtPrice = form.compare_at_price === "" ? null : Number(form.compare_at_price);
+    if (!Number.isInteger(basePrice) || basePrice < 0) {
+      toast.error("Enter a valid base price.");
+      return;
+    }
+    if (compareAtPrice !== null && (!Number.isInteger(compareAtPrice) || compareAtPrice < 0)) {
+      toast.error("Enter a valid compare-at price.");
+      return;
+    }
+    const candidateVariants = variants.filter((v) => v.id || v.sku.trim());
+    if (!candidateVariants.length) {
+      toast.error("Add at least one variant with a SKU.");
+      return;
+    }
+    for (const variant of candidateVariants) {
+      const numericValues = [
+        variant.stock === "" ? 0 : Number(variant.stock),
+        variant.price_override === "" ? null : Number(variant.price_override),
+        variant.sale_price_override === "" ? null : Number(variant.sale_price_override),
+      ];
+      if (
+        numericValues.some(
+          (value) => value !== null && (!Number.isInteger(value) || value < 0)
+        )
+      ) {
+        toast.error("Enter whole, non-negative values for stock and prices.");
+        return;
+      }
+    }
     setSaving(true);
     try {
       const translations = Object.fromEntries(
@@ -222,62 +251,45 @@ export default function AdminProductEditPage() {
         category_id: form.category_id,
         product_type: form.product_type,
         brand: form.brand,
-        base_price: parseInt(form.base_price, 10),
-        compare_at_price: form.compare_at_price === "" ? null : parseInt(form.compare_at_price, 10),
+        base_price: basePrice,
+        compare_at_price: compareAtPrice,
         status: form.status,
         attributes,
         media,
         translations,
       };
+      const editorVariants = candidateVariants
+        .map((v) => {
+          const stockQuantity = v.stock === "" ? 0 : Number(v.stock);
+          const priceOverride = v.price_override === "" ? null : Number(v.price_override);
+          const salePriceOverride = v.sale_price_override === "" ? null : Number(v.sale_price_override);
+          const usesPreviousPrimary =
+            (Boolean(v.media_id) && v.media_id === previousPrimaryMediaId) ||
+            (!v.media_id && v.image_url === previousPrimaryImageUrl);
+          const variantMediaId = usesPreviousPrimary ? primaryMediaId : (v.media_id || null);
+          return {
+            ...(v.id ? { id: v.id } : {}),
+            sku: v.sku.trim(),
+            option_values: parseOptions(v.optionsText),
+            stock_quantity: stockQuantity,
+            price_override: priceOverride,
+            sale_price_override: salePriceOverride,
+            media_id: variantMediaId,
+            image_url: variantMediaId ? null : (usesPreviousPrimary ? primaryImageUrl : (v.image_url || null)),
+            is_active: Boolean(v.is_active),
+          };
+        });
       if (isNew) {
         const created = await createAdminProduct({
           ...base,
-          variants: variants.map((v) => ({
-            sku: v.sku.trim(),
-            option_values: parseOptions(v.optionsText),
-            stock_quantity: parseInt(v.stock, 10) || 0,
-            price_override: v.price_override === "" ? null : parseInt(v.price_override, 10),
-            sale_price_override: v.sale_price_override === "" ? null : parseInt(v.sale_price_override, 10),
-            media_id: primaryMediaId,
-            image_url: primaryMediaId ? null : primaryImageUrl,
-            is_active: Boolean(v.is_active),
-          })),
+          variants: editorVariants,
         });
         toast.success("Product created");
         queryClient.invalidateQueries({ queryKey: ["admin-products"] });
         navigate(`/products/${created.id}`, { replace: true });
         return;
       }
-      await updateAdminProduct(productId, base);
-      for (const v of variants) {
-        const usesPreviousPrimary =
-          (Boolean(v.media_id) && v.media_id === previousPrimaryMediaId) ||
-          (!v.media_id && v.image_url === previousPrimaryImageUrl);
-        const variantMediaId = usesPreviousPrimary ? primaryMediaId : (v.media_id || null);
-        const body = {
-          option_values: parseOptions(v.optionsText),
-          price_override: v.price_override === "" ? null : parseInt(v.price_override, 10),
-          sale_price_override: v.sale_price_override === "" ? null : parseInt(v.sale_price_override, 10),
-          media_id: variantMediaId,
-          image_url: variantMediaId ? null : (usesPreviousPrimary ? primaryImageUrl : (v.image_url || null)),
-          is_active: Boolean(v.is_active),
-        };
-        if (v.id) {
-          await updateAdminVariant(v.id, { ...body, sku: v.sku.trim() });
-          const current = productQuery.data.variants.find((x) => x.id === v.id);
-          const nextStock = parseInt(v.stock, 10) || 0;
-          if (current && current.stock_quantity !== nextStock) {
-            await updateAdminInventory(v.id, nextStock);
-          }
-        } else if (v.sku.trim()) {
-          await createAdminVariant(productId, {
-            ...body, sku: v.sku.trim(),
-            stock_quantity: parseInt(v.stock, 10) || 0,
-            media_id: primaryMediaId,
-            image_url: primaryMediaId ? null : primaryImageUrl,
-          });
-        }
-      }
+      await saveAdminProductEditor(productId, { ...base, variants: editorVariants });
       toast.success("Product saved");
       queryClient.invalidateQueries({ queryKey: ["admin-product", productId] });
       queryClient.invalidateQueries({ queryKey: ["admin-products"] });
@@ -407,7 +419,7 @@ export default function AdminProductEditPage() {
             <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6" data-testid="editor-image-grid">
               {form.media.map((item, index) => (
                 <div key={`${item.media_id || item.url}-${index}`} className="group relative overflow-hidden border border-neutral-200 bg-neutral-50" data-testid={`editor-image-${index}`}>
-                  <img
+                  <ImageWithFallback
                     src={mediaUrl(item.url)}
                     alt={item.original_filename || `${tab.name || "Product"} image ${index + 1}`}
                     className="aspect-square w-full object-cover"

@@ -63,9 +63,11 @@ class CheckoutOrderIn(BaseModel):
 
 @router.get("/options")
 async def checkout_options(
-    request: Request, session: AsyncSession = Depends(get_session)
+    request: Request,
+    guest: bool = False,
+    session: AsyncSession = Depends(get_session),
 ):
-    user = await _optional_user(request, session)
+    user = None if guest else await _optional_user(request, session)
     cart = await _find_cart(request, session, user)
     payload = await _cart_payload(session, cart)
     return {

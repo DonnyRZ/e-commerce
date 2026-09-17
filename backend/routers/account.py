@@ -57,15 +57,40 @@ async def _owned_address(
     return address
 
 
-async def _apply_default(
-    session: AsyncSession, user: User, address: UserAddress
+async def _ensure_one_default(
+    session: AsyncSession, user: User
 ) -> None:
-    if address.is_default:
+    """Normalize the per-customer default-address invariant.
+
+    A PATCH may explicitly unset the current default. Always choosing a
+    deterministic replacement prevents checkout from receiving an address
+    list with no default (or multiple defaults after legacy data/imports).
+    """
+
+    rows = (
         await session.execute(
-            update(UserAddress)
-            .where(UserAddress.user_id == user.id, UserAddress.id != address.id)
-            .values(is_default=False)
+            select(UserAddress)
+            .where(UserAddress.user_id == user.id)
+            .order_by(UserAddress.created_at, UserAddress.id)
+            .with_for_update()
         )
+    ).scalars().all()
+    if not rows:
+        return
+    chosen = next((row for row in rows if row.is_default), rows[0])
+    await session.execute(
+        update(UserAddress)
+        .where(UserAddress.user_id == user.id)
+        .values(is_default=False)
+    )
+    chosen.is_default = True
+
+
+async def _lock_customer(session: AsyncSession, user: User) -> None:
+    # Address defaulting is a read-modify-write operation. Locking the owner
+    # serializes create/update/delete requests without relying on a fragile
+    # application-level uniqueness assumption for the boolean flag.
+    await session.scalar(select(User.id).where(User.id == user.id).with_for_update())
 
 
 @router.get("/addresses")
@@ -90,6 +115,7 @@ async def create_address(
     _: None = Depends(csrf_protect),
     session: AsyncSession = Depends(get_session),
 ):
+    await _lock_customer(session, user)
     has_any = await session.scalar(
         select(UserAddress.id).where(UserAddress.user_id == user.id).limit(1)
     )
@@ -98,7 +124,7 @@ async def create_address(
         address.is_default = True
     session.add(address)
     await session.flush()
-    await _apply_default(session, user, address)
+    await _ensure_one_default(session, user)
     await session.commit()
     return _address_out(address)
 
@@ -111,11 +137,12 @@ async def update_address(
     _: None = Depends(csrf_protect),
     session: AsyncSession = Depends(get_session),
 ):
+    await _lock_customer(session, user)
     address = await _owned_address(address_id, user, session)
     for key, value in payload.model_dump().items():
         setattr(address, key, value)
     await session.flush()
-    await _apply_default(session, user, address)
+    await _ensure_one_default(session, user)
     await session.commit()
     return _address_out(address)
 
@@ -127,7 +154,10 @@ async def delete_address(
     _: None = Depends(csrf_protect),
     session: AsyncSession = Depends(get_session),
 ):
+    await _lock_customer(session, user)
     address = await _owned_address(address_id, user, session)
     await session.delete(address)
+    await session.flush()
+    await _ensure_one_default(session, user)
     await session.commit()
     return None

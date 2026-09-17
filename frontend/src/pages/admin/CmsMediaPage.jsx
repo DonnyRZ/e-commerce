@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { deleteCmsMedia, getCmsMedia, updateCmsMedia, uploadCmsMedia } from "@/lib/api";
 import { mediaUrl } from "@/lib/localize";
+import ImageWithFallback from "@/components/common/ImageWithFallback";
 import { Skeleton } from "@/components/ui/skeleton";
 import { inputClass } from "./adminUtils";
 
@@ -69,7 +70,7 @@ function MediaEditor({ asset, onClose }) {
         </button>
       </div>
       <div className="mt-4 flex flex-wrap gap-5">
-        <img src={mediaUrl(asset.url)} alt="" className="h-32 w-32 border border-neutral-200 object-cover" />
+        <ImageWithFallback src={mediaUrl(asset.url)} alt="" className="h-32 w-32 border border-neutral-200 object-cover" />
         <div className="min-w-64 flex-1 space-y-3">
           {LOCALES.map((loc) => (
             <div key={loc} className="grid grid-cols-2 gap-3">
@@ -182,7 +183,7 @@ export default function CmsMediaPage() {
                 data-testid={`media-item-${m.id}`}
               >
                 <button type="button" onClick={() => setSelected(m)} className="block w-full text-left" aria-label={`Edit ${m.original_filename}`}>
-                  <img src={mediaUrl(m.url)} alt={m.translations?.en?.alt_text || m.original_filename} loading="lazy" className="aspect-square w-full rounded-lg bg-stone-100 object-cover" />
+                  <ImageWithFallback src={mediaUrl(m.url)} alt={m.translations?.en?.alt_text || m.original_filename} loading="lazy" className="aspect-square w-full rounded-lg bg-stone-100 object-cover" />
                   <p className="mt-2 truncate text-xs font-semibold text-[#17392C]">{m.original_filename}</p>
                 </button>
                 <p className="text-[10px] text-neutral-400">

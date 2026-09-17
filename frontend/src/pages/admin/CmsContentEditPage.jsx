@@ -18,6 +18,7 @@ import {
   uploadCmsMedia,
 } from "@/lib/api";
 import { mediaUrl, pickCmsLocalized } from "@/lib/localize";
+import ImageWithFallback from "@/components/common/ImageWithFallback";
 import { Skeleton } from "@/components/ui/skeleton";
 import { inputClass } from "./adminUtils";
 import {
@@ -132,7 +133,7 @@ function MediaPicker({ onSelect, onClose }) {
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {isLoading ? Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="aspect-square rounded-lg" />) : (data?.items || []).map((asset) => (
           <button key={asset.id} type="button" onClick={() => onSelect(asset)} className="group rounded-lg border border-[#E4DED2] bg-white p-2 text-left transition hover:border-[#02422C] hover:shadow-sm" data-testid={`media-pick-${asset.id}`}>
-            <img src={mediaUrl(asset.url)} alt={asset.translations?.en?.alt_text || asset.original_filename} className="aspect-square w-full rounded-md bg-stone-100 object-cover" loading="lazy" />
+            <ImageWithFallback src={mediaUrl(asset.url)} alt={asset.translations?.en?.alt_text || asset.original_filename} className="aspect-square w-full rounded-md bg-stone-100 object-cover" loading="lazy" />
             <span className="mt-2 block truncate text-[11px] font-medium text-stone-700">{asset.original_filename}</span>
             <span className="mt-0.5 block text-[10px] text-stone-400">{asset.width && asset.height ? `${asset.width} × ${asset.height}` : "Gambar"} · dipakai {asset.usage_count}×</span>
           </button>
@@ -411,7 +412,7 @@ export default function CmsContentEditPage() {
           {MEDIA_TYPES.has(contentType) ? (
             <FormSection title="Gambar & media" description="Gunakan gambar lokal agar cepat, aman, dan bisa dikelola dari satu pustaka." testId="cms-editor-media">
               <div className="flex flex-wrap items-center gap-4">
-                {imagePreview ? <img src={mediaUrl(imagePreview)} alt="Pratinjau media terpilih" className="h-28 w-28 rounded-lg border border-[#E4DED2] bg-stone-100 object-cover" data-testid="cms-media-preview" /> : <div className="flex h-28 w-28 items-center justify-center rounded-lg border border-dashed border-[#D8D0C1] bg-[#FDFBF6] px-3 text-center text-[10px] font-semibold uppercase tracking-wide text-stone-400" data-testid="cms-media-empty">Belum ada gambar</div>}
+                {imagePreview ? <ImageWithFallback src={mediaUrl(imagePreview)} alt="Pratinjau media terpilih" className="h-28 w-28 rounded-lg border border-[#E4DED2] bg-stone-100 object-cover" data-testid="cms-media-preview" /> : <div className="flex h-28 w-28 items-center justify-center rounded-lg border border-dashed border-[#D8D0C1] bg-[#FDFBF6] px-3 text-center text-[10px] font-semibold uppercase tracking-wide text-stone-400" data-testid="cms-media-empty">Belum ada gambar</div>}
                 <div className="space-y-2"><button type="button" onClick={() => setPickerOpen((open) => !open)} className="inline-flex h-10 items-center gap-2 rounded-lg border border-[#CFC7B7] bg-white px-4 text-sm font-semibold text-[#02422C] transition hover:border-[#02422C]" data-testid="cms-media-choose"><ImagePlus className="h-4 w-4" aria-hidden="true" />{pickerOpen ? "Tutup pustaka" : "Pilih gambar"}</button>{form.media_id ? <button type="button" onClick={() => { setFormValue("media_id", null); setImagePreview(""); }} className="block text-left text-xs font-medium text-red-700 hover:underline" data-testid="cms-media-remove">Lepas gambar</button> : <p className="text-xs text-stone-500">Belum ada gambar dipilih.</p>}</div>
               </div>
               {pickerOpen ? <MediaPicker onClose={() => setPickerOpen(false)} onSelect={(asset) => { setFormValue("media_id", asset.id); setImagePreview(asset.url); setPickerOpen(false); }} /> : null}

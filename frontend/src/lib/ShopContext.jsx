@@ -30,7 +30,11 @@ export function ShopProvider({ children }) {
 
   const cartQuery = useQuery({
     queryKey: cartKey,
-    queryFn: () => getCart({ guest: guestCartMode && isCustomer }),
+    // The storefront can be opened from the admin console via “View Store”.
+    // In that case an admin session must use the browser's guest/demo cart
+    // explicitly instead of sending the admin cookie to the customer cart
+    // endpoint (which correctly rejects non-customer users).
+    queryFn: () => getCart({ guest: guestCartMode }),
     enabled: !isCustomer || cartMergeReady,
   });
   const wishlistQuery = useQuery({
@@ -73,7 +77,7 @@ export function ShopProvider({ children }) {
       if (cartMutationsBlocked) {
         throw new Error("cart_merge_pending");
       }
-      const data = await addCartItem(payload, { guest: guestCartMode && isCustomer });
+      const data = await addCartItem(payload, { guest: guestCartMode });
       cacheCartForCurrentUser(data);
       return data;
     },
@@ -81,7 +85,7 @@ export function ShopProvider({ children }) {
       if (cartMutationsBlocked) {
         throw new Error("cart_merge_pending");
       }
-      const data = await updateCartItem(itemId, quantity, { guest: guestCartMode && isCustomer });
+      const data = await updateCartItem(itemId, quantity, { guest: guestCartMode });
       cacheCartForCurrentUser(data);
       return data;
     },
@@ -89,7 +93,7 @@ export function ShopProvider({ children }) {
       if (cartMutationsBlocked) {
         throw new Error("cart_merge_pending");
       }
-      await removeCartItem(itemId, { guest: guestCartMode && isCustomer });
+      await removeCartItem(itemId, { guest: guestCartMode });
       refresh();
     },
     async toggleWishlist(productId) {

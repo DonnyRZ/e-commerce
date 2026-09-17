@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { useI18n } from "@/i18n";
 import { EDITORIALS, localizedField } from "@/data/demo";
-import { mediaUrl, pickCmsLocalized, pickLocalized } from "@/lib/localize";
+import { mediaUrl, pickCmsLocalized } from "@/lib/localize";
 import ImageWithFallback from "./ImageWithFallback";
 
 export default function EditorialSection({ stories, title, cmsFailed = false }) {

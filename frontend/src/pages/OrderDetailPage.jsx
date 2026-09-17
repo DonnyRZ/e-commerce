@@ -7,6 +7,7 @@ import { getMyOrder } from "@/lib/api";
 import PriceDisplay, { LOCALE_TAGS } from "@/components/common/PriceDisplay";
 import { StatusBadge } from "@/pages/OrdersPage";
 import { Skeleton } from "@/components/ui/skeleton";
+import ImageWithFallback from "@/components/common/ImageWithFallback";
 
 export default function OrderDetailPage() {
   const { t, locale } = useI18n();
@@ -108,7 +109,7 @@ export default function OrderDetailPage() {
               className="flex gap-4 py-4"
             >
               {item.image_url ? (
-                <img
+                <ImageWithFallback
                   src={item.image_url}
                   alt=""
                   loading="lazy"

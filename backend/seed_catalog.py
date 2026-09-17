@@ -798,25 +798,27 @@ async def upsert_category(
 ):
     existing = await session.scalar(select(Category).where(Category.slug == slug))
     if existing:
-        existing.kind = kind
-        existing.department = department
-        existing.sort_order = sort_order
-        existing.parent_id = parent_id
-        # Never replace a CMS-managed image on a repeat seed.
-        if image_url is not None and not existing.media_id:
-            existing.image_url = image_url
+        # A seed is an installer, not an admin sync job. Once a category
+        # exists, its hierarchy, activation state, translations, and CMS
+        # image belong to the operator and must survive a repeat run.
         if existing.image_url and not existing.media_id and str(existing.image_url).startswith(("http://", "https://")):
             existing.image_url = None
-        # Existing manual activation is authoritative for staged taxonomy.
-        # Legacy catalog entries are still explicitly kept active by the seed.
-        if is_active:
-            existing.is_active = True
         cat = existing
-        await session.execute(
-            CategoryTranslation.__table__.delete().where(
-                CategoryTranslation.category_id == cat.id
-            )
-        )
+        current_translations = {
+            t.locale
+            for t in (
+                await session.execute(
+                    select(CategoryTranslation.locale).where(
+                        CategoryTranslation.category_id == cat.id
+                    )
+                )
+            ).scalars().all()
+        }
+        for locale, name in names.items():
+            if locale not in current_translations:
+                session.add(CategoryTranslation(category_id=cat.id, locale=locale, name=name))
+        await session.flush()
+        return cat.id
     else:
         cat = Category(
             slug=slug,
@@ -824,7 +826,13 @@ async def upsert_category(
             department=department,
             sort_order=sort_order,
             parent_id=parent_id,
-            image_url=None,
+            image_url=(
+                image_url
+                if isinstance(image_url, str)
+                and image_url.startswith("/")
+                and not image_url.startswith("//")
+                else None
+            ),
             is_active=is_active,
         )
         session.add(cat)
@@ -837,6 +845,37 @@ async def upsert_category(
 
 async def upsert_product(session, spec, owner_id, cat_ids):
     existing = await session.scalar(select(Product).where(Product.slug == spec["slug"]))
+    if existing:
+        # Product status, price, stock, translations, category, and media are
+        # operator-owned after first installation. Re-running a seed must not
+        # silently undo CMS edits or inventory changes. Only remove obsolete
+        # remote image URLs left by the old demo seed.
+        cleaned_media = []
+        for item in existing.media or []:
+            url = item if isinstance(item, str) else item.get("url") if isinstance(item, dict) else None
+            if isinstance(url, str) and url.startswith(("http://", "https://")):
+                if isinstance(item, dict) and item.get("media_id"):
+                    cleaned_media.append(item)
+                continue
+            if item is not None:
+                cleaned_media.append(item)
+        if cleaned_media != (existing.media or []):
+            existing.media = cleaned_media
+        variants = (
+            await session.execute(
+                select(ProductVariant).where(ProductVariant.product_id == existing.id)
+            )
+        ).scalars().all()
+        for variant in variants:
+            if (
+                variant.image_url
+                and not variant.media_id
+                and str(variant.image_url).startswith(("http://", "https://"))
+            ):
+                variant.image_url = None
+        await session.flush()
+        return
+
     fields = dict(
         seller_id=owner_id,
         category_id=cat_ids[spec["category"]],
@@ -853,37 +892,13 @@ async def upsert_product(session, spec, owner_id, cat_ids):
         bestseller=spec["bestseller"],
         new_arrival=spec["new_arrival"],
     )
-    if existing:
-        for k, v in fields.items():
-            setattr(existing, k, v)
-        # External demo images are not allowed to survive a seed rerun.
-        existing.media = [
-            item for item in (existing.media or [])
-            if not (
-                (
-                    isinstance(item, str)
-                    and item.startswith(("http://", "https://"))
-                )
-                or (
-                    isinstance(item, dict)
-                    and isinstance(item.get("url"), str)
-                    and item["url"].startswith(("http://", "https://"))
-                    and not item.get("media_id")
-                )
-            )
-        ]
-        product = existing
-        if not product.media:
-            product.media = list(spec.get("media", []))
-        await session.execute(
-            ProductTranslation.__table__.delete().where(
-                ProductTranslation.product_id == product.id
-            )
-        )
-    else:
-        product = Product(slug=spec["slug"], media=list(spec.get("media", [])), **fields)
-        session.add(product)
-        await session.flush()
+    product = Product(
+        slug=spec["slug"],
+        media=[item for item in spec.get("media", []) if item is not None],
+        **fields,
+    )
+    session.add(product)
+    await session.flush()
     for locale, (name, desc) in spec["translations"].items():
         session.add(
             ProductTranslation(
@@ -897,13 +912,9 @@ async def upsert_product(session, spec, owner_id, cat_ids):
             select(ProductVariant).where(ProductVariant.sku == v["sku"])
         )
         if existing_variant:
-            existing_variant.product_id = product.id
-            existing_variant.option_values = v["option_values"]
-            existing_variant.stock_quantity = v["stock_quantity"]
-            existing_variant.price_override = v.get("price_override")
-            existing_variant.is_active = True
-            if existing_variant.image_url and not existing_variant.media_id and str(existing_variant.image_url).startswith(("http://", "https://")):
-                existing_variant.image_url = None
+            raise RuntimeError(
+                f"seed SKU {v['sku']} already belongs to product {existing_variant.product_id}"
+            )
         else:
             session.add(
                 ProductVariant(

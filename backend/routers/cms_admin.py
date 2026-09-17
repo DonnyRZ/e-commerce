@@ -146,6 +146,13 @@ async def _ensure_unique_slug(session: AsyncSession, content_type: str, slug: st
                               entry_id: Optional[str] = None) -> None:
     if not slug:
         return
+    # Content slugs have no global uniqueness constraint because the CMS
+    # intentionally scopes them by content type. Serialize the check-and-
+    # insert/update pair so two operators cannot publish the same scoped slug
+    # at the same time.
+    await session.execute(
+        select(func.pg_advisory_xact_lock(func.hashtext(f"cms:slug:{content_type}:{slug}")))
+    )
     query = select(CmsContentEntry.id).where(
         CmsContentEntry.content_type == content_type,
         CmsContentEntry.slug == slug,
@@ -158,8 +165,14 @@ async def _ensure_unique_slug(session: AsyncSession, content_type: str, slug: st
 
 async def _validate_references(session: AsyncSession, content_type: str, slug: str,
                                payload: dict, media_id: Optional[str]) -> None:
-    if media_id and not await session.get(CmsMediaAsset, media_id):
-        raise HTTPException(status_code=400, detail={"error": "invalid_media"})
+    if media_id:
+        asset = await session.scalar(
+            select(CmsMediaAsset)
+            .where(CmsMediaAsset.id == media_id)
+            .with_for_update()
+        )
+        if not asset:
+            raise HTTPException(status_code=400, detail={"error": "invalid_media"})
     if content_type == "homepage_section" and slug and slug not in cms.HOMEPAGE_SECTION_KEYS:
         raise HTTPException(status_code=400, detail={"error": "invalid_homepage_section"})
     if content_type == "footer_item":
@@ -173,7 +186,11 @@ async def _validate_references(session: AsyncSession, content_type: str, slug: s
         ):
             raise HTTPException(status_code=400, detail={"error": "invalid_footer_group"})
     if content_type == "department_visual" and slug and not await session.scalar(
-        select(Category.id).where(Category.kind == "department", Category.slug == slug)
+            select(Category.id).where(
+                Category.kind == "department",
+                Category.slug == slug,
+                Category.parent_id.is_(None),
+            )
     ):
         raise HTTPException(status_code=400, detail={"error": "invalid_department"})
 
@@ -210,6 +227,12 @@ async def _validate_publish(session: AsyncSession, content_type: str, snapshot: 
         session, content_type, slug, snapshot.get("payload") or {}, snapshot.get("media_id")
     )
     if content_type in ("hero", "announcement"):
+        # Only one visible published hero/announcement is meaningful to the
+        # storefront bundle. A type-scoped advisory lock closes the race where
+        # two publish requests both observe no active entry.
+        await session.execute(
+            select(func.pg_advisory_xact_lock(func.hashtext(f"cms:published:{content_type}")))
+        )
         active_entry = await session.scalar(
             select(CmsContentEntry.id).where(
                 CmsContentEntry.content_type == content_type,
@@ -243,6 +266,7 @@ async def _validate_publish(session: AsyncSession, content_type: str, snapshot: 
         if not await session.scalar(
             select(Category.id).where(
                 Category.kind == "department", Category.slug == slug,
+                Category.parent_id.is_(None),
                 Category.is_active.is_(True),
             )
         ):
@@ -689,6 +713,13 @@ async def upload_media(
         raise HTTPException(status_code=415, detail={"error": "invalid_image"})
 
     checksum = hashlib.sha256(data).hexdigest()
+    # ``checksum`` is the idempotency key for generated/imported assets. The
+    # schema keeps it nullable-compatible for older installations, so use a
+    # transaction advisory lock to serialize concurrent first uploads without
+    # changing existing CMS data or requiring a destructive migration.
+    await session.execute(
+        select(func.pg_advisory_xact_lock(func.hashtext(checksum)))
+    )
     existing = await session.scalar(
         select(CmsMediaAsset).where(CmsMediaAsset.checksum == checksum)
     )
@@ -882,7 +913,9 @@ async def update_media(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    asset = await session.get(CmsMediaAsset, media_id)
+    asset = await session.scalar(
+        select(CmsMediaAsset).where(CmsMediaAsset.id == media_id).with_for_update()
+    )
     if not asset:
         raise HTTPException(status_code=404, detail="media_not_found")
     unknown = set(payload.translations) - set(cms.LOCALES)
@@ -923,7 +956,9 @@ async def delete_media(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    asset = await session.get(CmsMediaAsset, media_id)
+    asset = await session.scalar(
+        select(CmsMediaAsset).where(CmsMediaAsset.id == media_id).with_for_update()
+    )
     if not asset:
         raise HTTPException(status_code=404, detail="media_not_found")
     usage = await _media_usage_count(session, asset)

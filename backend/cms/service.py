@@ -65,35 +65,55 @@ def sanitize_text(value: Optional[str], max_len: int = 10000) -> str:
     return value
 
 
+def _is_local_image_url(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) <= 500
+        and value.startswith("/")
+        and not value.startswith("//")
+    )
+
+
+def _walk_payload(value: object):
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            yield key, nested
+            yield from _walk_payload(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from _walk_payload(nested)
+
+
 def validate_payload(payload: dict) -> None:
-    """Reject legacy/external image URLs from CMS content payloads."""
+    """Reject external image URLs at every nested CMS payload level."""
 
     if not isinstance(payload, dict):
         raise ValueError("invalid_payload")
-    image_url = payload.get("image_url")
-    if image_url in (None, ""):
-        return
-    if (
-        not isinstance(image_url, str)
-        or len(image_url) > 500
-        or not image_url.startswith("/")
-        or image_url.startswith("//")
-    ):
-        raise ValueError("invalid_media_url")
+    for key, value in _walk_payload(payload):
+        if key == "image_url" and value not in (None, "") and not _is_local_image_url(value):
+            raise ValueError("invalid_media_url")
 
 
 def clean_payload(payload: Optional[dict]) -> dict:
-    """Keep only local legacy image fallbacks in serialized CMS payloads."""
+    """Remove invalid nested legacy image fallbacks from serialized payloads."""
 
-    result = dict(payload or {})
-    image_url = result.get("image_url")
-    if image_url not in (None, "") and (
-        not isinstance(image_url, str)
-        or not image_url.startswith("/")
-        or image_url.startswith("//")
-    ):
-        result.pop("image_url", None)
-    return result
+    def clean(value):
+        if isinstance(value, dict):
+            result = {}
+            for key, nested in value.items():
+                if (
+                    key == "image_url"
+                    and nested not in (None, "")
+                    and not _is_local_image_url(nested)
+                ):
+                    continue
+                result[key] = clean(nested)
+            return result
+        if isinstance(value, list):
+            return [clean(nested) for nested in value]
+        return value
+
+    return clean(payload or {})
 
 
 def _signing_key() -> str:
@@ -287,7 +307,19 @@ async def entry_detail(session: AsyncSession, entry: CmsContentEntry) -> dict:
         },
         "completeness": sorted(
             t.locale for t in translations
-            if (t.title or t.body or t.description or t.alt_text)
+            if any(
+                getattr(t, field)
+                for field in (
+                    "title",
+                    "eyebrow",
+                    "subtitle",
+                    "body",
+                    "description",
+                    "cta_label",
+                    "secondary_cta_label",
+                    "alt_text",
+                )
+            )
         ),
         "has_unpublished_changes": entry.draft_snapshot is not None,
     }
@@ -308,19 +340,52 @@ async def entry_detail(session: AsyncSession, entry: CmsContentEntry) -> dict:
 async def entry_summary(session: AsyncSession, entry: CmsContentEntry) -> dict:
     translations = (
         await session.execute(
-            select(CmsContentTranslation.locale, CmsContentTranslation.title,
-                   CmsContentTranslation.body, CmsContentTranslation.description)
+            select(
+                CmsContentTranslation.locale,
+                CmsContentTranslation.title,
+                CmsContentTranslation.eyebrow,
+                CmsContentTranslation.subtitle,
+                CmsContentTranslation.body,
+                CmsContentTranslation.description,
+                CmsContentTranslation.cta_label,
+                CmsContentTranslation.secondary_cta_label,
+                CmsContentTranslation.alt_text,
+            )
             .where(CmsContentTranslation.entry_id == entry.id)
         )
     ).all()
     completeness = sorted(
         t.locale for t in translations
-        if (t.title or t.body or t.description or t.alt_text)
+        if any(
+            getattr(t, field)
+            for field in (
+                "title",
+                "eyebrow",
+                "subtitle",
+                "body",
+                "description",
+                "cta_label",
+                "secondary_cta_label",
+                "alt_text",
+            )
+        )
     )
     if entry.draft_snapshot is not None:
         completeness = sorted(
             locale for locale, tr in (entry.draft_snapshot.get("translations") or {}).items()
-            if tr.get("title") or tr.get("body") or tr.get("description") or tr.get("alt_text")
+            if any(
+                tr.get(field)
+                for field in (
+                    "title",
+                    "eyebrow",
+                    "subtitle",
+                    "body",
+                    "description",
+                    "cta_label",
+                    "secondary_cta_label",
+                    "alt_text",
+                )
+            )
         )
     return {
         "id": entry.id,

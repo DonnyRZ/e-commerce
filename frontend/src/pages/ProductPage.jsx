@@ -43,6 +43,7 @@ export default function ProductPage() {
   const {
     addToCart: addCartItem,
     cartMutationsBlocked,
+    guestCartMode,
     toggleWishlist,
     wishlistIds,
   } = useShop();
@@ -57,14 +58,29 @@ export default function ProductPage() {
   });
   const product = query.data;
   const checkoutOptionsQuery = useQuery({
-    queryKey: ["checkout-options"],
-    queryFn: getCheckoutOptions,
+    queryKey: ["checkout-options", guestCartMode ? "guest" : "customer"],
+    queryFn: () => getCheckoutOptions({ guest: guestCartMode }),
     staleTime: 60 * 1000,
     retry: false,
   });
 
   const variants = useMemo(
-    () => (product?.variants || []).filter((v) => v.is_active),
+    () =>
+      (product?.variants || [])
+        .filter((v) => v.is_active)
+        .map((variant) => {
+          const rawOptions =
+            variant.option_values && typeof variant.option_values === "object" && !Array.isArray(variant.option_values)
+              ? variant.option_values
+              : {};
+          const optionValues = Object.fromEntries(
+            Object.entries(rawOptions)
+              .filter(([, value]) => ["string", "number", "boolean"].includes(typeof value))
+              .map(([key, value]) => [key, String(value).trim()])
+              .filter(([, value]) => value)
+          );
+          return { ...variant, option_values: optionValues };
+        }),
     [product]
   );
 
@@ -87,10 +103,12 @@ export default function ProductPage() {
 
   useEffect(() => {
     if (!variants.length || Object.keys(selected).length) return;
-    const first = variants.find((v) => v.stock_quantity > 0) || variants[0];
+    const first = product?.is_demo
+      ? variants[0]
+      : variants.find((v) => v.stock_quantity > 0) || variants[0];
     setSelected({ ...first.option_values });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variants]);
+  }, [product?.is_demo, variants]);
 
   useEffect(() => {
     if (product) {
@@ -102,7 +120,7 @@ export default function ProductPage() {
     variants.some(
       (v) =>
         v.option_values[dimKey] === value &&
-        v.stock_quantity > 0 &&
+        (product?.is_demo || v.stock_quantity > 0) &&
         dimensions.every(
           (d) => d.key === dimKey || !selected[d.key] || v.option_values[d.key] === selected[d.key]
         )
@@ -137,6 +155,16 @@ export default function ProductPage() {
     return media;
   }, [product, selectedVariant]);
 
+  useEffect(() => {
+    setImageIndex(0);
+  }, [selectedVariant?.id]);
+
+  useEffect(() => {
+    setImageIndex((current) =>
+      images.length ? Math.min(current, images.length - 1) : 0
+    );
+  }, [images.length]);
+
   if (query.isLoading) {
     return <div className="py-6 lg:py-10"><PdpSkeleton /></div>;
   }
@@ -167,14 +195,15 @@ export default function ProductPage() {
       selectedVariant.price_override ??
       product.base_price
     : product.base_price;
-  const compareAt = selectedVariant?.sale_price_override
+  const compareAt = selectedVariant?.sale_price_override != null
     ? selectedVariant.price_override ?? product.base_price
     : product.compare_at_price;
 
   const stockQty = selectedVariant?.stock_quantity ?? null;
-  const outOfStock = selectedVariant ? stockQty <= 0 : false;
-  const lowStock = selectedVariant ? stockQty > 0 && stockQty <= 5 : false;
-  const maxQty = stockQty ? Math.min(stockQty, 10) : 10;
+  const isDemo = Boolean(product.is_demo);
+  const outOfStock = selectedVariant ? !isDemo && stockQty <= 0 : false;
+  const lowStock = selectedVariant ? !isDemo && stockQty > 0 && stockQty <= 5 : false;
+  const maxQty = isDemo ? 10 : stockQty ? Math.min(stockQty, 10) : 10;
   const checkoutUnavailable =
     checkoutOptionsQuery.isError ||
     (checkoutOptionsQuery.isSuccess &&
@@ -197,7 +226,9 @@ export default function ProductPage() {
       });
     } catch (e) {
       const d = e?.response?.data?.detail;
-      if (d?.error === "insufficient_stock") {
+      if (d?.error === "demo_quantity_limit") {
+        toast.error(t("cart.demoQuantityLimit", { count: d.available }));
+      } else if (d?.error === "insufficient_stock") {
         toast.error(t("cart.exceedsStock", { count: d.available }));
       } else {
         toast.error(t("errors.generic"));
@@ -456,7 +487,11 @@ export default function ProductPage() {
           ))}
 
           <div className="mt-5" data-testid="pdp-stock">
-            {outOfStock ? (
+            {isDemo ? (
+              <p data-testid="pdp-stock-demo" className="text-sm font-medium text-primary">
+                {t("pdp.catalogNotice")}
+              </p>
+            ) : outOfStock ? (
               <p data-testid="pdp-stock-out" className="text-sm font-medium text-destructive">
                 {t("product.outOfStock")}
               </p>

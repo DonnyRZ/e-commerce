@@ -34,7 +34,7 @@ from db.models import (
     User,
 )
 from db.session import get_session
-from taxonomy import get_root_category
+from taxonomy import active_taxonomy_chain, get_root_category
 
 router = APIRouter(prefix="/api/v1/seller", tags=["seller"])
 
@@ -182,7 +182,15 @@ def _validate_translations(translations: dict, require_en: bool) -> None:
         _bad_request("translation_en_required")
     for locale, translation in translations.items():
         for field in ("name", "short_description", "description"):
-            value = getattr(translation, field, None)
+            value = (
+                translation.get(field)
+                if isinstance(translation, dict)
+                else getattr(translation, field, None)
+            )
+            if value is not None and not isinstance(value, str):
+                _bad_request("invalid_translation", {"locale": locale, "field": field})
+            if field == "name" and (not isinstance(value, str) or not value.strip()):
+                _bad_request("translation_name_required", {"locale": locale})
             if value and _UNSAFE_TEXT.search(value):
                 _bad_request("unsafe_text", {"locale": locale, "field": field})
 
@@ -197,6 +205,38 @@ def _validate_product_type(product_type: str) -> None:
         _bad_request("invalid_product_type", {"allowed": sorted(PRODUCT_TYPES)})
 
 
+def _normalize_option_values(values: dict) -> dict[str, str]:
+    """Keep variant options JSON-safe, scalar, and stable for filtering."""
+
+    if not isinstance(values, dict) or len(values) > 20:
+        _bad_request("invalid_option_values")
+    normalized: dict[str, str] = {}
+    for raw_key, raw_value in values.items():
+        if not isinstance(raw_key, str):
+            _bad_request("invalid_option_values")
+        key = raw_key.strip()
+        if not key or len(key) > 40 or key in normalized:
+            _bad_request("invalid_option_values")
+        if raw_value is None or isinstance(raw_value, (dict, list, tuple, set)):
+            _bad_request("invalid_option_values", {"key": key})
+        if not isinstance(raw_value, (str, int, float, bool)):
+            _bad_request("invalid_option_values", {"key": key})
+        value = str(raw_value).strip()
+        if not value or len(value) > 120:
+            _bad_request("invalid_option_values", {"key": key})
+        normalized[key] = value
+    return normalized
+
+
+def _normalize_sku(sku: str) -> str:
+    """Trim SKU input and reject values that cannot be safely identified."""
+
+    normalized = sku.strip()
+    if len(normalized) < 2 or any(ord(char) < 33 for char in normalized):
+        _bad_request("invalid_sku")
+    return normalized
+
+
 def _validate_variant_prices(
     price_override: Optional[int],
     sale_price_override: Optional[int],
@@ -207,13 +247,107 @@ def _validate_variant_prices(
         _bad_request("sale_price_not_below_regular")
 
 
-async def _check_skus(session: AsyncSession, skus: list[str], exclude_variant_id: Optional[str] = None) -> None:
-    dupes = {s for s in skus if skus.count(s) > 1}
+def _validate_active_product_payload(status: str, translations: dict, variants) -> None:
+    """Reject a product that would be published without a usable storefront row."""
+
+    if status != "active":
+        return
+    english = translations.get("en") if isinstance(translations, dict) else None
+    english_name = (
+        english.get("name") if isinstance(english, dict) else getattr(english, "name", None)
+    )
+    if not isinstance(english_name, str) or not english_name.strip():
+        _bad_request("translation_en_required")
+    if not any(
+        bool(
+            variant.get("is_active", False)
+            if isinstance(variant, dict)
+            else getattr(variant, "is_active", False)
+        )
+        for variant in variants
+    ):
+        _bad_request("active_product_requires_variant")
+
+
+async def _validate_existing_variant_prices(
+    session: AsyncSession, product_id: str, base_price: int
+) -> None:
+    """Keep a product-wide base-price edit from invalidating variant prices."""
+
+    rows = (
+        await session.execute(
+            select(ProductVariant.price_override, ProductVariant.sale_price_override)
+            .where(ProductVariant.product_id == product_id)
+        )
+    ).all()
+    for price_override, sale_price_override in rows:
+        _validate_variant_prices(price_override, sale_price_override, base_price)
+
+
+async def _ensure_existing_product_is_publishable(
+    session: AsyncSession,
+    product_id: str,
+    status: str,
+    translations: Optional[dict] = None,
+) -> None:
+    """Validate activation when the endpoint is only changing product fields."""
+
+    if status != "active":
+        return
+    if translations is None or "en" not in translations:
+        english_name = await session.scalar(
+            select(ProductTranslation.name).where(
+                ProductTranslation.product_id == product_id,
+                ProductTranslation.locale == "en",
+            )
+        )
+        if not isinstance(english_name, str) or not english_name.strip():
+            _bad_request("translation_en_required")
+    else:
+        english = translations.get("en")
+        english_name = (
+            english.get("name")
+            if isinstance(english, dict)
+            else getattr(english, "name", None)
+        )
+        if not isinstance(english_name, str) or not english_name.strip():
+            _bad_request("translation_en_required")
+    has_active_variant = await session.scalar(
+        select(ProductVariant.id)
+        .where(
+            ProductVariant.product_id == product_id,
+            ProductVariant.is_active.is_(True),
+        )
+        .limit(1)
+    )
+    if not has_active_variant:
+        _bad_request("active_product_requires_variant")
+
+
+async def _check_skus(
+    session: AsyncSession,
+    skus: list[str],
+    exclude_variant_id: Optional[str] = None,
+    exclude_variant_ids: Optional[set[str]] = None,
+) -> None:
+    folded = [sku.casefold() for sku in skus]
+    dupes = {skus[index] for index, value in enumerate(folded) if folded.count(value) > 1}
     if dupes:
         raise HTTPException(status_code=409, detail={"error": "sku_duplicate_in_payload", "skus": sorted(dupes)})
-    query = select(ProductVariant.sku).where(ProductVariant.sku.in_(skus))
+    # The database's legacy unique constraint is case-sensitive. Serialize
+    # the case-insensitive application check so two concurrent admin/seller
+    # writes cannot both pass the read and create SKU aliases such as
+    # ``MC-001`` and ``mc-001``.
+    for value in sorted(set(folded)):
+        await session.execute(
+            select(func.pg_advisory_xact_lock(func.hashtext(f"sku:{value}")))
+        )
+    query = select(ProductVariant.sku).where(func.lower(ProductVariant.sku).in_(folded))
+    excluded = set(exclude_variant_ids or set())
     if exclude_variant_id:
-        query = query.where(ProductVariant.id != exclude_variant_id)
+        excluded.add(exclude_variant_id)
+    if excluded:
+        query = query.where(~ProductVariant.id.in_(excluded))
     taken = (await session.execute(query)).scalars().all()
     if taken:
         raise HTTPException(status_code=409, detail={"error": "sku_exists", "skus": sorted(taken)})
@@ -236,7 +370,11 @@ def _validate_local_media_url(url: Optional[str]) -> None:
 async def _resolve_media_reference(session: AsyncSession, media_id: Optional[str]) -> Optional[str]:
     if not media_id:
         return None
-    asset = await session.get(CmsMediaAsset, media_id)
+    # Serialize media references with CMS deletion so a successful product
+    # mutation can never commit a pointer to an asset deleted concurrently.
+    asset = await session.scalar(
+        select(CmsMediaAsset).where(CmsMediaAsset.id == media_id).with_for_update()
+    )
     if not asset:
         _bad_request("invalid_media")
     return await media_url(session, asset)
@@ -257,16 +395,28 @@ async def _validate_category(
     session: AsyncSession, category_id: str, product_type: Optional[str] = None
 ) -> None:
     category = await session.scalar(
-        select(Category).where(
+        select(Category)
+        .where(
             Category.id == category_id,
             Category.is_active == True,
             Category.kind == "category",
         )
+        .with_for_update()
     )
     if not category:
         _bad_request("invalid_category")
+    # A leaf is public only when every ancestor is active and the chain ends
+    # at a department. This keeps legacy/malformed rows from becoming a way
+    # to publish a product below an inactive or orphaned taxonomy node.
+    if not await active_taxonomy_chain(session, category, lock=True):
+        _bad_request("invalid_category")
+    child_count = await session.scalar(
+        select(func.count(Category.id)).where(Category.parent_id == category.id)
+    )
+    if child_count:
+        _bad_request("category_not_leaf")
     if product_type in {"batik", "parfum"} or category.department in {"batik", "parfum"}:
-        root = await get_root_category(session, category)
+        root = await get_root_category(session, category, lock=True)
         if not root or root.slug != product_type:
             _bad_request(
                 "product_type_category_mismatch",
@@ -561,13 +711,18 @@ async def create_product(
     normalized_media = await _normalize_media(session, payload.media)
     if payload.status not in PRODUCT_STATUSES:
         _bad_request("invalid_status")
+    _validate_active_product_payload(payload.status, payload.translations, payload.variants)
     await _validate_category(session, payload.category_id, payload.product_type)
     _validate_price_order(payload.base_price, payload.compare_at_price)
+    normalized_skus = [_normalize_sku(variant.sku) for variant in payload.variants]
+    normalized_options = [
+        _normalize_option_values(variant.option_values) for variant in payload.variants
+    ]
     for variant in payload.variants:
         _validate_variant_prices(
             variant.price_override, variant.sale_price_override, payload.base_price
         )
-    await _check_skus(session, [v.sku for v in payload.variants])
+    await _check_skus(session, normalized_skus)
 
     product = Product(
         seller_id=user.id,  # ownership from authenticated identity only
@@ -594,7 +749,7 @@ async def create_product(
                 description=tr.description,
             )
         )
-    for v in payload.variants:
+    for v, sku, option_values in zip(payload.variants, normalized_skus, normalized_options):
         variant_image_url = (
             await _resolve_media_reference(session, v.media_id)
             if v.media_id
@@ -605,8 +760,8 @@ async def create_product(
         session.add(
             ProductVariant(
                 product_id=product.id,
-                sku=v.sku,
-                option_values=v.option_values,
+                sku=sku,
+                option_values=option_values,
                 stock_quantity=v.stock_quantity,
                 price_override=v.price_override,
                 sale_price_override=v.sale_price_override,
@@ -640,13 +795,23 @@ async def update_product(
     user: User = Depends(require_seller),
     session: AsyncSession = Depends(get_session),
 ):
-    product = await _own_product(session, product_id, user.id)
+    product = await session.scalar(
+        select(Product)
+        .where(Product.id == product_id, Product.seller_id == user.id)
+        .with_for_update()
+    )
+    if not product:
+        raise HTTPException(status_code=404, detail="product_not_found")
     data = payload.model_dump(exclude_unset=True)
     if "status" in data and data["status"] not in PRODUCT_STATUSES:
         _bad_request("invalid_status")
     if "product_type" in data:
         _validate_product_type(data["product_type"])
-    if "category_id" in data or "product_type" in data:
+    if (
+        "category_id" in data
+        or "product_type" in data
+        or data.get("status", product.status) == "active"
+    ):
         await _validate_category(
             session,
             data.get("category_id", product.category_id),
@@ -657,6 +822,9 @@ async def update_product(
     _validate_price_order(
         data.get("base_price", product.base_price),
         data.get("compare_at_price", product.compare_at_price),
+    )
+    await _validate_existing_variant_prices(
+        session, product.id, data.get("base_price", product.base_price)
     )
     if "translations" in data and data["translations"] is not None:
         translations = payload.translations or {}
@@ -687,6 +855,12 @@ async def update_product(
                         description=tr.description,
                     )
                 )
+    await _ensure_existing_product_is_publishable(
+        session,
+        product.id,
+        data.get("status", product.status),
+        data.get("translations") if "translations" in data else None,
+    )
     for field in (
         "category_id", "product_type", "brand", "base_price",
         "compare_at_price", "status", "attributes", "tags", "media",
@@ -704,11 +878,19 @@ async def create_variant(
     user: User = Depends(require_seller),
     session: AsyncSession = Depends(get_session),
 ):
-    product = await _own_product(session, product_id, user.id)
+    product = await session.scalar(
+        select(Product)
+        .where(Product.id == product_id, Product.seller_id == user.id)
+        .with_for_update()
+    )
+    if not product:
+        raise HTTPException(status_code=404, detail="product_not_found")
     _validate_variant_prices(
         payload.price_override, payload.sale_price_override, product.base_price
     )
-    await _check_skus(session, [payload.sku])
+    sku = _normalize_sku(payload.sku)
+    option_values = _normalize_option_values(payload.option_values)
+    await _check_skus(session, [sku])
     variant_image_url = (
         await _resolve_media_reference(session, payload.media_id)
         if payload.media_id
@@ -718,8 +900,8 @@ async def create_variant(
         _validate_local_media_url(variant_image_url)
     variant = ProductVariant(
         product_id=product.id,
-        sku=payload.sku,
-        option_values=payload.option_values,
+        sku=sku,
+        option_values=option_values,
         stock_quantity=payload.stock_quantity,
         price_override=payload.price_override,
         sale_price_override=payload.sale_price_override,
@@ -732,7 +914,7 @@ async def create_variant(
         await session.commit()
     except IntegrityError:
         await session.rollback()
-        raise HTTPException(status_code=409, detail={"error": "sku_exists", "skus": [payload.sku]})
+        raise HTTPException(status_code=409, detail={"error": "sku_exists", "skus": [sku]})
     return await _product_payload(session, product)
 
 
@@ -743,11 +925,35 @@ async def update_variant(
     user: User = Depends(require_seller),
     session: AsyncSession = Depends(get_session),
 ):
-    variant = await _own_variant(session, variant_id, user.id)
+    variant_product_id = await session.scalar(
+        select(ProductVariant.product_id)
+        .join(Product, ProductVariant.product_id == Product.id)
+        .where(ProductVariant.id == variant_id, Product.seller_id == user.id)
+    )
+    if not variant_product_id:
+        raise HTTPException(status_code=404, detail="variant_not_found")
+    # Use the same product -> variant order as product-editor and inventory
+    # mutations so concurrent edits cannot deadlock.
+    product = await session.scalar(
+        select(Product)
+        .where(Product.id == variant_product_id, Product.seller_id == user.id)
+        .with_for_update()
+    )
+    variant = await session.scalar(
+        select(ProductVariant)
+        .where(
+            ProductVariant.id == variant_id,
+            ProductVariant.product_id == variant_product_id,
+        )
+        .with_for_update()
+    )
+    if not product or not variant:
+        raise HTTPException(status_code=404, detail="variant_not_found")
     data = payload.model_dump(exclude_unset=True)
-    if "sku" in data and data["sku"] != variant.sku:
-        await _check_skus(session, [data["sku"]], exclude_variant_id=variant.id)
-    product = await session.get(Product, variant.product_id)
+    if "sku" in data:
+        data["sku"] = _normalize_sku(data["sku"])
+        if data["sku"] != variant.sku:
+            await _check_skus(session, [data["sku"]], exclude_variant_id=variant.id)
     _validate_variant_prices(
         data.get("price_override", variant.price_override),
         data.get("sale_price_override", variant.sale_price_override),
@@ -757,6 +963,8 @@ async def update_variant(
         data["image_url"] = await _resolve_media_reference(session, data["media_id"])
     elif "image_url" in data:
         _validate_local_media_url(data["image_url"])
+    if "option_values" in data:
+        data["option_values"] = _normalize_option_values(data["option_values"])
     for field in ("sku", "option_values", "price_override", "sale_price_override", "media_id", "image_url", "is_active"):
         if field in data:
             setattr(variant, field, data[field])
@@ -775,13 +983,27 @@ async def update_inventory(
     user: User = Depends(require_seller),
     session: AsyncSession = Depends(get_session),
 ):
-    variant = await session.scalar(
-        select(ProductVariant)
+    variant_product_id = await session.scalar(
+        select(ProductVariant.product_id)
         .join(Product, ProductVariant.product_id == Product.id)
         .where(ProductVariant.id == variant_id, Product.seller_id == user.id)
+    )
+    if not variant_product_id:
+        raise HTTPException(status_code=404, detail="variant_not_found")
+    product = await session.scalar(
+        select(Product)
+        .where(Product.id == variant_product_id, Product.seller_id == user.id)
         .with_for_update()
     )
-    if not variant:
+    variant = await session.scalar(
+        select(ProductVariant)
+        .where(
+            ProductVariant.id == variant_id,
+            ProductVariant.product_id == variant_product_id,
+        )
+        .with_for_update()
+    )
+    if not product or not variant:
         raise HTTPException(status_code=404, detail="variant_not_found")
     reserved = await _reserved_quantities(session, [variant.id])
     active_reserved = reserved.get(variant.id, 0)

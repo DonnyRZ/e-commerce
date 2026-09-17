@@ -60,16 +60,36 @@ services:
       timeout: 5s
       retries: 20
 
+  cms:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.cms
+      args:
+        FRONTEND_TARGET: cms
+        PUBLIC_URL: /admin
+        REACT_APP_BACKEND_URL: ""
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1/ || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
   frontend:
     build:
       context: .
       dockerfile: frontend/Dockerfile
       args:
+        FRONTEND_TARGET: storefront
+        PUBLIC_URL: ""
         REACT_APP_BACKEND_URL: ""
     ports:
       - "8080:80"
     depends_on:
       backend:
+        condition: service_healthy
+      cms:
         condition: service_healthy
 
 volumes:

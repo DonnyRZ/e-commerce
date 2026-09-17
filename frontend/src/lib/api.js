@@ -159,8 +159,8 @@ export const addWishlistItem = (productId) =>
 export const removeWishlistItem = (productId) =>
   api.delete(`/v1/wishlist/items/${productId}`).then((r) => r.data);
 
-export const getCheckoutOptions = () =>
-  api.get("/v1/checkout/options").then((r) => r.data);
+export const getCheckoutOptions = ({ guest = false } = {}) =>
+  api.get("/v1/checkout/options", cartScopeConfig(guest)).then((r) => r.data);
 
 export const getTelegramInquiryStatus = () =>
   api.get("/v1/telegram/status").then((r) => r.data);
@@ -181,11 +181,13 @@ export const createTelegramCartInquiry = ({
     )
     .then((r) => r.data);
 
-export const getCheckoutQuote = (shippingMethod) =>
-  api.post("/v1/checkout/quote", { shipping_method: shippingMethod }).then((r) => r.data);
+export const getCheckoutQuote = (shippingMethod, { guest = false } = {}) =>
+  api
+    .post("/v1/checkout/quote", { shipping_method: shippingMethod }, cartScopeConfig(guest))
+    .then((r) => r.data);
 
-export const placeOrder = (data) =>
-  api.post("/v1/checkout/orders", data).then((r) => r.data);
+export const placeOrder = (data, { guest = false } = {}) =>
+  api.post("/v1/checkout/orders", data, cartScopeConfig(guest)).then((r) => r.data);
 
 export const trackOrder = (orderNumber, token) =>
   api.get("/v1/orders/track", { params: { order_number: orderNumber, token } }).then((r) => r.data);
@@ -210,6 +212,8 @@ export const getAdminProduct = (id) =>
   api.get(`/v1/admin/products/${id}`).then((r) => r.data);
 export const updateAdminProduct = (id, data) =>
   api.patch(`/v1/admin/products/${id}`, data).then((r) => r.data);
+export const saveAdminProductEditor = (id, data) =>
+  api.put(`/v1/admin/products/${id}/editor`, data).then((r) => r.data);
 export const createAdminVariant = (productId, data) =>
   api.post(`/v1/admin/products/${productId}/variants`, data).then((r) => r.data);
 export const updateAdminVariant = (id, data) =>

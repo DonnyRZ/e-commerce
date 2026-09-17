@@ -7,10 +7,14 @@ fixture restores the known seed stock for the variants used across suites.
 
 import asyncio
 import os
+from pathlib import Path
 
 import asyncpg
+from dotenv import load_dotenv
 
 import pytest
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env.test", override=False)
 
 DB_URL = os.environ.get(
     "TEST_DATABASE_URL",

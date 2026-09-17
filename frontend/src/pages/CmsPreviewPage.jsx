@@ -6,6 +6,7 @@ import { getCmsPreviewEntry } from "@/lib/api";
 import { mediaUrl, pickCmsLocalized } from "@/lib/localize";
 import { cmsTypeLabel } from "@/pages/admin/cmsContentSchema";
 import { Skeleton } from "@/components/ui/skeleton";
+import ImageWithFallback from "@/components/common/ImageWithFallback";
 
 function PreviewLink({ href, children, className = "" }) {
   if (!href) return null;
@@ -27,7 +28,7 @@ function PreviewBody({ entry, locale }) {
 
   if (entry.content_type === "hero") return (
     <section className="relative isolate flex min-h-[28rem] items-end overflow-hidden bg-[#02422C] text-white sm:min-h-[36rem]" data-testid="cms-preview-hero">
-      {image ? <img src={image} alt={imageAlt} className="absolute inset-0 h-full w-full object-cover" /> : null}
+      {image ? <ImageWithFallback src={image} alt={imageAlt} className="absolute inset-0 h-full w-full object-cover" /> : null}
       <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/15 to-transparent" />
       <div className="relative max-w-3xl px-6 pb-10 pt-24 sm:px-12 sm:pb-14">
         {eyebrow ? <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#E7C77E]">{eyebrow}</p> : null}
@@ -40,7 +41,7 @@ function PreviewBody({ entry, locale }) {
 
   if (entry.content_type === "banner") return (
     <section className="relative isolate flex min-h-72 items-center overflow-hidden rounded-xl bg-[#02422C] text-white" data-testid="cms-preview-banner">
-      {image ? <img src={image} alt={imageAlt} className="absolute inset-0 h-full w-full object-cover" /> : null}
+      {image ? <ImageWithFallback src={image} alt={imageAlt} className="absolute inset-0 h-full w-full object-cover" /> : null}
       <div className="absolute inset-0 bg-gradient-to-r from-[#02422C]/95 via-[#02422C]/65 to-transparent" />
       <div className="relative max-w-xl px-7 py-10 sm:px-12"><p className="text-xs font-bold uppercase tracking-[0.2em] text-[#E7C77E]">{eyebrow || "Promosi"}</p><h1 className="mt-2 font-brand text-3xl font-semibold sm:text-4xl">{title}</h1>{description ? <p className="mt-3 text-sm leading-6 text-white/80">{description}</p> : null}{cta ? <PreviewLink href={entry.cta_url} className="mt-5 inline-flex items-center border-b border-[#CD9B3A] pb-1 text-xs font-bold uppercase tracking-wider">{cta}<ArrowUpRight className="ml-2 h-4 w-4" /></PreviewLink> : null}</div>
     </section>
@@ -54,12 +55,12 @@ function PreviewBody({ entry, locale }) {
 
   if (entry.content_type === "footer_text" || entry.content_type === "homepage_section") return <section className="rounded-xl border border-[#E9E3D7] bg-[#FDFBF6] p-8 text-center" data-testid={`cms-preview-${entry.content_type}`}><p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#8A6420]">{entry.content_type === "footer_text" ? entry.placement === "home_stories" ? "Judul bagian cerita" : "Teks promosi footer" : `Urutan beranda · ${entry.sort_order + 1}`}</p><h1 className="mt-2 font-brand text-3xl font-semibold text-[#17392C]">{title}</h1>{description ? <p className="mt-3 text-sm text-stone-600">{description}</p> : null}</section>;
 
-  if (entry.content_type === "department_visual") return <article className="max-w-sm overflow-hidden rounded-xl border border-[#E9E3D7] bg-white" data-testid="cms-preview-department-visual">{image ? <img src={image} alt={imageAlt} className="aspect-[4/5] w-full object-cover" /> : <div className="flex aspect-[4/5] items-center justify-center bg-stone-100 text-stone-400"><ImageOff className="h-8 w-8" /></div>}<div className="p-4"><h1 className="font-semibold text-[#17392C]">{imageAlt || entry.slug}</h1><p className="mt-1 text-xs text-stone-500">Departemen: {entry.slug}</p></div></article>;
+  if (entry.content_type === "department_visual") return <article className="max-w-sm overflow-hidden rounded-xl border border-[#E9E3D7] bg-white" data-testid="cms-preview-department-visual">{image ? <ImageWithFallback src={image} alt={imageAlt} className="aspect-[4/5] w-full object-cover" /> : <div className="flex aspect-[4/5] items-center justify-center bg-stone-100 text-stone-400"><ImageOff className="h-8 w-8" /></div>}<div className="p-4"><h1 className="font-semibold text-[#17392C]">{imageAlt || entry.slug}</h1><p className="mt-1 text-xs text-stone-500">Departemen: {entry.slug}</p></div></article>;
 
   if (entry.content_type === "faq_item") return <details open className="rounded-xl border border-[#E9E3D7] bg-white p-5" data-testid="cms-preview-faq"><summary className="cursor-pointer list-none text-base font-semibold text-[#17392C]">{title}</summary><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-stone-600">{body}</p></details>;
 
   return <article className="mx-auto max-w-3xl rounded-xl border border-[#E9E3D7] bg-white p-6 sm:p-10" data-testid={`cms-preview-${entry.content_type}`}>
-    {image ? <img src={image} alt={imageAlt} className="mb-7 max-h-[28rem] w-full rounded-lg object-cover" /> : null}
+    {image ? <ImageWithFallback src={image} alt={imageAlt} className="mb-7 max-h-[28rem] w-full rounded-lg object-cover" /> : null}
     {eyebrow ? <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#8A6420]">{eyebrow}</p> : null}
     <h1 className="mt-2 font-brand text-3xl font-semibold text-[#17392C] sm:text-4xl">{title}</h1>
     {subtitle ? <p className="mt-3 text-base text-stone-500">{subtitle}</p> : null}

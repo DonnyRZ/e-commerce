@@ -14,7 +14,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import COOKIE_SAMESITE, COOKIE_SECURE, csrf_protect, decode_token, require_roles
@@ -31,10 +31,22 @@ from db.models import (
 )
 from db.session import get_session
 from media import media_item_url
+from taxonomy import active_taxonomy_chain
 
 router = APIRouter(prefix="/api/v1", tags=["shop"])
 
 GUEST_COOKIE = "guest_cart_token"
+DEMO_CART_MAX_QUANTITY = 10
+
+
+def _positive_quantity(value) -> int:
+    """Normalize legacy cart integers without allowing bool/negative values."""
+
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        else 0
+    )
 
 
 # --------------------------------------------------------------------------
@@ -45,6 +57,10 @@ GUEST_COOKIE = "guest_cart_token"
 async def _optional_user(request: Request, session: AsyncSession) -> Optional[User]:
     token = request.cookies.get("access_token")
     if not token:
+        header = request.headers.get("Authorization", "")
+        if header.startswith("Bearer "):
+            token = header[7:].strip()
+    if not token:
         return None
     # A present-but-invalid access token is not a guest session. Return 401 so
     # the client can refresh it (or clear a revoked session) instead of
@@ -54,7 +70,10 @@ async def _optional_user(request: Request, session: AsyncSession) -> Optional[Us
     if not user or not user.is_active or payload.get("ver", 0) != user.token_version:
         raise HTTPException(status_code=401, detail="session_expired")
     if user.role != "customer":
-        return None
+        # An authenticated operator/seller must never be silently downgraded
+        # to a guest cart. That would let a non-customer session create and
+        # mutate state on a customer-facing surface by omission.
+        raise HTTPException(status_code=403, detail="forbidden")
     return user
 
 
@@ -70,6 +89,25 @@ async def _find_cart(request: Request, session: AsyncSession, user: Optional[Use
 async def _get_or_create_cart(
     request: Request, response: Response, session: AsyncSession, user: Optional[User]
 ) -> Cart:
+    if user:
+        # Serialize the read-then-create path. The partial unique index still
+        # protects integrity, but the lock avoids leaking an IntegrityError to
+        # a legitimate pair of concurrent first-add requests.
+        await session.scalar(
+            select(User.id).where(User.id == user.id).with_for_update()
+        )
+    guest_token = request.cookies.get(GUEST_COOKIE) if not user else None
+    if guest_token:
+        # A guest cart has no user row to act as a serialization point. Lock
+        # on the opaque token before the read-then-create path so two tabs
+        # using an existing guest cookie cannot create duplicate carts.
+        await session.scalar(
+            select(
+                func.pg_advisory_xact_lock(
+                    func.hashtext(f"cart:guest:{guest_token}")
+                )
+            )
+        )
     cart = await _find_cart(request, session, user)
     if cart:
         return cart
@@ -103,6 +141,9 @@ async def _cart_payload(session: AsyncSession, cart: Optional[Cart]) -> dict:
     items = []
     subtotal = 0
     for row in rows:
+        raw_quantity = row.quantity
+        quantity = _positive_quantity(raw_quantity)
+        quantity_is_valid = quantity >= 1
         product = (
             await session.execute(
                 select(Product).where(Product.id == row.product_id)
@@ -130,40 +171,70 @@ async def _cart_payload(session: AsyncSession, cart: Optional[Cart]) -> dict:
             if product
             else None
         )
-        if not product or not variant or not category:
+        category_is_public = bool(
+            category and await active_taxonomy_chain(session, category)
+        )
+        is_demo = bool(
+            product
+            and product.is_demo
+            and variant
+            and variant.product_id == product.id
+            and variant.is_active
+            and product.status == "active"
+            and category_is_public
+        )
+        if (
+            not quantity_is_valid
+            or
+            not product
+            or not variant
+            or variant.product_id != product.id
+            or not category_is_public
+            or product.status != "active"
+            or not variant.is_active
+        ):
             unit_price = 0
             compare_at = None
-            availability = "unavailable"
+            availability = "invalid" if not quantity_is_valid else "unavailable"
             stock = 0
             sku = ""
             options = {}
             image = None
         else:
+            regular_price = (
+                variant.price_override
+                if variant.price_override is not None
+                else product.base_price
+            )
             unit_price = (
                 variant.sale_price_override
-                or variant.price_override
-                or product.base_price
+                if variant.sale_price_override is not None
+                else regular_price
             )
             compare_at = (
-                (variant.price_override or product.base_price)
-                if variant.sale_price_override
+                regular_price
+                if variant.sale_price_override is not None
                 else product.compare_at_price
             )
-            stock = variant.stock_quantity
+            stock = max(int(variant.stock_quantity or 0), 0)
             sku = variant.sku
             options = variant.option_values or {}
             image = variant.image_url or media_item_url((product.media or [None])[0])
             if not variant.is_active or product.status != "active" or not category:
                 availability = "unavailable"
+            elif product.is_demo:
+                # Demo catalog entries are intentionally not stock-backed. They
+                # are still useful for cart and UI QA while checkout is closed.
+                availability = "demo"
             elif stock <= 0:
                 availability = "out_of_stock"
-            elif row.quantity > stock:
+            elif quantity > stock:
                 availability = "exceeds_stock"
             elif stock <= 5:
                 availability = "low_stock"
             else:
                 availability = "in_stock"
-        subtotal += unit_price * row.quantity
+        subtotal += unit_price * quantity
         items.append(
             {
                 "id": row.id,
@@ -175,12 +246,14 @@ async def _cart_payload(session: AsyncSession, cart: Optional[Cart]) -> dict:
                 "image_url": image,
                 "option_values": options,
                 "sku": sku,
-                "quantity": row.quantity,
+                "quantity": quantity,
                 "unit_price": unit_price,
                 "compare_at_price": compare_at,
-                "line_total": unit_price * row.quantity,
+                "line_total": unit_price * quantity,
                 "stock_quantity": stock,
                 "availability": availability,
+                "is_demo": is_demo,
+                "cart_max_quantity": DEMO_CART_MAX_QUANTITY if is_demo else stock,
             }
         )
     return {
@@ -188,12 +261,17 @@ async def _cart_payload(session: AsyncSession, cart: Optional[Cart]) -> dict:
         "items": items,
         "subtotal": subtotal,
         "currency": "UZS",
-        "item_count": sum(i["quantity"] for i in items),
+        "item_count": sum(max(i["quantity"], 0) for i in items),
     }
 
 
 async def _owned_cart_item(
-    item_id: str, request: Request, session: AsyncSession, user: Optional[User]
+    item_id: str,
+    request: Request,
+    session: AsyncSession,
+    user: Optional[User],
+    *,
+    lock: bool = False,
 ) -> CartItem:
     item = await session.get(CartItem, item_id)
     if not item:
@@ -205,6 +283,20 @@ async def _owned_cart_item(
         ok = cart and cart.guest_token and cart.guest_token == request.cookies.get(GUEST_COOKIE)
     if not ok:
         raise HTTPException(status_code=404, detail="item_not_found")
+    if lock:
+        # All cart mutations use the cart row as the serialization point. The
+        # item is re-read after the lock so an overlapping delete cannot cause
+        # a stale quantity update or a lost update.
+        locked_cart = await session.scalar(
+            select(Cart).where(Cart.id == cart.id).with_for_update()
+        )
+        item = await session.scalar(
+            select(CartItem)
+            .where(CartItem.id == item_id, CartItem.cart_id == locked_cart.id)
+            .with_for_update()
+        ) if locked_cart else None
+        if not item:
+            raise HTTPException(status_code=404, detail="item_not_found")
     return item
 
 
@@ -247,41 +339,81 @@ async def add_cart_item(
     product = await session.get(Product, payload.product_id)
     if not product or product.status != "active":
         raise HTTPException(status_code=404, detail="product_not_found")
-    # Showcase products remain addable so visitors can exercise the cart while
-    # checkout is disabled. The checkout service still rejects demo products,
-    # and the checkout endpoints are currently fail-closed, so this can never
-    # create a sellable order.
-    category = await session.scalar(
-        select(Category).where(
-            Category.id == product.category_id,
-            Category.kind == "category",
-            Category.is_active.is_(True),
-        )
+    cart = await _get_or_create_cart(request, response, session, user)
+    # Row lock on the cart prevents racing same-variant merges.
+    locked_cart = await session.scalar(
+        select(Cart).where(Cart.id == cart.id).with_for_update()
     )
-    if not category:
+    if not locked_cart:
+        # A login merge can delete a guest cart after the initial lookup. Do
+        # not continue with a detached cart object and risk a misleading
+        # foreign-key error or an item written to the wrong cart.
+        raise HTTPException(status_code=409, detail="cart_changed")
+    cart = locked_cart
+    # Showcase products remain addable so visitors can exercise the cart while
+    # checkout is disabled. Re-read all catalog rows after the cart lock so a
+    # concurrent admin edit cannot leave a newly-added item pointing at an
+    # inactive product, variant, or taxonomy chain.
+    product = await session.scalar(
+        select(Product).where(Product.id == payload.product_id).with_for_update()
+    )
+    category = (
+        await session.scalar(
+            select(Category)
+            .where(Category.id == product.category_id)
+            .with_for_update()
+        )
+        if product
+        else None
+    )
+    variant = await session.scalar(
+        select(ProductVariant)
+        .where(
+            ProductVariant.id == payload.variant_id,
+            ProductVariant.product_id == payload.product_id,
+        )
+        .with_for_update()
+    )
+    if (
+        not product
+        or product.status != "active"
+        or not category
+        or category.kind != "category"
+        or not category.is_active
+        or not await active_taxonomy_chain(session, category, lock=True)
+    ):
         raise HTTPException(status_code=404, detail="product_not_found")
-    variant = await session.get(ProductVariant, payload.variant_id)
-    if not variant or variant.product_id != product.id or not variant.is_active:
+    if not variant or not variant.is_active:
         raise HTTPException(status_code=400, detail="invalid_variant")
-    if variant.stock_quantity <= 0:
+    available_stock = max(int(variant.stock_quantity or 0), 0)
+    if available_stock <= 0 and not product.is_demo:
         raise HTTPException(
             status_code=400,
             detail={"error": "insufficient_stock", "available": 0},
         )
-    cart = await _get_or_create_cart(request, response, session, user)
-    # Row lock on the cart prevents racing same-variant merges.
-    await session.scalar(select(Cart.id).where(Cart.id == cart.id).with_for_update())
     existing = await session.scalar(
         select(CartItem).where(
             CartItem.cart_id == cart.id, CartItem.variant_id == variant.id
         )
     )
-    current = existing.quantity if existing else 0
+    if existing and existing.product_id != product.id:
+        raise HTTPException(status_code=409, detail="cart_item_conflict")
+    current = _positive_quantity(existing.quantity) if existing else 0
     new_qty = current + payload.quantity
-    if new_qty > variant.stock_quantity:
+    max_quantity = DEMO_CART_MAX_QUANTITY if product.is_demo else available_stock
+    if new_qty > max_quantity:
+        if product.is_demo:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "demo_quantity_limit",
+                    "available": DEMO_CART_MAX_QUANTITY,
+                    "in_cart": current,
+                },
+            )
         raise HTTPException(
             status_code=400,
-            detail={"error": "insufficient_stock", "available": variant.stock_quantity, "in_cart": current},
+            detail={"error": "insufficient_stock", "available": available_stock, "in_cart": current},
         )
     if existing:
         existing.quantity = new_qty
@@ -308,12 +440,53 @@ async def update_cart_item(
     _: None = Depends(csrf_protect),
 ):
     user = None if guest else await _optional_user(request, session)
-    item = await _owned_cart_item(item_id, request, session, user)
-    variant = await session.get(ProductVariant, item.variant_id)
-    if variant and payload.quantity > variant.stock_quantity:
+    item = await _owned_cart_item(item_id, request, session, user, lock=True)
+    product = await session.scalar(
+        select(Product).where(Product.id == item.product_id).with_for_update()
+    )
+    category = (
+        await session.scalar(
+            select(Category)
+            .where(Category.id == product.category_id)
+            .with_for_update()
+        )
+        if product
+        else None
+    )
+    if (
+        not category
+        or category.kind != "category"
+        or not category.is_active
+        or not await active_taxonomy_chain(session, category, lock=True)
+    ):
+        raise HTTPException(status_code=404, detail="item_not_found")
+    variant = await session.scalar(
+        select(ProductVariant)
+        .where(
+            ProductVariant.id == item.variant_id,
+            ProductVariant.product_id == item.product_id,
+        )
+        .with_for_update()
+    )
+    if (
+        not product
+        or product.status != "active"
+        or not variant
+        or variant.product_id != product.id
+        or not variant.is_active
+    ):
+        raise HTTPException(status_code=404, detail="item_not_found")
+    available_stock = max(int(variant.stock_quantity or 0), 0)
+    max_quantity = DEMO_CART_MAX_QUANTITY if product.is_demo else available_stock
+    if payload.quantity > max_quantity:
+        if product.is_demo:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "demo_quantity_limit", "available": DEMO_CART_MAX_QUANTITY},
+            )
         raise HTTPException(
             status_code=400,
-            detail={"error": "insufficient_stock", "available": variant.stock_quantity},
+            detail={"error": "insufficient_stock", "available": available_stock},
         )
     item.quantity = payload.quantity
     await session.commit()
@@ -330,7 +503,7 @@ async def remove_cart_item(
     _: None = Depends(csrf_protect),
 ):
     user = None if guest else await _optional_user(request, session)
-    item = await _owned_cart_item(item_id, request, session, user)
+    item = await _owned_cart_item(item_id, request, session, user, lock=True)
     await session.delete(item)
     await session.commit()
     return None
@@ -346,8 +519,14 @@ async def clear_cart(
     user = None if guest else await _optional_user(request, session)
     cart = await _find_cart(request, session, user)
     if cart:
-        await session.execute(delete(CartItem).where(CartItem.cart_id == cart.id))
-        await session.commit()
+        locked_cart = await session.scalar(
+            select(Cart).where(Cart.id == cart.id).with_for_update()
+        )
+        if locked_cart:
+            await session.execute(
+                delete(CartItem).where(CartItem.cart_id == locked_cart.id)
+            )
+            await session.commit()
     return None
 
 
@@ -359,42 +538,96 @@ async def merge_guest_cart(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
+    # Keep the lock order deterministic (user -> guest cart -> user cart) so a
+    # simultaneous login merge and cart mutation cannot deadlock.
+    await session.scalar(select(User.id).where(User.id == user.id).with_for_update())
     token = request.cookies.get(GUEST_COOKIE)
     guest_cart = (
-        await session.scalar(select(Cart).where(Cart.guest_token == token))
+        await session.scalar(
+            select(Cart).where(Cart.guest_token == token).with_for_update()
+        )
         if token
         else None
     )
     if not guest_cart:
-        user_cart = await session.scalar(select(Cart).where(Cart.user_id == user.id))
+        user_cart = await session.scalar(
+            select(Cart).where(Cart.user_id == user.id).with_for_update()
+        )
         return {**(await _cart_payload(session, user_cart)), "adjustments": []}
 
-    user_cart = await session.scalar(select(Cart).where(Cart.user_id == user.id))
+    user_cart = await session.scalar(
+        select(Cart).where(Cart.user_id == user.id).with_for_update()
+    )
     if not user_cart:
         user_cart = Cart(user_id=user.id)
         session.add(user_cart)
         await session.flush()
-    await session.scalar(select(Cart.id).where(Cart.id == user_cart.id).with_for_update())
-
     adjustments = []
     guest_items = (
-        await session.execute(select(CartItem).where(CartItem.cart_id == guest_cart.id))
+        await session.execute(
+            select(CartItem)
+            .where(CartItem.cart_id == guest_cart.id)
+            .with_for_update()
+        )
     ).scalars().all()
     for g in guest_items:
-        variant = await session.get(ProductVariant, g.variant_id)
-        if not variant or not variant.is_active or variant.stock_quantity <= 0:
-            adjustments.append({"variant_id": g.variant_id, "requested": g.quantity, "applied": 0})
+        guest_quantity = _positive_quantity(g.quantity)
+        if guest_quantity < 1:
+            adjustments.append(
+                {"variant_id": g.variant_id, "requested": guest_quantity, "applied": 0}
+            )
+            continue
+        product = await session.scalar(
+            select(Product).where(Product.id == g.product_id).with_for_update()
+        )
+        category = (
+            await session.scalar(
+                select(Category)
+                .where(Category.id == product.category_id)
+                .with_for_update()
+            )
+            if product
+            else None
+        )
+        variant = await session.scalar(
+            select(ProductVariant)
+            .where(
+                ProductVariant.id == g.variant_id,
+                ProductVariant.product_id == g.product_id,
+            )
+            .with_for_update()
+        )
+        if (
+            not product
+            or product.status != "active"
+            or not variant
+            or variant.product_id != product.id
+            or not variant.is_active
+            or not category
+            or category.kind != "category"
+            or not category.is_active
+            or not await active_taxonomy_chain(session, category, lock=True)
+            or (not product.is_demo and max(int(variant.stock_quantity or 0), 0) <= 0)
+        ):
+            adjustments.append(
+                {"variant_id": g.variant_id, "requested": guest_quantity, "applied": 0}
+            )
             continue
         existing = await session.scalar(
             select(CartItem).where(
                 CartItem.cart_id == user_cart.id, CartItem.variant_id == g.variant_id
             )
         )
-        merged = (existing.quantity if existing else 0) + g.quantity
-        applied = min(merged, variant.stock_quantity)
+        existing_quantity = _positive_quantity(existing.quantity) if existing else 0
+        merged = existing_quantity + guest_quantity
+        available_stock = max(int(variant.stock_quantity or 0), 0)
+        max_quantity = DEMO_CART_MAX_QUANTITY if product.is_demo else available_stock
+        applied = min(merged, max_quantity)
         if applied != merged:
             adjustments.append({"variant_id": g.variant_id, "requested": merged, "applied": applied})
         if existing:
+            if existing.product_id != product.id:
+                existing.product_id = product.id
             existing.quantity = applied
         else:
             session.add(
@@ -421,6 +654,10 @@ class WishlistItemIn(BaseModel):
 
 
 async def _get_or_create_wishlist(session: AsyncSession, user: User) -> Wishlist:
+    # Wishlist creation and item insertion are protected by the same owner
+    # lock. This keeps the database uniqueness rule from surfacing as a 500
+    # when two browser tabs add the first item at the same time.
+    await session.scalar(select(User.id).where(User.id == user.id).with_for_update())
     wishlist = await session.scalar(select(Wishlist).where(Wishlist.user_id == user.id))
     if not wishlist:
         wishlist = Wishlist(user_id=user.id)
@@ -443,7 +680,19 @@ async def _wishlist_payload(session: AsyncSession, user: User) -> dict:
     items = []
     for row in rows:
         product = await session.get(Product, row.product_id)
-        if not product:
+        if not product or product.status != "active":
+            continue
+        category = await session.scalar(
+            select(Category).where(
+                Category.id == product.category_id,
+                Category.kind == "category",
+                Category.is_active.is_(True),
+            )
+        )
+        # A product can be unpublished after it was saved. Do not return
+        # private/dangling catalog data that would render a broken public
+        # product link; the wishlist row remains harmless historical state.
+        if not category or not await active_taxonomy_chain(session, category):
             continue
         trs = (
             await session.execute(
@@ -452,12 +701,6 @@ async def _wishlist_payload(session: AsyncSession, user: User) -> dict:
                 )
             )
         ).scalars().all()
-        stock = await session.scalar(
-            select(ProductVariant.stock_quantity).where(
-                ProductVariant.product_id == product.id,
-                ProductVariant.is_active.is_(True),
-            )
-        )
         total_stock = (
             await session.execute(
                 select(ProductVariant.stock_quantity).where(
@@ -466,7 +709,7 @@ async def _wishlist_payload(session: AsyncSession, user: User) -> dict:
                 )
             )
         ).scalars().all()
-        total = sum(total_stock)
+        total = sum(max(int(stock or 0), 0) for stock in total_stock)
         items.append(
             {
                 "product_id": product.id,
@@ -497,7 +740,9 @@ async def add_wishlist_item(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    product = await session.get(Product, payload.product_id)
+    product = await session.scalar(
+        select(Product).where(Product.id == payload.product_id).with_for_update()
+    )
     if not product or product.status != "active":
         raise HTTPException(status_code=404, detail="product_not_found")
     category = await session.scalar(
@@ -507,7 +752,7 @@ async def add_wishlist_item(
             Category.is_active.is_(True),
         )
     )
-    if not category:
+    if not category or not await active_taxonomy_chain(session, category):
         raise HTTPException(status_code=404, detail="product_not_found")
     wishlist = await _get_or_create_wishlist(session, user)
     existing = await session.scalar(
@@ -529,7 +774,12 @@ async def remove_wishlist_item(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    wishlist = await session.scalar(select(Wishlist).where(Wishlist.user_id == user.id))
+    # Match add/create locking so a concurrent toggle cannot be overwritten
+    # by a stale read of the wishlist row.
+    await session.scalar(select(User.id).where(User.id == user.id).with_for_update())
+    wishlist = await session.scalar(
+        select(Wishlist).where(Wishlist.user_id == user.id).with_for_update()
+    )
     if wishlist:
         await session.execute(
             delete(WishlistItem).where(
