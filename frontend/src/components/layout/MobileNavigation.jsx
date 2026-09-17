@@ -2,8 +2,9 @@ import { Link } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { LOCALE_LABELS, SUPPORTED_LOCALES, useI18n } from "@/i18n";
-import { getDepartments } from "@/lib/api";
+import { getCatalogTree } from "@/lib/api";
 import { pickLocalized } from "@/lib/localize";
+import { taxonomyLabel } from "@/lib/taxonomy";
 import {
   Sheet,
   SheetClose,
@@ -12,6 +13,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import BrandLogo from "@/components/brand/BrandLogo";
 
 const QUICK_LINKS = [
   { key: "nav.newArrivals", to: "/shop?badge=new" },
@@ -28,9 +30,9 @@ const ACCOUNT_LINKS = [
 
 export default function MobileNavigation() {
   const { locale, setLocale, t } = useI18n();
-  const { data: departments = [] } = useQuery({
-    queryKey: ["departments"],
-    queryFn: getDepartments,
+  const { data: catalogTree = [] } = useQuery({
+    queryKey: ["catalog-tree"],
+    queryFn: getCatalogTree,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -50,7 +52,7 @@ export default function MobileNavigation() {
       <SheetContent side="left" className="w-72 overflow-y-auto p-0" data-testid="mobile-menu">
         <SheetTitle className="sr-only">{t("brand.name")}</SheetTitle>
         <div className="flex items-center justify-between border-b px-4 py-3">
-          <span className="text-sm font-extrabold tracking-widest">{t("brand.name")}</span>
+          <BrandLogo size="sm" to="/" testId="mobile-brand-logo" priority />
           <SheetClose asChild>
             <Button
               variant="ghost"
@@ -63,16 +65,54 @@ export default function MobileNavigation() {
           </SheetClose>
         </div>
         <nav className="flex flex-col px-4 py-2" aria-label="Departments">
-          {departments.map((dept) => (
-            <SheetClose asChild key={dept.id}>
-              <Link
-                to={`/shop?department=${dept.slug}`}
-                data-testid={`mobile-nav-${dept.slug}`}
-                className="border-b border-border py-3 text-sm font-semibold hover:text-primary"
-              >
-                {pickLocalized(dept.translations, locale)}
-              </Link>
-            </SheetClose>
+          {catalogTree.map((dept) => (
+            <div key={dept.id} className="border-b border-border py-2" data-testid={`mobile-nav-group-${dept.slug}`}>
+              <SheetClose asChild>
+                <Link
+                  to={`/shop?department=${dept.slug}`}
+                  data-testid={`mobile-nav-${dept.slug}`}
+                  className="block py-2 text-sm font-semibold hover:text-primary"
+                >
+                  {taxonomyLabel(dept, locale, pickLocalized)}
+                </Link>
+              </SheetClose>
+              {(dept.children || []).length ? (
+                <div className="pb-1 pl-3">
+                  {dept.children.map((node) => (
+                    node.kind === "group" ? (
+                      <details key={node.id} className="border-l border-border pl-3">
+                        <summary className="cursor-pointer py-2 text-xs font-semibold uppercase tracking-wide text-primary" data-testid={`mobile-nav-parent-${node.slug}`}>
+                          {taxonomyLabel(node, locale, pickLocalized)}
+                        </summary>
+                        <div className="flex flex-col pb-1">
+                          {(node.children || []).map((category) => (
+                            <SheetClose asChild key={category.id}>
+                              <Link
+                                to={`/shop?category=${category.slug}`}
+                                data-testid={`mobile-nav-category-${category.slug}`}
+                                className="py-1.5 text-sm text-muted-foreground hover:text-primary"
+                              >
+                                {taxonomyLabel(category, locale, pickLocalized)}
+                              </Link>
+                            </SheetClose>
+                          ))}
+                        </div>
+                      </details>
+                    ) : (
+                      <SheetClose asChild key={node.id}>
+                        <Link
+                          to={`/shop?category=${node.slug}`}
+                          data-testid={`mobile-nav-category-${node.slug}`}
+                          className="block py-1.5 text-sm text-muted-foreground hover:text-primary"
+                        >
+                          {taxonomyLabel(node, locale, pickLocalized)}
+                        </Link>
+                      </SheetClose>
+                    )
+                  ))}
+                </div>
+              ) : null}
+            </div>
           ))}
         </nav>
         <nav className="flex flex-col px-4 py-2" aria-label="Quick links">

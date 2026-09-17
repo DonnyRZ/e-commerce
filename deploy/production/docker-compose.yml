@@ -1,0 +1,133 @@
+name: marketplace
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    networks:
+      - marketplace
+
+  # Run this service once per release, before backend receives traffic:
+  # docker compose --profile migration run --rm migrate
+  migrate:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    env_file:
+      - /etc/marketplace/marketplace.env
+    command: ["alembic", "upgrade", "head"]
+    extra_hosts:
+      # The VPS default bridge (the host-gateway target) is link-down. The
+      # fixed private Marketplace bridge gateway is the host PostgreSQL hop.
+      - "host.docker.internal:172.30.0.1"
+    volumes:
+      - /var/lib/marketplace/media:/app/uploads
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - marketplace
+    profiles:
+      - migration
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - /etc/marketplace/marketplace.env
+    command:
+      [
+        "uvicorn",
+        "server:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--workers",
+        "1",
+        "--proxy-headers",
+        "--forwarded-allow-ips",
+        "*",
+      ]
+    expose:
+      - "8000"
+    extra_hosts:
+      - "host.docker.internal:172.30.0.1"
+    volumes:
+      - /var/lib/marketplace/media:/app/uploads
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; request = urllib.request.Request('http://localhost:8000/api/health', headers={'Host': 'shanicantik.com', 'X-Forwarded-Proto': 'https'}); response = urllib.request.urlopen(request, timeout=3); assert response.status == 200\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - marketplace
+
+  cms:
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile.cms
+      args:
+        FRONTEND_TARGET: cms
+        PUBLIC_URL: /admin
+        REACT_APP_BACKEND_URL: ""
+    restart: unless-stopped
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - marketplace
+
+  storefront:
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+      args:
+        FRONTEND_TARGET: storefront
+        PUBLIC_URL: ""
+        REACT_APP_BACKEND_URL: ""
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+      cms:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider --quiet http://127.0.0.1/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - marketplace
+
+networks:
+  marketplace:
+    name: marketplace_network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

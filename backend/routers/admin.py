@@ -8,25 +8,26 @@ No payment secrets are ever exposed; payment events are sanitized.
 """
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import csrf_protect, require_roles
-from cms.service import audit
+from cms.service import audit, media_url
 from config import (
     BASE_CURRENCY,
-    CLICK_MODE,
+    CHECKOUT_ENABLED,
     INVENTORY_RESERVATION_TTL_MINUTES,
     SHIPPING_PROVIDER,
 )
 from db.models import (
     Category,
     CategoryTranslation,
+    CmsMediaAsset,
     Order,
     OrderItem,
     Payment,
@@ -38,8 +39,6 @@ from db.models import (
     User,
 )
 from db.session import get_session
-from payments.providers import get_provider
-from payments.service import PaymentService
 from routers.seller import (
     InventoryIn,
     ProductCreateIn,
@@ -51,10 +50,15 @@ from routers.seller import (
     _product_payload,
     _stock_state,
     _validate_category,
+    _validate_local_media_url,
     _validate_media,
+    _validate_price_order,
+    _validate_product_type,
+    _validate_variant_prices,
     _validate_translations,
 )
 from checkout.service import _reserved_quantities
+from taxonomy import TAXONOMY_KINDS, descendant_ids_select, get_root_category
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -74,6 +78,28 @@ async def _store_owner_id(session: AsyncSession, admin_id: str) -> str:
         select(User).where(User.email == "official@muslimahcantik.id")
     )
     return owner.id if owner else admin_id
+
+
+async def _resolve_media_url(session: AsyncSession, media_id: Optional[str]) -> Optional[str]:
+    """Validate a CMS asset reference and resolve its local browser URL."""
+    if not media_id:
+        return None
+    asset = await session.get(CmsMediaAsset, media_id)
+    if not asset:
+        _bad_request("invalid_media")
+    return await media_url(session, asset)
+
+
+async def _normalize_product_media(session: AsyncSession, media: list[dict]) -> list[dict]:
+    """Make media_id authoritative while retaining legacy URL compatibility."""
+    _validate_media(media)
+    normalized = []
+    for raw in media:
+        item = dict(raw or {})
+        if item.get("media_id"):
+            item["url"] = await _resolve_media_url(session, item["media_id"])
+        normalized.append(item)
+    return normalized
 
 
 # ------------------------------ dashboard -----------------------------------
@@ -227,6 +253,7 @@ async def admin_list_products(
                 "slug": product.slug,
                 "name": names.get(locale) or names.get("en") or product.slug,
                 "status": product.status,
+                "is_demo": product.is_demo,
                 "base_price": product.base_price,
                 "category_id": product.category_id,
                 "brand": product.brand,
@@ -246,10 +273,16 @@ async def admin_create_product(
     _: None = Depends(csrf_protect),
 ):
     _validate_translations(payload.translations, require_en=True)
-    _validate_media(payload.media)
+    _validate_product_type(payload.product_type)
+    normalized_media = await _normalize_product_media(session, payload.media)
     if payload.status not in ("draft", "active", "inactive"):
         _bad_request("invalid_status")
-    await _validate_category(session, payload.category_id)
+    await _validate_category(session, payload.category_id, payload.product_type)
+    _validate_price_order(payload.base_price, payload.compare_at_price)
+    for variant in payload.variants:
+        _validate_variant_prices(
+            variant.price_override, variant.sale_price_override, payload.base_price
+        )
     await _check_skus(session, [v.sku for v in payload.variants])
     import uuid as _uuid
     import re as _re
@@ -266,7 +299,7 @@ async def admin_create_product(
         status=payload.status,
         attributes=payload.attributes,
         tags=payload.tags,
-        media=payload.media,
+        media=normalized_media,
     )
     session.add(product)
     await session.flush()
@@ -276,21 +309,25 @@ async def admin_create_product(
                 short_description=tr.short_description, description=tr.description)
         )
     for v in payload.variants:
+        variant_image_url = await _resolve_media_url(session, v.media_id) if v.media_id else v.image_url
+        if not v.media_id:
+            _validate_local_media_url(variant_image_url)
         session.add(
             ProductVariant(
                 product_id=product.id, sku=v.sku, option_values=v.option_values,
                 stock_quantity=v.stock_quantity, price_override=v.price_override,
-                sale_price_override=v.sale_price_override, image_url=v.image_url,
+                sale_price_override=v.sale_price_override, media_id=v.media_id,
+                image_url=variant_image_url,
                 is_active=v.is_active,
             )
         )
+    await audit(session, user.id, "admin.product.create", "product", product.id,
+                {"slug": product.slug})
     try:
         await session.commit()
     except IntegrityError:
         await session.rollback()
         raise HTTPException(status_code=409, detail={"error": "sku_exists"})
-    await audit(session, user.id, "admin.product.create", "product", product.id,
-                {"slug": product.slug})
     return await _product_payload(session, product)
 
 
@@ -320,10 +357,20 @@ async def admin_update_product(
     data = payload.model_dump(exclude_unset=True)
     if "status" in data and data["status"] not in ("draft", "active", "inactive"):
         _bad_request("invalid_status")
-    if "category_id" in data:
-        await _validate_category(session, data["category_id"])
+    if "product_type" in data:
+        _validate_product_type(data["product_type"])
+    if "category_id" in data or "product_type" in data:
+        await _validate_category(
+            session,
+            data.get("category_id", product.category_id),
+            data.get("product_type", product.product_type),
+        )
     if "media" in data:
-        _validate_media(data["media"] or [])
+        data["media"] = await _normalize_product_media(session, data["media"] or [])
+    _validate_price_order(
+        data.get("base_price", product.base_price),
+        data.get("compare_at_price", product.compare_at_price),
+    )
     translations = data.pop("translations", None)
     if translations:
         _validate_translations(payload.translations or {}, require_en=False)
@@ -350,9 +397,9 @@ async def admin_update_product(
                   "compare_at_price", "status", "attributes", "tags", "media"):
         if field in data:
             setattr(product, field, data[field])
-    await session.commit()
     await audit(session, user.id, "admin.product.update", "product", product.id,
                 {"fields": sorted(data.keys())})
+    await session.commit()
     return await _product_payload(session, product)
 
 
@@ -368,20 +415,27 @@ async def admin_create_variant(
     if not product:
         raise HTTPException(status_code=404, detail="product_not_found")
     await _check_skus(session, [payload.sku])
+    _validate_variant_prices(
+        payload.price_override, payload.sale_price_override, product.base_price
+    )
+    variant_image_url = await _resolve_media_url(session, payload.media_id) if payload.media_id else payload.image_url
+    if not payload.media_id:
+        _validate_local_media_url(variant_image_url)
     variant = ProductVariant(
         product_id=product.id, sku=payload.sku, option_values=payload.option_values,
         stock_quantity=payload.stock_quantity, price_override=payload.price_override,
-        sale_price_override=payload.sale_price_override, image_url=payload.image_url,
+        sale_price_override=payload.sale_price_override,
+        media_id=payload.media_id, image_url=variant_image_url,
         is_active=payload.is_active,
     )
     session.add(variant)
+    await audit(session, user.id, "admin.variant.create", "product", product.id,
+                {"sku": payload.sku})
     try:
         await session.commit()
     except IntegrityError:
         await session.rollback()
         raise HTTPException(status_code=409, detail={"error": "sku_exists", "skus": [payload.sku]})
-    await audit(session, user.id, "admin.variant.create", "product", product.id,
-                {"sku": payload.sku})
     return await _product_payload(session, product)
 
 
@@ -399,10 +453,22 @@ async def admin_update_variant(
     data = payload.model_dump(exclude_unset=True)
     if "sku" in data and data["sku"] != variant.sku:
         await _check_skus(session, [data["sku"]], exclude_variant_id=variant.id)
+    product = await session.get(Product, variant.product_id)
+    _validate_variant_prices(
+        data.get("price_override", variant.price_override),
+        data.get("sale_price_override", variant.sale_price_override),
+        product.base_price if product else None,
+    )
+    if "media_id" in data:
+        data["image_url"] = await _resolve_media_url(session, data["media_id"])
+    elif "image_url" in data:
+        _validate_local_media_url(data["image_url"])
     for field in ("sku", "option_values", "price_override", "sale_price_override",
-                  "image_url", "is_active"):
+                  "media_id", "image_url", "is_active"):
         if field in data:
             setattr(variant, field, data[field])
+    await audit(session, user.id, "admin.variant.update", "variant", variant.id,
+                {"fields": sorted(data.keys())})
     try:
         await session.commit()
     except IntegrityError:
@@ -437,9 +503,9 @@ async def admin_update_inventory(
             },
         )
     variant.stock_quantity = payload.stock_quantity
-    await session.commit()
     await audit(session, user.id, "admin.inventory.update", "variant", variant.id,
                 {"stock_quantity": payload.stock_quantity})
+    await session.commit()
     return {
         "variant_id": variant.id,
         "stock_quantity": variant.stock_quantity,
@@ -460,14 +526,21 @@ class CategoryTranslationIn(BaseModel):
 class CategoryCreateIn(BaseModel):
     slug: str = Field(min_length=2, max_length=120)
     department: str = Field(min_length=1, max_length=50)
+    kind: Literal["department", "group", "category"] = "category"
+    parent_id: Optional[str] = Field(default=None, min_length=8, max_length=40)
     sort_order: int = Field(default=0, ge=0)
+    media_id: Optional[str] = Field(default=None, max_length=40)
     image_url: Optional[str] = Field(default=None, max_length=500)
-    is_active: bool = True
+    # New taxonomy nodes are staged first; activate only after content and
+    # product mapping have been reviewed.
+    is_active: bool = False
     translations: dict[str, CategoryTranslationIn]
 
 
 class CategoryUpdateIn(BaseModel):
+    parent_id: Optional[str] = Field(default=None, min_length=8, max_length=40)
     sort_order: Optional[int] = Field(default=None, ge=0)
+    media_id: Optional[str] = Field(default=None, max_length=40)
     image_url: Optional[str] = None
     is_active: Optional[bool] = None
     translations: Optional[dict[str, CategoryTranslationIn]] = None
@@ -480,7 +553,17 @@ async def _category_payload(session: AsyncSession, category: Category) -> dict:
         )
     ).scalars().all()
     product_count = await session.scalar(
-        select(func.count(Product.id)).where(Product.category_id == category.id)
+        select(func.count(Product.id)).where(
+            Product.category_id.in_(
+                select(Category.id).where(
+                    Category.id.in_(descendant_ids_select(category.id)),
+                    Category.kind == "category",
+                )
+            )
+        )
+    )
+    child_count = await session.scalar(
+        select(func.count(Category.id)).where(Category.parent_id == category.id)
     )
     return {
         "id": category.id,
@@ -489,13 +572,66 @@ async def _category_payload(session: AsyncSession, category: Category) -> dict:
         "kind": category.kind,
         "parent_id": category.parent_id,
         "sort_order": category.sort_order,
+        "media_id": category.media_id,
         "image_url": category.image_url,
         "is_active": category.is_active,
         "product_count": int(product_count or 0),
+        "child_count": int(child_count or 0),
+        "is_leaf": category.kind == "category" and not child_count,
         "translations": {
             t.locale: {"name": t.name, "description": t.description} for t in translations
         },
     }
+
+
+async def _category_parent(
+    session: AsyncSession,
+    kind: str,
+    department: str,
+    requested_parent_id: Optional[str] = None,
+    slug: Optional[str] = None,
+    current_id: Optional[str] = None,
+) -> Optional[str]:
+    if kind not in TAXONOMY_KINDS:
+        _bad_request("invalid_category_kind")
+    if kind == "department":
+        if slug != department or requested_parent_id:
+            _bad_request("invalid_department_parent")
+        return None
+
+    root = await session.scalar(
+        select(Category).where(
+            Category.kind == "department", Category.slug == department
+        )
+    )
+    if not root:
+        _bad_request("invalid_department", {"allowed": [department]})
+
+    parent = await session.get(Category, requested_parent_id) if requested_parent_id else root
+    if not parent:
+        _bad_request("invalid_category_parent")
+    if current_id and parent.id == current_id:
+        _bad_request("category_parent_cycle")
+    if kind == "group" and parent.kind != "department":
+        _bad_request("group_parent_must_be_department")
+    if kind == "category" and parent.kind not in ("department", "group"):
+        _bad_request("category_parent_must_be_department_or_group")
+    parent_root = await get_root_category(session, parent)
+    if not parent_root or parent_root.id != root.id:
+        _bad_request("invalid_category_parent")
+
+    # A malformed existing tree must not be made worse by a move.
+    if current_id:
+        seen = {current_id}
+        cursor = parent
+        while cursor.parent_id:
+            if cursor.id in seen:
+                _bad_request("category_parent_cycle")
+            seen.add(cursor.id)
+            cursor = await session.get(Category, cursor.parent_id)
+            if not cursor:
+                _bad_request("invalid_category_parent")
+    return parent.id
 
 
 @router.get("/categories")
@@ -505,12 +641,23 @@ async def admin_list_categories(
 ):
     rows = (
         await session.execute(
-            select(Category).order_by(Category.department, Category.sort_order)
+            select(Category).order_by(
+                case(
+                    (Category.kind == "category", 0),
+                    (Category.kind == "group", 1),
+                    else_=2,
+                ),
+                Category.department,
+                Category.sort_order,
+                Category.slug,
+            )
         )
     ).scalars().all()
     departments = (
         await session.execute(
-            select(Category.department).distinct().order_by(Category.department)
+            select(Category.slug)
+            .where(Category.kind == "department")
+            .order_by(Category.slug)
         )
     ).scalars().all()
     return {
@@ -530,23 +677,36 @@ async def admin_create_category(
 
     if not _re.match(r"^[a-z0-9][a-z0-9\-]{1,118}$", payload.slug):
         _bad_request("invalid_slug")
-    existing_departments = (
-        await session.execute(select(Category.department).distinct())
-    ).scalars().all()
-    if payload.department not in existing_departments:
-        # taxonomy is authoritative: no new top-level departments
-        _bad_request("invalid_department", {"allowed": sorted(d for d in existing_departments if d)})
     unknown = set(payload.translations) - set(LOCALES)
     if unknown:
         _bad_request("invalid_locale", {"locales": sorted(unknown)})
     if "en" not in payload.translations:
         _bad_request("translation_en_required")
+    parent_id = await _category_parent(
+        session,
+        payload.kind,
+        payload.department,
+        payload.parent_id,
+        payload.slug,
+    )
+    if payload.is_active and parent_id:
+        parent = await session.get(Category, parent_id)
+        if parent and not parent.is_active:
+            _bad_request("parent_inactive")
+    if payload.media_id:
+        image_url = await _resolve_media_url(session, payload.media_id)
+    else:
+        _validate_local_media_url(payload.image_url)
+        image_url = payload.image_url
     dupe = await session.scalar(select(Category).where(Category.slug == payload.slug))
     if dupe:
         raise HTTPException(status_code=409, detail={"error": "slug_exists"})
     category = Category(
-        slug=payload.slug, department=payload.department,
-        sort_order=payload.sort_order, image_url=payload.image_url,
+        slug=payload.slug, kind=payload.kind, department=payload.department,
+        parent_id=parent_id,
+        sort_order=payload.sort_order,
+        media_id=payload.media_id,
+        image_url=image_url,
         is_active=payload.is_active,
     )
     session.add(category)
@@ -556,9 +716,9 @@ async def admin_create_category(
             CategoryTranslation(category_id=category.id, locale=locale,
                                 name=tr.name, description=tr.description)
         )
-    await session.commit()
     await audit(session, user.id, "admin.category.create", "category", category.id,
                 {"slug": category.slug})
+    await session.commit()
     return await _category_payload(session, category)
 
 
@@ -575,6 +735,30 @@ async def admin_update_category(
         raise HTTPException(status_code=404, detail="category_not_found")
     data = payload.model_dump(exclude_unset=True)
     translations = data.pop("translations", None)
+    if "parent_id" in data:
+        data["parent_id"] = await _category_parent(
+            session,
+            category.kind,
+            category.department,
+            data["parent_id"],
+            category.slug,
+            category.id,
+        )
+    effective_parent_id = data.get("parent_id", category.parent_id)
+    effective_active = data.get("is_active", category.is_active)
+    if effective_active and effective_parent_id:
+        parent = await session.get(Category, effective_parent_id)
+        if parent and not parent.is_active:
+            _bad_request("parent_inactive")
+    if data.get("is_active") is False:
+        active_children = await session.scalar(
+            select(func.count(Category.id)).where(
+                Category.parent_id == category.id,
+                Category.is_active.is_(True),
+            )
+        )
+        if active_children:
+            _bad_request("active_children_present")
     if translations:
         unknown = set(translations) - set(LOCALES)
         if unknown:
@@ -596,11 +780,15 @@ async def admin_update_category(
                     CategoryTranslation(category_id=category.id, locale=locale,
                                         name=tr.name, description=tr.description)
                 )
-    for field in ("sort_order", "image_url", "is_active"):
+    if "media_id" in data:
+        data["image_url"] = await _resolve_media_url(session, data["media_id"])
+    elif "image_url" in data:
+        _validate_local_media_url(data["image_url"])
+    for field in ("parent_id", "sort_order", "media_id", "image_url", "is_active"):
         if field in data:
             setattr(category, field, data[field])
-    await session.commit()
     await audit(session, user.id, "admin.category.update", "category", category.id, None)
+    await session.commit()
     return await _category_payload(session, category)
 
 
@@ -627,8 +815,8 @@ async def admin_delete_category(
                     "children": int(children or 0)},
         )
     await session.delete(category)
-    await session.commit()
     await audit(session, user.id, "admin.category.delete", "category", category_id, None)
+    await session.commit()
     return {"deleted": True}
 
 
@@ -731,8 +919,7 @@ async def admin_get_order(
         ],
         "payment": (
             {
-                "provider": payment.provider,
-                "environment": payment.environment,
+                "id": payment.id,
                 "status": payment.status,
                 "amount": payment.amount,
                 "merchant_trans_id": payment.merchant_trans_id,
@@ -782,10 +969,11 @@ async def admin_update_order_status(
             detail={"error": "invalid_transition", "current": order.status,
                     "allowed": [expected] if expected else []},
         )
+    previous_status = order.status
     order.status = payload.status
-    await session.commit()
     await audit(session, user.id, "admin.order.status", "order", order.order_number,
-                {"from": expected and ORDER_TRANSITIONS.get(order.status), "to": payload.status})
+                {"from": previous_status, "to": payload.status})
+    await session.commit()
     return {"order_number": order.order_number, "status": order.status}
 
 
@@ -945,32 +1133,9 @@ async def admin_payment_review_note(
     payment.review_note = payload.note
     payment.reviewed_by = user.id
     payment.reviewed_at = _now()
-    await session.commit()
     await audit(session, user.id, "admin.payment.review_note", "payment", payment.id, None)
+    await session.commit()
     return {"payment_id": payment.id, "review_note": payment.review_note}
-
-
-@router.post("/payments/{payment_id}/mock-refund")
-async def admin_mock_refund(
-    payment_id: str,
-    user: User = Depends(require_admin),
-    session: AsyncSession = Depends(get_session),
-    _: None = Depends(csrf_protect),
-):
-    if CLICK_MODE != "mock":
-        raise HTTPException(status_code=404, detail="not_found")
-    payment = await session.get(Payment, payment_id)
-    if not payment:
-        raise HTTPException(status_code=404, detail="payment_not_found")
-    if payment.status != "paid":
-        raise HTTPException(
-            status_code=409,
-            detail={"error": "not_refundable", "status": payment.status},
-        )
-    service = PaymentService(session, get_provider())
-    refunded = await service.refund(payment.merchant_trans_id, note="admin mock refund")
-    await audit(session, user.id, "admin.payment.mock_refund", "payment", payment.id, None)
-    return {"payment_id": refunded.id, "status": refunded.status}
 
 
 # ------------------------------ audit / settings ----------------------------
@@ -1030,7 +1195,8 @@ async def admin_settings(user: User = Depends(require_admin)):
         "store": "MUSLIMAH CANTIK",
         "business_model": "single_vendor",
         "currency": BASE_CURRENCY,
-        "click_mode": CLICK_MODE,
+        "checkout_enabled": CHECKOUT_ENABLED,
+        "payment_status": "disabled",
         "shipping_provider": SHIPPING_PROVIDER,
         "shipping_methods": list(_METHODS),
         "free_standard_threshold": FREE_STANDARD_THRESHOLD,

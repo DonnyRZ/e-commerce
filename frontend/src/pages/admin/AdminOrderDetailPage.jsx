@@ -44,7 +44,7 @@ export default function AdminOrderDetailPage() {
 
   return (
     <div data-testid="admin-order-detail">
-      <Link to="/admin/orders" className="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 hover:text-neutral-900" data-testid="order-back">
+      <Link to="/orders" className="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 hover:text-neutral-900" data-testid="order-back">
         <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
         Back to orders
       </Link>
@@ -114,7 +114,6 @@ export default function AdminOrderDetailPage() {
             <h2 className="text-sm font-semibold">Payment</h2>
             {order.payment ? (
               <dl className="mt-3 space-y-2 text-sm">
-                <div className="flex justify-between"><dt className="text-neutral-500">Provider</dt><dd className="font-medium">{order.payment.provider} ({order.payment.environment})</dd></div>
                 <div className="flex justify-between"><dt className="text-neutral-500">Status</dt><dd><StatusPill value={order.payment.status} /></dd></div>
                 <div className="flex justify-between"><dt className="text-neutral-500">Amount</dt><dd className="font-medium">{fmtMoney(order.payment.amount, order.currency)}</dd></div>
                 <div className="flex justify-between gap-4"><dt className="text-neutral-500">Transaction</dt><dd className="truncate font-mono text-xs">{order.payment.merchant_trans_id}</dd></div>

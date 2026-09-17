@@ -22,9 +22,13 @@ from db.models import (
     CmsMediaAsset,
     CmsMediaTranslation,
     CmsRevision,
+    Category,
+    Product,
+    ProductVariant,
     User,
 )
 from db.session import get_session
+from media import media_item_url
 from storage import get_media_storage
 
 router = APIRouter(prefix="/api/v1/admin/cms", tags=["admin-cms"])
@@ -89,7 +93,7 @@ class MediaPatchIn(BaseModel):
 
 def _validate_content(content_type: str, slug: str, translations: dict,
                       cta_url: Optional[str], secondary_cta_url: Optional[str],
-                      media_id: Optional[str]) -> None:
+                      media_id: Optional[str], payload: Optional[dict] = None) -> None:
     if content_type not in cms.CONTENT_TYPES:
         raise HTTPException(status_code=400, detail={"error": "invalid_content_type"})
     if slug and not _SLUG.match(slug):
@@ -98,6 +102,7 @@ def _validate_content(content_type: str, slug: str, translations: dict,
     if unknown:
         raise HTTPException(status_code=400, detail={"error": "invalid_locale", "locales": sorted(unknown)})
     try:
+        cms.validate_payload(payload or {})
         cms.validate_url(cta_url)
         cms.validate_url(secondary_cta_url)
         for tr in translations.values():
@@ -190,7 +195,8 @@ async def create_content(
     _: None = Depends(csrf_protect),
 ):
     _validate_content(payload.content_type, payload.slug, payload.translations,
-                      payload.cta_url, payload.secondary_cta_url, payload.media_id)
+                      payload.cta_url, payload.secondary_cta_url, payload.media_id,
+                      payload.payload)
     if payload.media_id:
         if not await session.get(CmsMediaAsset, payload.media_id):
             raise HTTPException(status_code=400, detail={"error": "invalid_media"})
@@ -242,7 +248,8 @@ async def update_content(
     _validate_content(entry.content_type, data.get("slug", entry.slug),
                       translations or {}, data.get("cta_url", entry.cta_url),
                       data.get("secondary_cta_url", entry.secondary_cta_url),
-                      data.get("media_id", entry.media_id))
+                      data.get("media_id", entry.media_id),
+                      data.get("payload", entry.payload or {}))
     if data.get("media_id"):
         if not await session.get(CmsMediaAsset, data["media_id"]):
             raise HTTPException(status_code=400, detail={"error": "invalid_media"})
@@ -352,7 +359,7 @@ async def restore_revision(
     entry.media_id = snap.get("media_id")
     entry.cta_url = snap.get("cta_url")
     entry.secondary_cta_url = snap.get("secondary_cta_url")
-    entry.payload = snap.get("payload") or {}
+    entry.payload = cms.clean_payload(snap.get("payload"))
     entry.status = "draft"  # restore always creates a new Draft
     entry.updated_by = user.id
     await _upsert_translations(session, entry.id, snap.get("translations", {}))
@@ -407,6 +414,15 @@ async def upload_media(
     except Exception:
         raise HTTPException(status_code=415, detail={"error": "invalid_image"})
 
+    checksum = hashlib.sha256(data).hexdigest()
+    existing = await session.scalar(
+        select(CmsMediaAsset).where(CmsMediaAsset.checksum == checksum)
+    )
+    if existing:
+        # Checksum makes retries/resumable imports idempotent and avoids
+        # creating duplicate library entries for the same generated asset.
+        return await _media_payload(session, existing)
+
     key = f"{uuid.uuid4().hex}{ALLOWED_MIME[declared]}"
     storage = get_media_storage()
     await storage.save(data, key, declared)
@@ -418,7 +434,7 @@ async def upload_media(
         file_size=len(data),
         width=width,
         height=height,
-        checksum=hashlib.sha256(data).hexdigest(),
+        checksum=checksum,
         created_by=user.id,
     )
     session.add(asset)
@@ -435,23 +451,101 @@ async def _media_payload(session: AsyncSession, asset: CmsMediaAsset) -> dict:
             select(CmsMediaTranslation).where(CmsMediaTranslation.media_id == asset.id)
         )
     ).scalars().all()
-    usage = await session.scalar(
-        select(func.count(CmsContentEntry.id)).where(CmsContentEntry.media_id == asset.id)
-    )
+    usage_items = await _media_usage_details(session, asset)
     return {
         "id": asset.id,
-        "url": f"/api/v1/cms/media/file/{asset.storage_key}",
+        "url": await cms.media_url(session, asset),
         "original_filename": asset.original_filename,
         "mime_type": asset.mime_type,
         "file_size": asset.file_size,
         "width": asset.width,
         "height": asset.height,
+        "checksum": asset.checksum,
         "created_at": asset.created_at,
-        "usage_count": int(usage or 0),
+        "usage_count": len(usage_items),
+        "usage": usage_items,
         "translations": {
             t.locale: {"alt_text": t.alt_text, "caption": t.caption} for t in translations
         },
     }
+
+
+def _product_media_item_matches(item: object, asset: CmsMediaAsset) -> bool:
+    if isinstance(item, dict) and item.get("media_id") == asset.id:
+        return True
+    url = media_item_url(item)
+    if not isinstance(url, str):
+        return False
+    return url.split("?", 1)[0].rstrip("/").endswith(
+        f"/api/v1/cms/media/file/{asset.storage_key}"
+    )
+
+
+async def _media_usage_count(session: AsyncSession, asset: CmsMediaAsset) -> int:
+    return len(await _media_usage_details(session, asset))
+
+
+async def _media_usage_details(session: AsyncSession, asset: CmsMediaAsset) -> list[dict]:
+    usages: list[dict] = []
+    content_rows = (
+        await session.execute(
+            select(CmsContentEntry).where(CmsContentEntry.media_id == asset.id)
+        )
+    ).scalars().all()
+    usages.extend(
+        {
+            "type": "cms",
+            "id": entry.id,
+            "label": entry.internal_name or entry.slug,
+            "href": f"/admin/cms/{entry.id}",
+        }
+        for entry in content_rows
+    )
+
+    category_rows = (
+        await session.execute(select(Category).where(Category.media_id == asset.id))
+    ).scalars().all()
+    usages.extend(
+        {
+            "type": category.kind,
+            "id": category.id,
+            "label": category.slug,
+            "href": "/admin/categories",
+        }
+        for category in category_rows
+    )
+
+    variant_rows = (
+        await session.execute(
+            select(ProductVariant, Product)
+            .join(Product, ProductVariant.product_id == Product.id)
+            .where(ProductVariant.media_id == asset.id)
+        )
+    ).all()
+    usages.extend(
+        {
+            "type": "variant",
+            "id": variant.id,
+            "label": f"{product.slug} · {variant.sku}",
+            "href": f"/admin/products/{product.id}",
+        }
+        for variant, product in variant_rows
+    )
+
+    product_media = (
+        await session.execute(select(Product.id, Product.slug, Product.media))
+    ).all()
+    for product_id, product_slug, media in product_media:
+        if any(_product_media_item_matches(item, asset) for item in (media or [])):
+            usages.append(
+                {
+                    "type": "product",
+                    "id": product_id,
+                    "label": product_slug,
+                    "href": f"/admin/products/{product_id}",
+                }
+            )
+    return usages
 
 
 @router.get("/media")
@@ -528,9 +622,7 @@ async def delete_media(
     asset = await session.get(CmsMediaAsset, media_id)
     if not asset:
         raise HTTPException(status_code=404, detail="media_not_found")
-    usage = await session.scalar(
-        select(func.count(CmsContentEntry.id)).where(CmsContentEntry.media_id == asset.id)
-    )
+    usage = await _media_usage_count(session, asset)
     if usage:
         raise HTTPException(
             status_code=409,

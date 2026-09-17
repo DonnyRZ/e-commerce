@@ -20,8 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import require_roles
 from checkout.service import _reserved_quantities
+from cms.service import media_url
 from db.models import (
     Category,
+    CmsMediaAsset,
     Order,
     OrderItem,
     Product,
@@ -32,6 +34,7 @@ from db.models import (
     User,
 )
 from db.session import get_session
+from taxonomy import get_root_category
 
 router = APIRouter(prefix="/api/v1/seller", tags=["seller"])
 
@@ -39,6 +42,7 @@ require_seller = require_roles("seller")
 
 LOCALES = {"id", "en", "uz", "ru"}
 PRODUCT_STATUSES = {"draft", "active", "inactive"}
+PRODUCT_TYPES = {"general", "apparel", "hijab", "skincare", "batik", "parfum"}
 LOW_STOCK_THRESHOLD = 5  # mirrors routers/catalog.py
 
 FULFILLMENT_STATUSES = {"pending", "processing", "shipped", "delivered", "cancelled"}
@@ -89,6 +93,7 @@ class VariantIn(BaseModel):
     stock_quantity: int = Field(default=0, ge=0)
     price_override: Optional[int] = Field(default=None, ge=0)
     sale_price_override: Optional[int] = Field(default=None, ge=0)
+    media_id: Optional[str] = Field(default=None, max_length=40)
     image_url: Optional[str] = Field(default=None, max_length=500)
     is_active: bool = True
 
@@ -125,6 +130,7 @@ class VariantUpdateIn(BaseModel):
     option_values: Optional[dict] = None
     price_override: Optional[int] = Field(default=None, ge=0)
     sale_price_override: Optional[int] = Field(default=None, ge=0)
+    media_id: Optional[str] = Field(default=None, max_length=40)
     image_url: Optional[str] = Field(default=None, max_length=500)
     is_active: Optional[bool] = None
 
@@ -174,6 +180,31 @@ def _validate_translations(translations: dict, require_en: bool) -> None:
         _bad_request("invalid_locale", {"locales": sorted(unknown)})
     if require_en and "en" not in translations:
         _bad_request("translation_en_required")
+    for locale, translation in translations.items():
+        for field in ("name", "short_description", "description"):
+            value = getattr(translation, field, None)
+            if value and _UNSAFE_TEXT.search(value):
+                _bad_request("unsafe_text", {"locale": locale, "field": field})
+
+
+def _validate_price_order(base_price: int, compare_at_price: Optional[int]) -> None:
+    if compare_at_price is not None and compare_at_price < base_price:
+        _bad_request("compare_price_below_base")
+
+
+def _validate_product_type(product_type: str) -> None:
+    if product_type not in PRODUCT_TYPES:
+        _bad_request("invalid_product_type", {"allowed": sorted(PRODUCT_TYPES)})
+
+
+def _validate_variant_prices(
+    price_override: Optional[int],
+    sale_price_override: Optional[int],
+    base_price: Optional[int] = None,
+) -> None:
+    regular_price = price_override if price_override is not None else base_price
+    if sale_price_override is not None and regular_price is not None and sale_price_override >= regular_price:
+        _bad_request("sale_price_not_below_regular")
 
 
 async def _check_skus(session: AsyncSession, skus: list[str], exclude_variant_id: Optional[str] = None) -> None:
@@ -188,20 +219,74 @@ async def _check_skus(session: AsyncSession, skus: list[str], exclude_variant_id
         raise HTTPException(status_code=409, detail={"error": "sku_exists", "skus": sorted(taken)})
 
 
-async def _validate_category(session: AsyncSession, category_id: str) -> None:
+def _validate_local_media_url(url: Optional[str]) -> None:
+    """Accept legacy/internal media paths, never arbitrary remote images."""
+
+    if url in (None, ""):
+        return
+    if (
+        not isinstance(url, str)
+        or len(url) > 500
+        or not url.startswith("/")
+        or url.startswith("//")
+    ):
+        _bad_request("invalid_media_url")
+
+
+async def _resolve_media_reference(session: AsyncSession, media_id: Optional[str]) -> Optional[str]:
+    if not media_id:
+        return None
+    asset = await session.get(CmsMediaAsset, media_id)
+    if not asset:
+        _bad_request("invalid_media")
+    return await media_url(session, asset)
+
+
+async def _normalize_media(session: AsyncSession, media: list[dict]) -> list[dict]:
+    _validate_media(media)
+    normalized = []
+    for raw in media:
+        item = dict(raw)
+        if item.get("media_id"):
+            item["url"] = await _resolve_media_reference(session, item["media_id"])
+        normalized.append(item)
+    return normalized
+
+
+async def _validate_category(
+    session: AsyncSession, category_id: str, product_type: Optional[str] = None
+) -> None:
     category = await session.scalar(
-        select(Category).where(Category.id == category_id, Category.is_active == True)
+        select(Category).where(
+            Category.id == category_id,
+            Category.is_active == True,
+            Category.kind == "category",
+        )
     )
     if not category:
         _bad_request("invalid_category")
+    if product_type in {"batik", "parfum"} or category.department in {"batik", "parfum"}:
+        root = await get_root_category(session, category)
+        if not root or root.slug != product_type:
+            _bad_request(
+                "product_type_category_mismatch",
+                {"product_type": product_type, "department": root.slug if root else category.department},
+            )
 
 
 def _validate_media(media: list[dict]) -> None:
     if len(media) > 8:
         _bad_request("too_many_media")
     for m in media:
+        if not isinstance(m, dict):
+            _bad_request("invalid_media")
+        if m.get("media_id"):
+            if not isinstance(m["media_id"], str) or not m["media_id"].strip():
+                _bad_request("invalid_media")
+            continue
         url = (m or {}).get("url", "")
-        if not isinstance(url, str) or not url.startswith(("http://", "https://")) or len(url) > 500:
+        _validate_local_media_url(url)
+        if not url:
             _bad_request("invalid_media_url")
 
 
@@ -244,6 +329,7 @@ async def _product_payload(session: AsyncSession, product: Product) -> dict:
         "tags": product.tags or [],
         "media": product.media or [],
         "translations": _translation_map(translations),
+        "is_demo": product.is_demo,
         "variants": [
             {
                 "id": v.id,
@@ -254,6 +340,7 @@ async def _product_payload(session: AsyncSession, product: Product) -> dict:
                 "available": v.stock_quantity - reserved.get(v.id, 0),
                 "price_override": v.price_override,
                 "sale_price_override": v.sale_price_override,
+                "media_id": v.media_id,
                 "image_url": v.image_url,
                 "is_active": v.is_active,
                 "stock_state": _stock_state(v.stock_quantity),
@@ -470,10 +557,16 @@ async def create_product(
     session: AsyncSession = Depends(get_session),
 ):
     _validate_translations(payload.translations, require_en=True)
-    _validate_media(payload.media)
+    _validate_product_type(payload.product_type)
+    normalized_media = await _normalize_media(session, payload.media)
     if payload.status not in PRODUCT_STATUSES:
         _bad_request("invalid_status")
-    await _validate_category(session, payload.category_id)
+    await _validate_category(session, payload.category_id, payload.product_type)
+    _validate_price_order(payload.base_price, payload.compare_at_price)
+    for variant in payload.variants:
+        _validate_variant_prices(
+            variant.price_override, variant.sale_price_override, payload.base_price
+        )
     await _check_skus(session, [v.sku for v in payload.variants])
 
     product = Product(
@@ -487,7 +580,7 @@ async def create_product(
         status=payload.status,
         attributes=payload.attributes,
         tags=payload.tags,
-        media=payload.media,
+        media=normalized_media,
     )
     session.add(product)
     await session.flush()
@@ -502,6 +595,13 @@ async def create_product(
             )
         )
     for v in payload.variants:
+        variant_image_url = (
+            await _resolve_media_reference(session, v.media_id)
+            if v.media_id
+            else v.image_url
+        )
+        if not v.media_id:
+            _validate_local_media_url(variant_image_url)
         session.add(
             ProductVariant(
                 product_id=product.id,
@@ -510,7 +610,8 @@ async def create_product(
                 stock_quantity=v.stock_quantity,
                 price_override=v.price_override,
                 sale_price_override=v.sale_price_override,
-                image_url=v.image_url,
+                media_id=v.media_id,
+                image_url=variant_image_url,
                 is_active=v.is_active,
             )
         )
@@ -543,10 +644,20 @@ async def update_product(
     data = payload.model_dump(exclude_unset=True)
     if "status" in data and data["status"] not in PRODUCT_STATUSES:
         _bad_request("invalid_status")
-    if "category_id" in data:
-        await _validate_category(session, data["category_id"])
+    if "product_type" in data:
+        _validate_product_type(data["product_type"])
+    if "category_id" in data or "product_type" in data:
+        await _validate_category(
+            session,
+            data.get("category_id", product.category_id),
+            data.get("product_type", product.product_type),
+        )
     if "media" in data:
-        _validate_media(data["media"] or [])
+        data["media"] = await _normalize_media(session, data["media"] or [])
+    _validate_price_order(
+        data.get("base_price", product.base_price),
+        data.get("compare_at_price", product.compare_at_price),
+    )
     if "translations" in data and data["translations"] is not None:
         translations = payload.translations or {}
         _validate_translations(translations, require_en=False)
@@ -594,7 +705,17 @@ async def create_variant(
     session: AsyncSession = Depends(get_session),
 ):
     product = await _own_product(session, product_id, user.id)
+    _validate_variant_prices(
+        payload.price_override, payload.sale_price_override, product.base_price
+    )
     await _check_skus(session, [payload.sku])
+    variant_image_url = (
+        await _resolve_media_reference(session, payload.media_id)
+        if payload.media_id
+        else payload.image_url
+    )
+    if not payload.media_id:
+        _validate_local_media_url(variant_image_url)
     variant = ProductVariant(
         product_id=product.id,
         sku=payload.sku,
@@ -602,7 +723,8 @@ async def create_variant(
         stock_quantity=payload.stock_quantity,
         price_override=payload.price_override,
         sale_price_override=payload.sale_price_override,
-        image_url=payload.image_url,
+        media_id=payload.media_id,
+        image_url=variant_image_url,
         is_active=payload.is_active,
     )
     session.add(variant)
@@ -625,7 +747,17 @@ async def update_variant(
     data = payload.model_dump(exclude_unset=True)
     if "sku" in data and data["sku"] != variant.sku:
         await _check_skus(session, [data["sku"]], exclude_variant_id=variant.id)
-    for field in ("sku", "option_values", "price_override", "sale_price_override", "image_url", "is_active"):
+    product = await session.get(Product, variant.product_id)
+    _validate_variant_prices(
+        data.get("price_override", variant.price_override),
+        data.get("sale_price_override", variant.sale_price_override),
+        product.base_price if product else None,
+    )
+    if "media_id" in data:
+        data["image_url"] = await _resolve_media_reference(session, data["media_id"])
+    elif "image_url" in data:
+        _validate_local_media_url(data["image_url"])
+    for field in ("sku", "option_values", "price_override", "sale_price_override", "media_id", "image_url", "is_active"):
         if field in data:
             setattr(variant, field, data[field])
     try:

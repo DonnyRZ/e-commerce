@@ -10,6 +10,7 @@ import asyncio
 import os
 import re
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -18,20 +19,18 @@ from sqlalchemy import func, select
 from db.models import CmsContentEntry, CmsContentTranslation
 from db.session import SessionLocal
 
-TRANSLATIONS_PATH = "/app/frontend/src/i18n/translations.js"
+TRANSLATIONS_PATH = os.environ.get(
+    "FRONTEND_TRANSLATIONS_PATH",
+    str(Path(__file__).resolve().parent.parent / "frontend" / "src" / "i18n" / "translations.js"),
+)
 LOCALES = ("en", "id", "uz", "ru")
 
-HERO_IMAGE = (
-    "https://images.unsplash.com/photo-1772714601002-fbb0fea8a911"
-    "?crop=entropy&cs=srgb&fm=jpg&q=80&w=1800&fit=crop"
+EDITORIAL_SLUGS = (
+    "modest-styling-guide",
+    "hijab-styling-guide",
+    "tropical-halal-skincare-routine",
+    "new-season-muslimah-edit",
 )
-
-EDITORIAL_IMAGES = {
-    "modest-styling-guide": "https://images.unsplash.com/photo-1552874869-5c39ec9288dc?crop=entropy&cs=srgb&fm=jpg&q=80&w=900&fit=crop",
-    "hijab-styling-guide": "https://images.unsplash.com/photo-1536528947088-d655e462f4d3?crop=entropy&cs=srgb&fm=jpg&q=80&w=900&fit=crop",
-    "tropical-halal-skincare-routine": "https://images.unsplash.com/photo-1670201202833-b0932731628f?crop=entropy&cs=srgb&fm=jpg&q=80&w=900&fit=crop",
-    "new-season-muslimah-edit": "https://images.unsplash.com/photo-1763906802942-8b1959ad0698?crop=entropy&cs=srgb&fm=jpg&q=80&w=900&fit=crop",
-}
 
 EDITORIAL_LABELS = {
     "modest-styling-guide": {"en": "Guide", "id": "Panduan", "uz": "Qo'llanma", "ru": "Гид"},
@@ -95,9 +94,6 @@ FOOTER_LINKS = {
     "shop": [
         ("footer.link.newArrivals", "/shop?badge=new"),
         ("footer.link.bestSellers", "/shop?badge=bestseller"),
-        ("nav.womenMuslimah", "/shop?department=women-muslimah"),
-        ("nav.uniqloProducts", "/shop?department=uniqlo-products"),
-        ("nav.skincare", "/shop?department=tropical-halal-skincare"),
     ],
     "help": [
         ("footer.link.contact", "/page/contact"),
@@ -132,16 +128,16 @@ NAV_ITEMS = [
 
 PAGES = {
     "about": {
-        "en": ("About MUSLIMAH CANTIK", "MUSLIMAH CANTIK is a single-vendor boutique for modest fashion and tropical halal skincare, operated from Tashkent. We curate quality pieces and serve customers across Uzbekistan with CLICK payments and UZS pricing."),
-        "id": ("Tentang MUSLIMAH CANTIK", "MUSLIMAH CANTIK adalah butik vendor tunggal untuk busana muslimah dan skincare halal tropis, beroperasi dari Tashkent. Kami melayani pelanggan di seluruh Uzbekistan dengan pembayaran CLICK dan harga UZS."),
-        "uz": ("MUSLIMAH CANTIK haqida", "MUSLIMAH CANTIK — muslimona moda va tropik halol teri parvarishiga ixtisoslashgan yagona vendor butik. Toshkentdan butun O'zbekiston bo'ylab CLICK to'lovi va UZS narxlari bilan xizmat ko'rsatamiz."),
-        "ru": ("О MUSLIMAH CANTIK", "MUSLIMAH CANTIK — монобрендовый бутик мусульманской моды и тропического халяль-ухода из Ташкента. Мы обслуживаем клиентов по всему Узбекистану с оплатой CLICK и ценами в сумах."),
+        "en": ("About MUSLIMAH CANTIK", "MUSLIMAH CANTIK is a single-vendor boutique for modest fashion and tropical halal skincare, operated from Tashkent. We curate quality pieces and serve customers across Uzbekistan with UZS pricing."),
+        "id": ("Tentang MUSLIMAH CANTIK", "MUSLIMAH CANTIK adalah butik vendor tunggal untuk busana muslimah dan skincare halal tropis, beroperasi dari Tashkent. Kami melayani pelanggan di seluruh Uzbekistan dengan harga UZS."),
+        "uz": ("MUSLIMAH CANTIK haqida", "MUSLIMAH CANTIK — muslimona moda va tropik halol teri parvarishiga ixtisoslashgan yagona vendor butik. Toshkentdan butun O'zbekiston bo'ylab UZS narxlari bilan xizmat ko'rsatamiz."),
+        "ru": ("О MUSLIMAH CANTIK", "MUSLIMAH CANTIK — монобрендовый бутик мусульманской моды и тропического халяль-ухода из Ташкента. Мы обслуживаем клиентов по всему Узбекистану с ценами в сумах."),
     },
     "contact": {
-        "en": ("Contact Us", "Reach our team at official@muslimahcantik.id. We reply within one business day."),
-        "id": ("Hubungi Kami", "Hubungi tim kami di official@muslimahcantik.id. Kami membalas dalam satu hari kerja."),
-        "uz": ("Biz bilan bog'laning", "Jamoamizga official@muslimahcantik.id orqali murojaat qiling. Bir ish kuni ichida javob beramiz."),
-        "ru": ("Свяжитесь с нами", "Напишите нам: official@muslimahcantik.id. Мы отвечаем в течение одного рабочего дня."),
+        "en": ("Contact Us", "Reach our team at contact@shanicantik.com. We reply within one business day."),
+        "id": ("Hubungi Kami", "Hubungi tim kami di contact@shanicantik.com. Kami membalas dalam satu hari kerja."),
+        "uz": ("Biz bilan bog'laning", "Jamoamizga contact@shanicantik.com orqali murojaat qiling. Bir ish kuni ichida javob beramiz."),
+        "ru": ("Свяжитесь с нами", "Напишите нам: contact@shanicantik.com. Мы отвечаем в течение одного рабочего дня."),
     },
     "shipping": {
         "en": ("Shipping", "We ship across Uzbekistan. Standard delivery (3-5 business days) is 30,000 UZS and free for orders over 550,000 UZS. Express delivery (1-2 business days) is 65,000 UZS."),
@@ -156,16 +152,16 @@ PAGES = {
         "ru": ("Возврат", "Неиспользованные товары в оригинальной упаковке можно вернуть в течение 14 дней после доставки. Свяжитесь с нами для оформления возврата."),
     },
     "privacy": {
-        "en": ("Privacy Policy", "We store only the data required to process your orders (contact and delivery details). Payment data is processed by CLICK; we never see or store card data."),
-        "id": ("Kebijakan Privasi", "Kami hanya menyimpan data yang diperlukan untuk memproses pesanan Anda (kontak dan alamat pengiriman). Data pembayaran diproses oleh CLICK; kami tidak pernah melihat atau menyimpan data kartu."),
-        "uz": ("Maxfiylik siyosati", "Biz faqat buyurtmalaringizni qayta ishlash uchun zarur ma'lumotlarni saqlaymiz (aloqa va yetkazish ma'lumotlari). To'lov ma'lumotlarini CLICK qayta ishlaydi; biz karta ma'lumotlarini ko'rmaymiz va saqlamaymiz."),
-        "ru": ("Политика конфиденциальности", "Мы храним только данные, необходимые для обработки заказов (контакты и адрес доставки). Платёжные данные обрабатывает CLICK; мы не видим и не храним данные карт."),
+        "en": ("Privacy Policy", "We store only the data required to process your orders, including contact and delivery details. Payment details are not collected while online checkout is unavailable."),
+        "id": ("Kebijakan Privasi", "Kami hanya menyimpan data yang diperlukan untuk memproses pesanan, termasuk kontak dan alamat pengiriman. Data pembayaran tidak dikumpulkan selama checkout online belum tersedia."),
+        "uz": ("Maxfiylik siyosati", "Biz buyurtmalarni qayta ishlash uchun zarur bo'lgan ma'lumotlarni, jumladan aloqa va yetkazish ma'lumotlarini saqlaymiz. Onlayn checkout mavjud bo'lmaganda to'lov ma'lumotlari yig'ilmaydi."),
+        "ru": ("Политика конфиденциальности", "Мы храним только данные, необходимые для обработки заказов, включая контактные данные и адрес доставки. Пока онлайн-оформление недоступно, платёжные данные не собираются."),
     },
     "terms": {
-        "en": ("Terms of Service", "By ordering from MUSLIMAH CANTIK you agree to our pricing in UZS, CLICK payment processing, and the shipping/returns terms published on this page."),
-        "id": ("Syarat Layanan", "Dengan memesan di MUSLIMAH CANTIK, Anda menyetujui harga dalam UZS, pemrosesan pembayaran CLICK, serta ketentuan pengiriman/pengembalian yang dipublikasikan di halaman ini."),
-        "uz": ("Foydalanish shartlari", "MUSLIMAH CANTIK dan buyurtma berish orqali siz UZS narxlariga, CLICK to'lov qayta ishlashga va bu sahifada e'lon qilingan yetkazish/qaytarish shartlariga rozilik bildirasiz."),
-        "ru": ("Условия использования", "Оформляя заказ в MUSLIMAH CANTIK, вы соглашаетесь с ценами в сумах, обработкой платежей CLICK и условиями доставки/возврата, опубликованными на этой странице."),
+        "en": ("Terms of Service", "By ordering from MUSLIMAH CANTIK you agree to our pricing in UZS and the shipping and returns terms published on this page. Online ordering is currently paused."),
+        "id": ("Syarat Layanan", "Dengan memesan di MUSLIMAH CANTIK, Anda menyetujui harga dalam UZS serta ketentuan pengiriman dan pengembalian yang dipublikasikan di halaman ini. Pemesanan online sedang ditangguhkan."),
+        "uz": ("Foydalanish shartlari", "MUSLIMAH CANTIK dan buyurtma berish orqali siz UZS narxlariga hamda bu sahifada e'lon qilingan yetkazish va qaytarish shartlariga rozilik bildirasiz. Onlayn buyurtma hozircha to'xtatilgan."),
+        "ru": ("Условия использования", "Оформляя заказ в MUSLIMAH CANTIK, вы соглашаетесь с ценами в сумах и условиями доставки и возврата, опубликованными на этой странице. Онлайн-заказы временно приостановлены."),
     },
 }
 
@@ -179,10 +175,10 @@ FAQ_ITEMS = [
             "ru": "Какие способы оплаты вы принимаете?",
         },
         "a": {
-            "en": "We accept CLICK payments in UZS. Card details are processed securely by CLICK.",
-            "id": "Kami menerima pembayaran CLICK dalam UZS. Data kartu diproses dengan aman oleh CLICK.",
-            "uz": "Biz UZS da CLICK to'lovlarini qabul qilamiz. Karta ma'lumotlari CLICK tomonidan xavfsiz qayta ishlanadi.",
-            "ru": "Мы принимаем оплату через CLICK в сумах. Данные карт безопасно обрабатываются CLICK.",
+            "en": "Online payment is not available yet. Please contact our team if you have a question about a product.",
+            "id": "Pembayaran online belum tersedia. Silakan hubungi tim kami jika Anda memiliki pertanyaan tentang produk.",
+            "uz": "Onlayn to'lov hali mavjud emas. Mahsulot haqida savolingiz bo'lsa, jamoamizga murojaat qiling.",
+            "ru": "Онлайн-оплата пока недоступна. Если у вас есть вопрос о товаре, свяжитесь с нашей командой.",
         },
     },
     {
@@ -205,6 +201,11 @@ FAQ_ITEMS = [
 
 def _load_translations():
     """Extract {key: {locale: value}} from the frontend translations file."""
+    if not Path(TRANSLATIONS_PATH).is_file():
+        raise RuntimeError(
+            f"Frontend translations file not found: {TRANSLATIONS_PATH}. "
+            "Set FRONTEND_TRANSLATIONS_PATH when running the CMS seed from a container."
+        )
     src = open(TRANSLATIONS_PATH, encoding="utf-8").read()
     out: dict = {}
     for locale in LOCALES:
@@ -225,6 +226,19 @@ async def seed():
     async with SessionLocal() as session:
         existing = await session.scalar(select(func.count(CmsContentEntry.id)))
         if existing:
+            # Remove only legacy remote image fallbacks. CMS-linked/local media
+            # remains authoritative and is never overwritten by a seed rerun.
+            entries = (await session.execute(select(CmsContentEntry))).scalars().all()
+            changed = False
+            for entry in entries:
+                payload = dict(entry.payload or {})
+                image_url = payload.get("image_url")
+                if isinstance(image_url, str) and image_url.startswith(("http://", "https://")):
+                    payload.pop("image_url", None)
+                    entry.payload = payload
+                    changed = True
+            if changed:
+                await session.commit()
             print("cms seed: entries already exist, skipping (idempotent)")
             return
 
@@ -267,7 +281,7 @@ async def seed():
                 for loc in LOCALES
             },
             cta_url="/shop", secondary_cta_url="/shop",
-            payload={"image_url": HERO_IMAGE},
+            payload={},
         )
         # homepage sections (visibility/order)
         for idx, key in enumerate(SECTION_KEYS):
@@ -275,7 +289,7 @@ async def seed():
                             {loc: {"title": key.replace("_", " ").title()} for loc in LOCALES},
                             sort_order=idx)
         # stories & guides
-        for idx, slug in enumerate(EDITORIAL_IMAGES):
+        for idx, slug in enumerate(EDITORIAL_SLUGS):
             await add_entry(
                 "story", f"Story: {slug}", slug,
                 {
@@ -288,7 +302,7 @@ async def seed():
                     for loc in LOCALES
                 },
                 sort_order=idx, cta_url="/shop",
-                payload={"image_url": EDITORIAL_IMAGES[slug]},
+                payload={},
             )
         # stories section title
         await add_entry(

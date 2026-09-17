@@ -46,7 +46,7 @@
     "lucide-react": "0.516.0",
     "next-themes": "0.4.6",
     "react": "19.0.0",
-    "react-day-picker": "8.10.1",
+    "react-day-picker": "9.11.3",
     "react-dom": "19.0.0",
     "react-hook-form": "7.56.2",
     "react-resizable-panels": "3.0.1",
@@ -62,8 +62,12 @@
   },
   "scripts": {
     "start": "craco start",
+    "lint": "eslint src",
     "build": "craco build",
-    "test": "craco test"
+    "build:storefront": "node scripts/build-frontend.mjs storefront",
+    "build:cms": "node scripts/build-frontend.mjs cms",
+    "test": "craco test",
+    "test:ci": "craco test --watchAll=false --passWithNoTests"
   },
   "browserslist": {
     "production": [
@@ -80,7 +84,6 @@
   "devDependencies": {
     "@babel/plugin-proposal-private-property-in-object": "7.21.11",
     "@craco/craco": "7.1.0",
-    "@emergentbase/visual-edits": "https://assets.emergent.sh/npm/emergentbase-visual-edits-1.0.13.tgz",
     "@eslint/js": "9.23.0",
     "@types/lodash": "4.17.24",
     "autoprefixer": "10.4.20",
@@ -138,5 +141,5 @@
     "**/tinyglobby/picomatch": "4.0.4",
     "http-proxy-middleware": "2.0.10"
   },
-  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+  "packageManager": "npm@11.13.0"
 }

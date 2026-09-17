@@ -2,33 +2,50 @@ import { Link } from "react-router-dom";
 import { Facebook, Instagram, Youtube } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
-import { getCmsFooter } from "@/lib/api";
+import { getCatalogTree, getCmsFooter } from "@/lib/api";
 import { pickLocalized } from "@/lib/localize";
 import LanguageSelector from "./LanguageSelector";
+import BrandLogo from "@/components/brand/BrandLogo";
 
 const FALLBACK_GROUPS = [
   {
     heading: "footer.shop",
-    links: ["footer.link.newArrivals", "footer.link.bestSellers", "nav.womenMuslimah", "nav.uniqloProducts", "nav.skincare"],
+    links: [
+      ["footer.link.newArrivals", "/shop?badge=new"],
+      ["footer.link.bestSellers", "/shop?badge=bestseller"],
+    ],
   },
   {
     heading: "footer.help",
-    links: ["footer.link.contact", "footer.link.shipping", "footer.link.returns", "footer.link.faq"],
+    links: [
+      ["footer.link.contact", "mailto:contact@shanicantik.com"],
+      ["footer.link.shipping", "/page/shipping"],
+      ["footer.link.returns", "/page/returns"],
+      ["footer.link.faq", "/faq"],
+    ],
   },
   {
     heading: "footer.account",
-    links: ["footer.link.myAccount", "header.wishlist", "footer.link.orders"],
+    links: [
+      ["footer.link.myAccount", "/account"],
+      ["header.wishlist", "/wishlist"],
+      ["footer.link.orders", "/orders"],
+    ],
   },
   {
     heading: "footer.about",
-    links: ["footer.link.aboutUs", "footer.link.privacy", "footer.link.terms"],
+    links: [
+      ["footer.link.aboutUs", "/page/about"],
+      ["footer.link.privacy", "/page/privacy"],
+      ["footer.link.terms", "/page/terms"],
+    ],
   },
 ];
 
 const SOCIALS = [
-  { icon: Facebook, label: "Facebook" },
-  { icon: Instagram, label: "Instagram" },
-  { icon: Youtube, label: "YouTube" },
+  { icon: Facebook, label: "Facebook", url: process.env.REACT_APP_FACEBOOK_URL },
+  { icon: Instagram, label: "Instagram", url: process.env.REACT_APP_INSTAGRAM_URL },
+  { icon: Youtube, label: "YouTube", url: process.env.REACT_APP_YOUTUBE_URL },
 ];
 
 const linkClass =
@@ -40,6 +57,11 @@ export default function Footer() {
     queryKey: ["cms", "footer"],
     queryFn: getCmsFooter,
     staleTime: 60_000,
+  });
+  const { data: catalogTree = [] } = useQuery({
+    queryKey: ["catalog-tree"],
+    queryFn: getCatalogTree,
+    staleTime: 5 * 60 * 1000,
   });
 
   const cmsGroups = (cmsFooter?.groups || [])
@@ -58,10 +80,26 @@ export default function Footer() {
     pickLocalized(cmsFooter?.promo?.translations, locale) ||
     pickLocalized(cmsFooter?.promo?.translations, locale, "description") ||
     t("footer.promo");
+  const fallbackGroups = [
+    {
+      ...FALLBACK_GROUPS[0],
+      links: [
+        ...FALLBACK_GROUPS[0].links,
+        ...catalogTree.map((department) => [
+          pickLocalized(department.translations, locale) || department.slug,
+          `/shop?department=${department.slug}`,
+        ]),
+      ],
+    },
+    ...FALLBACK_GROUPS.slice(1),
+  ];
 
   return (
-    <footer data-testid="site-footer" className="border-t border-border bg-secondary/40">
+    <footer data-testid="site-footer" className="border-t border-brand-gold/30 bg-brand-ivory/60">
       <div className="mx-auto w-full max-w-[1440px] px-4 py-10 sm:px-6 lg:px-10 lg:py-12">
+        <div className="mb-10 flex items-center justify-between gap-6 border-b border-brand-gold/30 pb-8">
+          <BrandLogo size="lg" to="/" testId="footer-brand-logo" />
+        </div>
         {cmsGroups.length
           ? cmsGroups.map((group) => (
               <div key={group.key} className="mb-6">
@@ -76,8 +114,18 @@ export default function Footer() {
                         <Link to={item.to} data-testid={`footer-link-${item.key}`} className={linkClass}>
                           {item.label}
                         </Link>
+                      ) : item.to?.startsWith("http") || item.to?.startsWith("mailto:") ? (
+                        <a
+                          href={item.to}
+                          target={item.to.startsWith("http") ? "_blank" : undefined}
+                          rel={item.to.startsWith("http") ? "noreferrer" : undefined}
+                          data-testid={`footer-link-${item.key}`}
+                          className={linkClass}
+                        >
+                          {item.label}
+                        </a>
                       ) : (
-                        <span data-testid={`footer-link-${item.key}`} className={linkClass}>
+                        <span data-testid={`footer-link-${item.key}`} className="text-sm font-medium text-muted-foreground">
                           {item.label}
                         </span>
                       )}
@@ -91,28 +139,43 @@ export default function Footer() {
                 </ul>
               </div>
             ))
-          : FALLBACK_GROUPS.map((group) => (
+          : fallbackGroups.map((group) => (
               <div key={group.heading} className="mb-6">
                 <h3 className="mb-2 text-sm text-muted-foreground">{t(group.heading)}</h3>
                 <ul
                   className="flex flex-wrap items-center gap-x-3 gap-y-1.5"
                   data-testid={`footer-group-${group.heading.split(".")[1]}`}
                 >
-                  {group.links.map((key, i) => (
-                    <li key={key} className="flex items-center gap-3">
-                      <span
-                        data-testid={`footer-link-${key.split(".").pop()}`}
-                        className={linkClass}
-                      >
-                        {t(key)}
-                      </span>
+                  {group.links.map(([key, to], i) => {
+                    const label = key.includes(".") ? t(key) : key;
+                    const testKey = key.includes(".") ? key.split(".").pop() : to.split("department=")[1] || key.toLowerCase().replace(/\s+/g, "-");
+                    return (
+                    <li key={`${key}-${to}`} className="flex items-center gap-3">
+                      {to.startsWith("/") ? (
+                        <Link
+                          to={to}
+                          data-testid={`footer-link-${testKey}`}
+                          className={linkClass}
+                        >
+                          {label}
+                        </Link>
+                      ) : (
+                        <a
+                          href={to}
+                          data-testid={`footer-link-${testKey}`}
+                          className={linkClass}
+                        >
+                          {label}
+                        </a>
+                      )}
                       {i < group.links.length - 1 ? (
                         <span className="text-muted-foreground" aria-hidden="true">
                           |
                         </span>
                       ) : null}
                     </li>
-                  ))}
+                    );
+                  })}
                 </ul>
               </div>
             ))}
@@ -125,15 +188,18 @@ export default function Footer() {
           </p>
           <div className="flex items-center gap-2">
             <LanguageSelector />
-            {SOCIALS.map(({ icon: Icon, label }) => (
-              <span
+            {SOCIALS.filter((social) => social.url).map(({ icon: Icon, label, url }) => (
+              <a
                 key={label}
+                href={url}
+                target="_blank"
+                rel="noreferrer"
                 data-testid={`footer-social-${label.toLowerCase()}`}
                 aria-label={label}
-                className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-80"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-80"
               >
                 <Icon className="h-4 w-4" aria-hidden="true" />
-              </span>
+              </a>
             ))}
           </div>
         </div>

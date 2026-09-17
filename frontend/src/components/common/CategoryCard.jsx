@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import ImageWithFallback from "./ImageWithFallback";
 
 export default function CategoryCard({ category, name, onNavigate }) {
   return (
@@ -9,7 +10,7 @@ export default function CategoryCard({ category, name, onNavigate }) {
       className="group block"
     >
       <div className="overflow-hidden bg-secondary">
-        <img
+        <ImageWithFallback
           src={category.image}
           alt={name}
           loading="lazy"

@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill, fmtDate, fmtMoney, inputClass } from "./adminUtils";
 
 const ORDER_STATUSES = ["pending_payment", "payment_review", "paid", "processing", "shipped", "delivered", "cancelled", "refunded"];
-const PAYMENT_STATES = ["pending", "paid", "failed", "reconciliation_required", "refunded"];
+const PAYMENT_STATES = ["pending", "paid", "failed", "cancelled", "expired", "reconciliation_required", "refunded"];
 
 export default function AdminOrdersPage() {
   const [params, setParams] = useSearchParams();
@@ -96,7 +96,7 @@ export default function AdminOrdersPage() {
               : items.map((o) => (
                   <tr key={o.order_number} className="border-b border-neutral-50 hover:bg-neutral-50" data-testid={`order-row-${o.order_number}`}>
                     <td className="px-5 py-3">
-                      <Link to={`/admin/orders/${o.order_number}`} className="font-medium text-[#145A46] hover:underline" data-testid={`order-open-${o.order_number}`}>
+                      <Link to={`/orders/${o.order_number}`} className="font-medium text-[#145A46] hover:underline" data-testid={`order-open-${o.order_number}`}>
                         {o.order_number}
                       </Link>
                       {o.is_guest ? <span className="ml-2 text-[10px] uppercase tracking-wide text-neutral-400">guest</span> : null}

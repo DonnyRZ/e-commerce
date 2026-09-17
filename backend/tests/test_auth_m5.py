@@ -1,7 +1,7 @@
 """Milestone 5 — Auth + RBAC + Account API tests (PostgreSQL, cookie/CSRF)."""
 import os, uuid, requests, pytest
 
-BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://muslimah-shop.preview.emergentagent.com").rstrip("/")
+BASE = os.environ.get("REACT_APP_BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 API = f"{BASE}/api/v1"
 
 ADMIN = ("bmulyanto@gmail.com", "MC-Adm1n-7f3k29xQ-2026")

@@ -36,6 +36,7 @@ dist
 *.env
 !.env.example
 !**/.env.example
+!**/.env.test
 
 *token.json*
 *credentials.json*
@@ -56,6 +57,8 @@ __pycache__/
 *pyc*
 venv/
 .venv/
+.uv-cache/
+.uv-python/
 
 # Development tools
 chainlit.md
@@ -65,6 +68,8 @@ chainlit.md
 
 # Deployment
 .vercel
+backups/
+backend/uploads/
 
 # Data and databases
 agenthub/agents/youtube/db
@@ -77,6 +82,10 @@ agenthub/agents/youtube/db
 *.pack
 *.deb
 *.dylib
+
+# Generated visual import artifacts (manifest and image files stay off-git)
+artifacts/imagegen/
+frontend/public/brand/generated/catalog/
 
 # Build caches
 .cache/

@@ -17,5 +17,10 @@ class MediaStorageProvider(ABC):
         ...
 
     @abstractmethod
+    def public_url(self, key: str) -> str:
+        """Public URL for browser delivery, when the provider supports it."""
+        ...
+
+    @abstractmethod
     async def delete(self, key: str) -> None:
         ...

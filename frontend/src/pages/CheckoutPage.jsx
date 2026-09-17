@@ -30,6 +30,16 @@ const EMPTY_ADDR = {
   country_code: "UZ",
 };
 
+const newIdempotencyKey = () => {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  if (globalThis.crypto?.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    globalThis.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+};
+
 function AddressFields({ value, onChange, testPrefix }) {
   const { t } = useI18n();
   const set = (key) => (e) => onChange({ ...value, [key]: e.target.value });
@@ -43,6 +53,16 @@ function AddressFields({ value, onChange, testPrefix }) {
     ["postal_code", t("auth.postalCode")],
     ["country_code", t("auth.country")],
   ];
+  const autocomplete = {
+    recipient_name: "name",
+    phone: "tel",
+    address_line_1: "street-address",
+    address_line_2: "address-line2",
+    city: "address-level2",
+    state_province: "address-level1",
+    postal_code: "postal-code",
+    country_code: "country",
+  };
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       {fields.map(([key, label]) => (
@@ -50,15 +70,21 @@ function AddressFields({ value, onChange, testPrefix }) {
           key={key}
           className={key === "address_line_1" ? "sm:col-span-2" : ""}
         >
-          <label className="mb-1 block text-xs font-medium text-muted-foreground">
+          <label
+            htmlFor={`${testPrefix}-${key.replace(/_/g, "-")}`}
+            className="mb-1 block text-xs font-medium text-muted-foreground"
+          >
             {label}
           </label>
           <input
+            id={`${testPrefix}-${key.replace(/_/g, "-")}`}
             data-testid={`${testPrefix}-${key.replace(/_/g, "-")}`}
             value={value[key] || ""}
             onChange={set(key)}
             required={key !== "address_line_2"}
             maxLength={key === "country_code" ? 2 : 255}
+            autoComplete={autocomplete[key]}
+            type={key === "phone" ? "tel" : "text"}
             className={fieldClass}
           />
         </div>
@@ -73,7 +99,7 @@ export default function CheckoutPage() {
   const { cart, cartLoading } = useShop();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const idempotencyKey = useRef(crypto.randomUUID());
+  const idempotencyKey = useRef(newIdempotencyKey());
   const [email, setEmail] = useState("");
   const [addressMode, setAddressMode] = useState("new");
   const [savedAddressId, setSavedAddressId] = useState(null);
@@ -85,6 +111,10 @@ export default function CheckoutPage() {
     queryKey: ["checkout-options"],
     queryFn: getCheckoutOptions,
   });
+  // Keep the UI aligned with the server and fail closed if the status call
+  // fails. The backend remains the final enforcement point.
+  const checkoutEnabled =
+    optionsQuery.isSuccess && optionsQuery.data?.checkout_enabled !== false;
   const addressesQuery = useQuery({
     queryKey: ["addresses"],
     queryFn: getAddresses,
@@ -94,7 +124,7 @@ export default function CheckoutPage() {
   const quoteQuery = useQuery({
     queryKey: ["checkout-quote", shippingMethod],
     queryFn: () => getCheckoutQuote(shippingMethod),
-    enabled: hasItems,
+    enabled: hasItems && optionsQuery.isSuccess && checkoutEnabled,
     retry: false,
   });
 
@@ -110,6 +140,7 @@ export default function CheckoutPage() {
 
   const submit = async (e) => {
     e.preventDefault();
+    if (!checkoutEnabled) return;
     if (placing) return;
     setPlacing(true);
     try {
@@ -126,12 +157,11 @@ export default function CheckoutPage() {
       }
       const res = await placeOrder(payload);
       // idempotency key is single-use per intended checkout — rotate after success
-      idempotencyKey.current = crypto.randomUUID();
-      if (res.mock_payment_url) {
-        navigate(res.mock_payment_url);
-      } else {
-        navigate(`/order-confirmation?order=${res.order_number}`);
-      }
+      idempotencyKey.current = newIdempotencyKey();
+      const token = res.access_token
+        ? `&token=${encodeURIComponent(res.access_token)}`
+        : "";
+      navigate(`/payment-pending?order=${encodeURIComponent(res.order_number)}${token}`);
     } catch (err) {
       const d = err?.response?.data?.detail;
       const code = typeof d === "string" ? d : d?.error;
@@ -177,6 +207,26 @@ export default function CheckoutPage() {
     );
   }
 
+  if (!checkoutEnabled) {
+    return (
+      <div data-testid="checkout-disabled" className="py-8 lg:py-12">
+        <EmptyState
+          title={t("checkout.disabledTitle")}
+          description={t("checkout.disabledBody")}
+          action={
+            <Link
+              to="/shop"
+              data-testid="checkout-disabled-cta"
+              className="inline-flex h-11 items-center bg-foreground px-8 text-sm font-semibold text-background hover:bg-primary"
+            >
+              {t("checkout.disabledCta")}
+            </Link>
+          }
+        />
+      </div>
+    );
+  }
+
   const options = optionsQuery.data;
   const quote = quoteQuery.data;
   const items = options?.items || cart?.items || [];
@@ -201,15 +251,17 @@ export default function CheckoutPage() {
               </p>
             ) : (
               <div className="mt-3 max-w-md">
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                <label htmlFor="checkout-email" className="mb-1 block text-xs font-medium text-muted-foreground">
                   {t("checkout.email")}
                 </label>
                 <input
+                  id="checkout-email"
                   type="email"
                   required
                   data-testid="checkout-email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
                   className={fieldClass}
                 />
               </div>
@@ -326,20 +378,6 @@ export default function CheckoutPage() {
             </div>
           </section>
 
-          <section data-testid="checkout-payment">
-            <h2 className="text-sm font-semibold uppercase tracking-wide">
-              {t("checkout.paymentMethod")}
-            </h2>
-            <div
-              data-testid="checkout-payment-click"
-              className="mt-3 flex items-center justify-between border border-foreground p-4 text-sm"
-            >
-              <span className="font-semibold tracking-wide">CLICK</span>
-              <span className="text-xs text-muted-foreground">
-                {options?.payment_mode === "mock" ? t("mockPay.badge") : "click.uz"}
-              </span>
-            </div>
-          </section>
         </div>
 
         <aside

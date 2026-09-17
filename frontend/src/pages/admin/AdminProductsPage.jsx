@@ -37,7 +37,7 @@ export default function AdminProductsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold tracking-tight">Products</h1>
         <Link
-          to="/admin/products/new"
+          to="/products/new"
           data-testid="products-new-button"
           className="inline-flex h-10 items-center gap-1.5 bg-[#145A46] px-4 text-sm font-semibold text-white hover:opacity-90"
         >
@@ -97,7 +97,7 @@ export default function AdminProductsPage() {
               : items.map((p) => (
                   <tr key={p.id} className="border-b border-neutral-50 hover:bg-neutral-50" data-testid={`product-row-${p.slug}`}>
                     <td className="px-5 py-3">
-                      <Link to={`/admin/products/${p.id}`} className="font-medium text-[#145A46] hover:underline" data-testid={`product-edit-${p.slug}`}>
+                      <Link to={`/products/${p.id}`} className="font-medium text-[#145A46] hover:underline" data-testid={`product-edit-${p.slug}`}>
                         {p.name}
                       </Link>
                       <p className="text-xs text-neutral-400">{p.slug}</p>

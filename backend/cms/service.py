@@ -18,6 +18,7 @@ from db.models import (
     CmsMediaAsset,
     CmsRevision,
 )
+from storage import get_media_storage
 
 LOCALES = ("id", "en", "uz", "ru")
 
@@ -57,6 +58,37 @@ def sanitize_text(value: Optional[str], max_len: int = 10000) -> str:
     if len(value) > max_len or _UNSAFE_TEXT.search(value):
         raise ValueError("unsafe_content")
     return value
+
+
+def validate_payload(payload: dict) -> None:
+    """Reject legacy/external image URLs from CMS content payloads."""
+
+    if not isinstance(payload, dict):
+        raise ValueError("invalid_payload")
+    image_url = payload.get("image_url")
+    if image_url in (None, ""):
+        return
+    if (
+        not isinstance(image_url, str)
+        or len(image_url) > 500
+        or not image_url.startswith("/")
+        or image_url.startswith("//")
+    ):
+        raise ValueError("invalid_media_url")
+
+
+def clean_payload(payload: Optional[dict]) -> dict:
+    """Keep only local legacy image fallbacks in serialized CMS payloads."""
+
+    result = dict(payload or {})
+    image_url = result.get("image_url")
+    if image_url not in (None, "") and (
+        not isinstance(image_url, str)
+        or not image_url.startswith("/")
+        or image_url.startswith("//")
+    ):
+        result.pop("image_url", None)
+    return result
 
 
 def _signing_key() -> str:
@@ -155,7 +187,16 @@ async def _media_url(session: AsyncSession, media_id: Optional[str]) -> Optional
     asset = await session.get(CmsMediaAsset, media_id)
     if not asset:
         return None
-    return f"/api/v1/cms/media/file/{asset.storage_key}"
+    public_url = get_media_storage().public_url(asset.storage_key)
+    return public_url or f"/api/v1/cms/media/file/{asset.storage_key}"
+
+
+async def media_url(session: AsyncSession, asset: CmsMediaAsset) -> str:
+    """Return a browser-safe URL for an asset in local or S3 storage."""
+
+    return get_media_storage().public_url(asset.storage_key) or (
+        f"/api/v1/cms/media/file/{asset.storage_key}"
+    )
 
 
 async def entry_detail(session: AsyncSession, entry: CmsContentEntry) -> dict:
@@ -164,6 +205,8 @@ async def entry_detail(session: AsyncSession, entry: CmsContentEntry) -> dict:
             select(CmsContentTranslation).where(CmsContentTranslation.entry_id == entry.id)
         )
     ).scalars().all()
+    payload = clean_payload(entry.payload)
+    image_url = await _media_url(session, entry.media_id) or payload.get("image_url")
     return {
         "id": entry.id,
         "content_type": entry.content_type,
@@ -174,10 +217,10 @@ async def entry_detail(session: AsyncSession, entry: CmsContentEntry) -> dict:
         "sort_order": entry.sort_order,
         "is_visible": entry.is_visible,
         "media_id": entry.media_id,
-        "image_url": await _media_url(session, entry.media_id) or (entry.payload or {}).get("image_url"),
+        "image_url": image_url,
         "cta_url": entry.cta_url,
         "secondary_cta_url": entry.secondary_cta_url,
-        "payload": entry.payload or {},
+        "payload": payload,
         "published_at": entry.published_at,
         "updated_at": entry.updated_at,
         "translations": {
@@ -212,6 +255,7 @@ async def entry_summary(session: AsyncSession, entry: CmsContentEntry) -> dict:
         "placement": entry.placement,
         "sort_order": entry.sort_order,
         "is_visible": entry.is_visible,
+        "media_id": entry.media_id,
         "updated_at": entry.updated_at,
         "completeness": sorted(
             t.locale for t in translations if (t.title or t.body or t.description)

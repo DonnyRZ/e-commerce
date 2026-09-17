@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+# Add a production-domain sitemap here when the canonical domain is fixed.

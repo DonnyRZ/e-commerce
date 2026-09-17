@@ -4,11 +4,12 @@ import { Heart, Minus, Plus, ShoppingBag } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
-import { getProduct } from "@/lib/api";
+import { getCheckoutOptions, getProduct } from "@/lib/api";
 import { useShop } from "@/lib/ShopContext";
 import { colorHex, pickLocalized } from "@/lib/localize";
 import EmptyState from "@/components/common/EmptyState";
 import ErrorState from "@/components/common/ErrorState";
+import ImageWithFallback from "@/components/common/ImageWithFallback";
 import PriceDisplay from "@/components/common/PriceDisplay";
 import SizeGuide from "@/components/pdp/SizeGuide";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -49,6 +50,12 @@ export default function ProductPage() {
     retry: false,
   });
   const product = query.data;
+  const checkoutOptionsQuery = useQuery({
+    queryKey: ["checkout-options"],
+    queryFn: getCheckoutOptions,
+    staleTime: 60 * 1000,
+    retry: false,
+  });
 
   const variants = useMemo(
     () => (product?.variants || []).filter((v) => v.is_active),
@@ -85,15 +92,6 @@ export default function ProductPage() {
     }
   }, [product, locale]);
 
-  const isValueAvailable = (dimKey, value) =>
-    variants.some(
-      (v) =>
-        v.option_values[dimKey] === value &&
-        dimensions.every(
-          (d) => d.key === dimKey || !selected[d.key] || v.option_values[d.key] === selected[d.key]
-        )
-    );
-
   const isValueInStock = (dimKey, value) =>
     variants.some(
       (v) =>
@@ -125,7 +123,7 @@ export default function ProductPage() {
     const media = (product?.media || [])
       .slice()
       .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
-      .map((m) => m.url)
+      .map((m) => (typeof m === "string" ? m : m.url))
       .filter(Boolean);
     if (selectedVariant?.image_url) {
       return [selectedVariant.image_url, ...media.filter((u) => u !== selectedVariant.image_url)];
@@ -153,7 +151,10 @@ export default function ProductPage() {
   const description = pickLocalized(product.translations, locale, "description");
   const attrs = product.attributes || {};
   const isSkincare = product.product_type === "skincare";
-  const hasSize = dimensions.some((d) => d.key === "size") && product.product_type === "apparel";
+  const isBatik = product.product_type === "batik";
+  const isParfum = product.product_type === "parfum";
+  const hasSize = dimensions.some((d) => d.key === "size") &&
+    (["apparel", "hijab"].includes(product.product_type) || isBatik);
 
   const unitPrice = selectedVariant
     ? selectedVariant.sale_price_override ??
@@ -168,9 +169,14 @@ export default function ProductPage() {
   const outOfStock = selectedVariant ? stockQty <= 0 : false;
   const lowStock = selectedVariant ? stockQty > 0 && stockQty <= 5 : false;
   const maxQty = stockQty ? Math.min(stockQty, 10) : 10;
+  const checkoutUnavailable =
+    checkoutOptionsQuery.isError ||
+    (checkoutOptionsQuery.isSuccess &&
+      checkoutOptionsQuery.data?.checkout_enabled === false);
 
   const category = product.category;
   const department = category?.department;
+  const ancestors = category?.ancestors || (department ? [department] : []);
 
   const addToCart = async () => {
     if (!selectedVariant || outOfStock) return;
@@ -206,7 +212,7 @@ export default function ProductPage() {
 
   const infoSections = [
     description && { key: "description", title: t("pdp.description"), body: description },
-    (attrs.fit || attrs.size_cm || attrs.includes || attrs.age_range || attrs.spf) && {
+    (attrs.fit || attrs.size_cm || attrs.includes || attrs.age_range || attrs.spf || attrs.motif || attrs.volume || attrs.format) && {
       key: "features",
       title: t("pdp.features"),
       list: [
@@ -215,6 +221,9 @@ export default function ProductPage() {
         attrs.includes && `Includes: ${attrs.includes}`,
         attrs.age_range && `Age: ${attrs.age_range} yrs`,
         attrs.spf && `SPF ${attrs.spf}`,
+        attrs.motif && `${t("pdp.motif")}: ${attrs.motif}`,
+        attrs.volume && `${t("options.volume")}: ${attrs.volume}`,
+        attrs.format && `${t("options.format")}: ${attrs.format}`,
       ].filter(Boolean),
     },
     !isSkincare && (attrs.fabric || attrs.material || attrs.care) && {
@@ -237,6 +246,16 @@ export default function ProductPage() {
       title: t("pdp.directions"),
       body: attrs.directions,
     },
+    isParfum && (attrs.fragrance_family || attrs.notes || attrs.usage || attrs.alcohol_free) && {
+      key: "fragrance",
+      title: t("pdp.fragrance"),
+      list: [
+        attrs.fragrance_family && `${t("pdp.fragranceFamily")}: ${attrs.fragrance_family}`,
+        attrs.notes && `${t("pdp.notes")}: ${attrs.notes}`,
+        attrs.usage && `${t("pdp.usage")}: ${attrs.usage}`,
+        attrs.alcohol_free && t("pdp.alcoholFree"),
+      ].filter(Boolean),
+    },
     {
       key: "details",
       title: t("pdp.details"),
@@ -256,14 +275,19 @@ export default function ProductPage() {
     <div data-testid="pdp-page" className="py-6 lg:py-10">
       <p data-testid="pdp-breadcrumb" className="text-xs text-muted-foreground">
         <Link to="/" className="hover:underline">{t("nav.home")}</Link>
-        {department ? (
-          <>
+        {ancestors.map((ancestor) => (
+          <span key={ancestor.id}>
             {" / "}
-            <Link to={`/shop?department=${department.slug}`} className="hover:underline">
-              {pickLocalized(department.translations, locale)}
+            <Link
+              to={ancestor.kind === "department"
+                ? `/shop?department=${ancestor.slug}`
+                : `/shop?category=${ancestor.slug}`}
+              className="hover:underline"
+            >
+              {pickLocalized(ancestor.translations, locale)}
             </Link>
-          </>
-        ) : null}
+          </span>
+        ))}
         {category ? (
           <>
             {" / "}
@@ -279,7 +303,7 @@ export default function ProductPage() {
       <div className="mt-6 grid gap-8 lg:grid-cols-2 lg:gap-14">
         <div data-testid="pdp-gallery">
           <div className="overflow-hidden bg-secondary">
-            <img
+            <ImageWithFallback
               src={images[imageIndex]}
               alt={name}
               data-testid="pdp-main-image"
@@ -303,7 +327,7 @@ export default function ProductPage() {
                     imageIndex === i ? "border-foreground" : "border-transparent"
                   }`}
                 >
-                  <img
+                  <ImageWithFallback
                     src={url}
                     alt=""
                     loading="lazy"
@@ -317,6 +341,11 @@ export default function ProductPage() {
 
         <div data-testid="pdp-panel" className="lg:sticky lg:top-28 lg:self-start">
           <div className="flex items-center gap-2">
+            {product.is_demo ? (
+              <span data-testid="pdp-badge-preview" className="bg-[#FDF7E9] px-2 py-0.5 text-[11px] font-semibold tracking-wide text-[#02422C]">
+                {t("product.catalog")}
+              </span>
+            ) : null}
             {product.new_arrival ? (
               <span data-testid="pdp-badge-new" className="bg-foreground px-2 py-0.5 text-[11px] font-semibold tracking-wide text-background">
                 {t("product.new")}
@@ -339,6 +368,11 @@ export default function ProductPage() {
           <h1 data-testid="pdp-title" className="mt-1 text-2xl font-semibold tracking-tight lg:text-3xl">
             {name}
           </h1>
+          {product.is_demo ? (
+            <p data-testid="pdp-preview-notice" className="mt-2 text-sm leading-relaxed text-primary">
+              {t("pdp.catalogNotice")}
+            </p>
+          ) : null}
           <p data-testid="pdp-sku" className="mt-1 text-xs text-muted-foreground">
             {t("pdp.sku")}: {selectedVariant?.sku || "-"}
           </p>
@@ -475,6 +509,14 @@ export default function ProductPage() {
               <Heart className="h-5 w-5" fill={wished ? "currentColor" : "none"} aria-hidden="true" />
             </button>
           </div>
+          {checkoutUnavailable ? (
+            <p
+              data-testid="pdp-checkout-unavailable"
+              className="mt-3 text-xs leading-relaxed text-muted-foreground"
+            >
+              {t("pdp.checkoutUnavailableBody")}
+            </p>
+          ) : null}
 
           <div className="mt-6 border-t border-border pt-4 text-xs text-muted-foreground">
             <p>{t("pdp.deliveryText")}</p>

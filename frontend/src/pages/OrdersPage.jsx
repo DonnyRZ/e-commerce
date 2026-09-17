@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function StatusBadge({ value, kind, testId }) {
   const { t } = useI18n();
   const paid = value === "paid";
-  const bad = ["cancelled", "failed", "expired"].includes(value);
+  const bad = ["cancelled", "failed", "expired", "refunded", "reconciliation_required"].includes(value);
   return (
     <span
       data-testid={testId}

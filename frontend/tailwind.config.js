@@ -15,6 +15,12 @@ module.exports = {
         sm: 'calc(var(--radius) - 4px)'
       },
       colors: {
+        brand: {
+          forest: '#02422C',
+          gold: '#CD9B3A',
+          ivory: '#FDF7E9',
+          ink: '#10231D'
+        },
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
         card: {
@@ -55,6 +61,9 @@ module.exports = {
           '4': 'hsl(var(--chart-4))',
           '5': 'hsl(var(--chart-5))'
         }
+      },
+      fontFamily: {
+        brand: ['"Cormorant Garamond"', 'Georgia', 'serif']
       },
       keyframes: {
         'accordion-down': {

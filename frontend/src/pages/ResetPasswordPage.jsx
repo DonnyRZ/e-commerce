@@ -2,8 +2,9 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useI18n } from "@/i18n";
 import { authErrorKey, resetPassword } from "@/lib/api";
+import BrandLogo from "@/components/brand/BrandLogo";
 
-export default function ResetPasswordPage() {
+export default function ResetPasswordPage({ backTo = "/login", brandTo = "/" }) {
   const { t } = useI18n();
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token") || "";
@@ -28,6 +29,9 @@ export default function ResetPasswordPage() {
 
   return (
     <div data-testid="reset-password-page" className="mx-auto max-w-md py-12 lg:py-20">
+      <div className="mb-10 flex justify-center">
+        <BrandLogo size="lg" to={brandTo} testId="reset-brand-logo" priority />
+      </div>
       <h1 className="text-2xl font-semibold tracking-tight lg:text-3xl">
         {t("auth.resetTitle")}
       </h1>
@@ -69,7 +73,7 @@ export default function ResetPasswordPage() {
         </form>
       )}
       <p className="mt-5 text-sm">
-        <Link to="/login" data-testid="reset-back-login" className="font-medium underline-offset-4 hover:underline">
+        <Link to={backTo} data-testid="reset-back-login" className="font-medium underline-offset-4 hover:underline">
           {t("auth.backToLogin")}
         </Link>
       </p>

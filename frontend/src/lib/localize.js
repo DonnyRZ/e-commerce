@@ -3,7 +3,9 @@ export const pickLocalized = (translations, locale, field = "title") =>
 
 export const mediaUrl = (url) => {
   if (!url) return "";
-  return url.startsWith("/") ? `${process.env.REACT_APP_BACKEND_URL}${url}` : url;
+  if (!url.startsWith("/")) return url;
+  const origin = (process.env.REACT_APP_BACKEND_URL || window.location.origin).replace(/\/$/, "");
+  return `${origin}${url}`;
 };
 
 const COLOR_HEX = {
@@ -22,15 +24,17 @@ export const colorHex = (name) =>
   COLOR_HEX[String(name).toLowerCase()] || "#C9C9C9";
 
 export function toCardProduct(p, locale) {
+  const firstMedia = p.media?.[0];
   return {
     id: p.id,
     slug: p.slug,
     name: pickLocalized(p.translations, locale),
-    image: p.media?.[0]?.url || "",
+    image: (typeof firstMedia === "string" ? firstMedia : firstMedia?.url) || "",
     price: p.base_price,
     compareAt: p.compare_at_price,
     colors: (p.colors || []).map(colorHex),
     meta: (p.brand || "").toUpperCase(),
+    isDemo: Boolean(p.is_demo),
     badge: p.compare_at_price ? "sale" : p.new_arrival ? "new" : null,
     stockState: p.stock_state,
     href: `/product/${p.slug}`,

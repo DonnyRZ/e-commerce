@@ -3,7 +3,7 @@ import os
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://muslimah-shop.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 API = f"{BASE_URL}/api/v1/catalog"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Testing) AppleWebKit/537.36"}
 

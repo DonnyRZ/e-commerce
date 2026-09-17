@@ -2,9 +2,9 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { addAdminReviewNote, adminMockRefund, getAdminPaymentsReview } from "@/lib/api";
+import { addAdminReviewNote, getAdminPaymentsReview } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatusPill, fmtDate, fmtMoney, inputClass } from "./adminUtils";
+import { StatusPill, fmtDate, fmtMoney } from "./adminUtils";
 
 function ReviewCard({ item, onSaved }) {
   const [note, setNote] = useState(item.review_note || "");
@@ -24,26 +24,11 @@ function ReviewCard({ item, onSaved }) {
     }
   };
 
-  const refund = async () => {
-    if (busy || !window.confirm(`Refund ${fmtMoney(item.amount, item.currency)} for order ${item.order_number}?`)) return;
-    setBusy(true);
-    try {
-      await adminMockRefund(item.payment_id);
-      toast.success("Payment refunded (mock)");
-      onSaved();
-    } catch (err) {
-      const d = err?.response?.data?.detail;
-      toast.error((typeof d === "object" && d?.error) || "Refund failed");
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <article className="border border-neutral-200 bg-white p-5" data-testid={`review-card-${item.payment_id}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Link to={`/admin/orders/${item.order_number}`} className="font-semibold text-[#145A46] hover:underline" data-testid={`review-order-${item.order_number}`}>
+          <Link to={`/orders/${item.order_number}`} className="font-semibold text-[#145A46] hover:underline" data-testid={`review-order-${item.order_number}`}>
             {item.order_number}
           </Link>
           <p className="mt-0.5 text-xs text-neutral-400">{fmtDate(item.created_at)} · txn {item.merchant_trans_id.slice(0, 12)}…</p>
@@ -82,7 +67,7 @@ function ReviewCard({ item, onSaved }) {
             maxLength={1000}
             data-testid={`review-note-${item.payment_id}`}
             className="w-full border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#145A46]"
-            placeholder="Resolution notes after checking the CLICK dashboard…"
+            placeholder="Add an internal resolution note…"
           />
         </div>
         <button
@@ -93,16 +78,6 @@ function ReviewCard({ item, onSaved }) {
         >
           Save note
         </button>
-        {item.payment_status === "paid" ? (
-          <button
-            onClick={refund}
-            disabled={busy}
-            data-testid={`review-refund-${item.payment_id}`}
-            className="h-10 border border-red-300 px-5 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-          >
-            Mock refund
-          </button>
-        ) : null}
       </div>
     </article>
   );
@@ -125,7 +100,7 @@ export default function AdminPaymentsPage() {
     <div data-testid="admin-payments-page">
       <h1 className="text-xl font-semibold tracking-tight">Payment Review Queue</h1>
       <p className="mt-1 text-sm text-neutral-500">
-        Payments flagged for reconciliation. Verify against the CLICK dashboard, then record a review note.
+        Historical payments flagged for review. Record internal notes; payment actions are unavailable until a payment method is configured.
       </p>
       <div className="mt-5 space-y-4">
         {isLoading

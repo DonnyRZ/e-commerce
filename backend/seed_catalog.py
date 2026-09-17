@@ -1,11 +1,12 @@
 """Idempotent catalog seed for MUSLIMAH CANTIK (PostgreSQL, Milestone 3).
 
 Run: python3 seed_catalog.py
-Creates departments, categories (+translations), sellers, products
-(+translations), variants. Safe to re-run.
+Creates departments, categories (+translations), the single store owner,
+products (+translations), and variants. Safe to re-run.
 """
 
 import asyncio
+import os
 
 from sqlalchemy import func, select
 
@@ -20,18 +21,58 @@ from db.models import (
 from db.session import SessionLocal
 
 
-def img(photo_id, w=800):
-    return (
-        f"https://images.unsplash.com/photo-{photo_id}"
-        f"?crop=entropy&cs=srgb&fm=jpg&q=80&w={w}&fit=crop"
-    )
+def img(*_args, **_kwargs):
+    """Legacy seed signature; visual assets are imported through CMS."""
+    return None
 
 
 DEPARTMENTS = [
-    ("women-muslimah", 1, {"en": "Women Muslimah", "id": "Busana Muslimah", "uz": "Muslima ayollar", "ru": "Женская мусульманская"}, img("1762376268273-645db555eaf9", 900)),
-    ("uniqlo-products", 2, {"en": "UNIQLO Products", "id": "Produk UNIQLO", "uz": "UNIQLO mahsulotlari", "ru": "Товары UNIQLO"}, img("1603400521630-9f2de124b33b", 900)),
-    ("tropical-halal-skincare", 3, {"en": "Tropical Halal Skincare", "id": "Skincare Halal Tropis", "uz": "Tropik halol teri parvarishi", "ru": "Тропический халяль-уход"}, img("1616750819456-5cdee9b85d22", 900)),
+    ("women-muslimah", 1, {"en": "Women Muslimah", "id": "Busana Muslimah", "uz": "Muslima ayollar", "ru": "Женская мусульманская"}, img("1762376268273-645db555eaf9", 900), True),
+    ("uniqlo-products", 2, {"en": "UNIQLO Products", "id": "Produk UNIQLO", "uz": "UNIQLO mahsulotlari", "ru": "Товары UNIQLO"}, img("1603400521630-9f2de124b33b", 900), True),
+    ("tropical-halal-skincare", 3, {"en": "Tropical Halal Skincare", "id": "Skincare Halal Tropis", "uz": "Tropik halol teri parvarishi", "ru": "Тропический халяль-уход"}, img("1616750819456-5cdee9b85d22", 900), True),
+    # The approved taxonomy is storefront-visible even before product master
+    # data is entered, so customers can discover the new departments now.
+    ("batik", 4, {"en": "Batik", "id": "Batik", "uz": "Batik", "ru": "Батик"}, None, True),
+    ("parfum", 5, {"en": "Perfume", "id": "Parfum", "uz": "Atirlar", "ru": "Парфюмерия"}, None, True),
 ]
+
+BATIK_WOMEN_CATEGORIES = [
+    ("gamis-batik", 1, {"en": "Batik Gamis", "id": "Gamis Batik", "uz": "Batikli gamis", "ru": "Гамис из батика"}),
+    ("tunik-batik", 2, {"en": "Batik Tunic", "id": "Tunik Batik", "uz": "Batik tunika", "ru": "Туника из батика"}),
+    ("outer-cardigan-batik", 3, {"en": "Batik Outerwear & Cardigans", "id": "Outer & Cardigan Batik", "uz": "Batik ustki kiyimlari va kardiganlar", "ru": "Верхняя одежда и кардиганы из батика"}),
+    ("setelan-one-set-batik", 4, {"en": "Batik One-Set", "id": "Setelan (One-Set Batik)", "uz": "Batikli komplekt", "ru": "Комплект из батика"}),
+    ("rok-batik-panjang", 5, {"en": "Long Batik Skirts", "id": "Rok Batik Panjang", "uz": "Uzun batik yubkalar", "ru": "Длинные юбки из батика"}),
+    ("hijab-pashmina-batik", 6, {"en": "Batik Hijab & Pashmina", "id": "Hijab & Pashmina Batik", "uz": "Batik hijob va pashmina", "ru": "Хиджабы и пашмины из батика"}),
+]
+
+PARFUM_WOMEN_CATEGORIES = [
+    ("musk-thaharah", 1, {"en": "Musk Thaharah", "id": "Musk Thaharah", "uz": "Musk Thaharah", "ru": "Муск Тахара"}),
+    ("soft-floral-powdery", 2, {"en": "Soft Floral & Powdery (Light Daily Aroma)", "id": "Soft Floral & Powdery (Aroma Ringan Harian)", "uz": "Yumshoq floral va pudrali (yengil kundalik hid)", "ru": "Мягкий цветочный и пудровый аромат (лёгкий на каждый день)"}),
+    ("gourmand-rich-oriental", 3, {"en": "Gourmand & Rich Oriental (Private/Home Use)", "id": "Gourmand & Rich Oriental (Khusus Area Privat/Rumah)", "uz": "Gurman va boy sharqona (uy va shaxsiy foydalanish)", "ru": "Гурманские и насыщенные восточные ароматы (для дома и личного использования)"}),
+    ("parfum-semprot-bebas-alkohol", 4, {"en": "Alcohol-Free Spray Perfume", "id": "Parfum Semprot Bebas Alkohol (Alcohol-Free Spray)", "uz": "Spirtsiz purkaladigan atir", "ru": "Спрей-парфюм без спирта"}),
+]
+
+NEW_TAXONOMY_GROUPS = [
+    ("batik", "batik-wanita-muslimah", 1, {"en": "Batik Women Muslimah", "id": "Batik Wanita Muslimah", "uz": "Muslima ayollar batigi", "ru": "Батик для мусульманок"}, BATIK_WOMEN_CATEGORIES),
+    ("parfum", "parfum-wanita-muslimah", 1, {"en": "Women Muslimah Perfume", "id": "Parfum Wanita Muslimah", "uz": "Muslima ayollar atirlari", "ru": "Парфюмерия для мусульманок"}, PARFUM_WOMEN_CATEGORIES),
+]
+
+# Legacy nodes removed after the store scope was clarified. The deployment
+# migration deletes these rows and this list prevents a future seed from
+# recreating them.
+REMOVED_CATALOG_SLUGS = {
+    "batik-pria",
+    "batik-koko-kemko",
+    "kemeja-batik-lengan-panjang",
+    "kemeja-batik-lengan-pendek",
+    "jas-blazer-batik-luara",
+    "sarung-batik",
+    "parfum-pria",
+    "oud-woody",
+    "kasturi-rempah",
+    "fresh-citrus-aquatic",
+    "attar-perfume-oil-premium",
+}
 
 MUSLIMAH_CATEGORIES = [
     ("hijab-kerudung", 1, {"en": "Hijab / Kerudung", "id": "Hijab / Kerudung", "uz": "Hijob", "ru": "Хиджаб"}, img("1550546094-9835463f9f71")),
@@ -72,11 +113,7 @@ SKINCARE_CATEGORIES = [
     ("face-mist", 5, {"en": "Face Mist", "id": "Face Mist", "uz": "Yuz spreyi", "ru": "Мист для лица"}, img("1616750819456-5cdee9b85d22")),
 ]
 
-SELLERS = [
-    ("official@muslimahcantik.id", "MUSLIMAH CANTIK Official"),
-    ("partner-uniqlo@muslimahcantik.id", "UNIQLO Products Partner"),
-    ("tropicalglow@muslimahcantik.id", "Tropical Glow Halal Beauty"),
-]
+STORE_OWNER = ("official@muslimahcantik.id", "MUSLIMAH CANTIK Official")
 
 SIZES_6 = ["XS", "S", "M", "L", "XL", "XXL"]
 SIZES_4 = ["S", "M", "L", "XL"]
@@ -110,7 +147,6 @@ PRODUCTS = [
     {
         "slug": "gray-sweat-oversized-full-zip-hoodie",
         "category": "sweatshirts-hoodies",
-        "seller": "partner-uniqlo@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MC Essentials",
         "base_price": 499000,
@@ -140,7 +176,6 @@ PRODUCTS = [
     {
         "slug": "essential-crewneck-sweatshirt",
         "category": "tshirts-sweats-fleece",
-        "seller": "partner-uniqlo@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MC Essentials",
         "base_price": 349000,
@@ -167,7 +202,6 @@ PRODUCTS = [
     {
         "slug": "wide-leg-relaxed-trousers",
         "category": "bottoms",
-        "seller": "partner-uniqlo@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MC Essentials",
         "base_price": 399000,
@@ -194,7 +228,6 @@ PRODUCTS = [
     {
         "slug": "premium-chiffon-hijab",
         "category": "hijab-kerudung",
-        "seller": "official@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MUSLIMAH CANTIK",
         "base_price": 89000,
@@ -221,7 +254,6 @@ PRODUCTS = [
     {
         "slug": "gamis-a-line-dress",
         "category": "gamis",
-        "seller": "official@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MUSLIMAH CANTIK",
         "base_price": 389000,
@@ -248,7 +280,6 @@ PRODUCTS = [
     {
         "slug": "abaya-classic-black",
         "category": "abaya",
-        "seller": "official@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MUSLIMAH CANTIK",
         "base_price": 549000,
@@ -272,7 +303,6 @@ PRODUCTS = [
     {
         "slug": "mukena-travel-set",
         "category": "mukena",
-        "seller": "official@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MUSLIMAH CANTIK",
         "base_price": 259000,
@@ -297,7 +327,6 @@ PRODUCTS = [
     {
         "slug": "kids-muslimah-daily-set",
         "category": "busana-muslimah-anak",
-        "seller": "official@muslimahcantik.id",
         "product_type": "apparel",
         "brand": "MUSLIMAH CANTIK Kids",
         "base_price": 229000,
@@ -324,7 +353,6 @@ PRODUCTS = [
     {
         "slug": "halal-gentle-facial-wash",
         "category": "facial-wash",
-        "seller": "tropicalglow@muslimahcantik.id",
         "product_type": "skincare",
         "brand": "Tropical Glow",
         "base_price": 79000,
@@ -349,7 +377,6 @@ PRODUCTS = [
     {
         "slug": "brightening-serum-30ml",
         "category": "serum",
-        "seller": "tropicalglow@muslimahcantik.id",
         "product_type": "skincare",
         "brand": "Tropical Glow",
         "base_price": 149000,
@@ -373,7 +400,6 @@ PRODUCTS = [
     {
         "slug": "tropical-moist-cream-50ml",
         "category": "moist-cream",
-        "seller": "tropicalglow@muslimahcantik.id",
         "product_type": "skincare",
         "brand": "Tropical Glow",
         "base_price": 129000,
@@ -397,7 +423,6 @@ PRODUCTS = [
     {
         "slug": "halal-daily-sunscreen-spf50",
         "category": "sunscreen",
-        "seller": "tropicalglow@muslimahcantik.id",
         "product_type": "skincare",
         "brand": "Tropical Glow",
         "base_price": 119000,
@@ -421,15 +446,371 @@ PRODUCTS = [
 ]
 
 
-async def upsert_category(session, *, slug, kind, department, names, sort_order, parent_id=None, image_url=None):
+# Showcase-only products keep the storefront visually complete while the
+# owner is still preparing the real product master. They are deliberately
+# Muslimah-only, use stable DEMO SKUs, and are protected from checkout by the
+# application. The local image paths are a safe fallback; the deployment
+# import maps the same files to CMS media_id values.
+DEMO_PRODUCTS = [
+    {
+        "slug": "demo-gamis-batik-emerald-puspa",
+        "category": "gamis-batik",
+        "product_type": "batik",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 899000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "batik", "gamis"],
+        "attributes": {
+            "material": "Batik cotton-silk blend",
+            "motif": "Emerald Puspa botanical",
+            "care": "Hand wash cold; hang dry",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/batik/demo-gamis-batik-emerald-puspa.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/batik/demo-gamis-batik-emerald-puspa-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": True,
+        "bestseller": False,
+        "featured": True,
+        "is_demo": True,
+        "translations": {
+            "en": ("Emerald Puspa Batik Gamis", "A showcase concept for a graceful full-length batik gamis."),
+            "id": ("Gamis Batik Emerald Puspa", "Contoh katalog gamis batik panjang dengan motif botani yang anggun."),
+            "uz": ("Emerald Puspa batikli gamis", "Nafis botanika naqshli uzun batikli gamis katalog namunasi."),
+            "ru": ("Батиковый гамис Emerald Puspa", "Витринная модель длинного гамиса с изящным растительным узором."),
+        },
+        "variants": [
+            {"sku": "DEMO-BATIK-GAMIS-EMERALD-S", "option_values": {"color": "Emerald", "size": "S"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-GAMIS-EMERALD-M", "option_values": {"color": "Emerald", "size": "M"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-GAMIS-EMERALD-L", "option_values": {"color": "Emerald", "size": "L"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-tunik-batik-emerald-puspa",
+        "category": "tunik-batik",
+        "product_type": "batik",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 649000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "batik", "tunik"],
+        "attributes": {
+            "material": "Batik cotton-silk blend",
+            "motif": "Emerald Puspa botanical",
+            "care": "Hand wash cold; hang dry",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/batik/demo-tunik-batik-emerald-puspa.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/batik/demo-tunik-batik-emerald-puspa-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": True,
+        "bestseller": False,
+        "featured": False,
+        "is_demo": True,
+        "translations": {
+            "en": ("Emerald Puspa Batik Tunic", "A showcase concept for a polished long batik tunic."),
+            "id": ("Tunik Batik Emerald Puspa", "Contoh katalog tunik batik panjang dengan siluet rapi dan motif botani."),
+            "uz": ("Emerald Puspa batikli tunika", "Nafis siluetli uzun batikli tunika katalog namunasi."),
+            "ru": ("Батиковая туника Emerald Puspa", "Витринная модель длинной батиковой туники с растительным узором."),
+        },
+        "variants": [
+            {"sku": "DEMO-BATIK-TUNIK-EMERALD-S", "option_values": {"color": "Emerald", "size": "S"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-TUNIK-EMERALD-M", "option_values": {"color": "Emerald", "size": "M"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-TUNIK-EMERALD-L", "option_values": {"color": "Emerald", "size": "L"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-outer-batik-emerald-puspa",
+        "category": "outer-cardigan-batik",
+        "product_type": "batik",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 799000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "batik", "outer", "cardigan"],
+        "attributes": {
+            "material": "Batik cotton-silk blend",
+            "motif": "Emerald Puspa botanical",
+            "care": "Hand wash cold; hang dry",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/batik/demo-outer-batik-emerald-puspa.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/batik/demo-outer-batik-emerald-puspa-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": False,
+        "bestseller": False,
+        "featured": True,
+        "is_demo": True,
+        "translations": {
+            "en": ("Emerald Puspa Batik Outer", "A showcase concept for a flowing open-front batik outer."),
+            "id": ("Outer Batik Emerald Puspa", "Contoh katalog outer batik panjang dengan lapisan dalam warna ivory."),
+            "uz": ("Emerald Puspa batikli outer", "Ivory ichki qatlamli uzun batikli outer katalog namunasi."),
+            "ru": ("Батиковый кардиган Emerald Puspa", "Витринная модель длинного открытого кардигана из батика."),
+        },
+        "variants": [
+            {"sku": "DEMO-BATIK-OUTER-EMERALD-S", "option_values": {"color": "Emerald", "size": "S"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-OUTER-EMERALD-M", "option_values": {"color": "Emerald", "size": "M"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-OUTER-EMERALD-L", "option_values": {"color": "Emerald", "size": "L"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-setelan-batik-emerald-puspa",
+        "category": "setelan-one-set-batik",
+        "product_type": "batik",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 949000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "batik", "setelan"],
+        "attributes": {
+            "material": "Batik cotton-silk blend",
+            "motif": "Emerald Puspa botanical",
+            "care": "Hand wash cold; hang dry",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/batik/demo-setelan-batik-emerald-puspa.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/batik/demo-setelan-batik-emerald-puspa-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": True,
+        "bestseller": False,
+        "featured": False,
+        "is_demo": True,
+        "translations": {
+            "en": ("Emerald Puspa Batik Set", "A showcase concept for a coordinated batik tunic and wide-leg set."),
+            "id": ("Setelan Batik Emerald Puspa", "Contoh katalog setelan batik dengan atasan tunik dan celana lebar."),
+            "uz": ("Emerald Puspa batikli komplekt", "Tunika va keng shimdan iborat batikli komplekt katalog namunasi."),
+            "ru": ("Батиковый комплект Emerald Puspa", "Витринный комплект из туники и широких брюк с единым узором."),
+        },
+        "variants": [
+            {"sku": "DEMO-BATIK-SET-EMERALD-S", "option_values": {"color": "Emerald", "size": "S"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-SET-EMERALD-M", "option_values": {"color": "Emerald", "size": "M"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-SET-EMERALD-L", "option_values": {"color": "Emerald", "size": "L"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-rok-batik-panjang-emerald-puspa",
+        "category": "rok-batik-panjang",
+        "product_type": "batik",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 499000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "batik", "rok"],
+        "attributes": {
+            "material": "Batik cotton-silk blend",
+            "motif": "Emerald Puspa botanical",
+            "care": "Hand wash cold; hang dry",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/batik/demo-rok-batik-panjang-emerald-puspa.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/batik/demo-rok-batik-panjang-emerald-puspa-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": False,
+        "bestseller": False,
+        "featured": False,
+        "is_demo": True,
+        "translations": {
+            "en": ("Emerald Puspa Long Batik Skirt", "A showcase concept for a full-length flowing batik skirt."),
+            "id": ("Rok Batik Panjang Emerald Puspa", "Contoh katalog rok batik panjang dengan jatuh kain yang anggun."),
+            "uz": ("Emerald Puspa uzun batik yubkasi", "Nafis tushadigan uzun batik yubka katalog namunasi."),
+            "ru": ("Длинная батиковая юбка Emerald Puspa", "Витринная модель длинной струящейся юбки из батика."),
+        },
+        "variants": [
+            {"sku": "DEMO-BATIK-ROK-EMERALD-S", "option_values": {"color": "Emerald", "size": "S"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-ROK-EMERALD-M", "option_values": {"color": "Emerald", "size": "M"}, "stock_quantity": 0},
+            {"sku": "DEMO-BATIK-ROK-EMERALD-L", "option_values": {"color": "Emerald", "size": "L"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-hijab-pashmina-batik-emerald-puspa",
+        "category": "hijab-pashmina-batik",
+        "product_type": "batik",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 249000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "batik", "hijab", "pashmina"],
+        "attributes": {
+            "material": "Lightweight woven fabric",
+            "motif": "Emerald Puspa botanical",
+            "care": "Hand wash cold; lay flat to dry",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/batik/demo-hijab-pashmina-batik-emerald-puspa.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/batik/demo-hijab-pashmina-batik-emerald-puspa-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": True,
+        "bestseller": False,
+        "featured": False,
+        "is_demo": True,
+        "translations": {
+            "en": ("Emerald Puspa Batik Pashmina", "A showcase concept for a lightweight patterned batik pashmina."),
+            "id": ("Hijab Pashmina Batik Emerald Puspa", "Contoh katalog pashmina batik ringan dengan motif botani."),
+            "uz": ("Emerald Puspa batikli pashmina", "Botanika naqshli yengil batik pashmina katalog namunasi."),
+            "ru": ("Батиковая пашмина Emerald Puspa", "Витринная модель лёгкой пашмины с растительным батиковым узором."),
+        },
+        "variants": [
+            {"sku": "DEMO-BATIK-HIJAB-EMERALD-OS", "option_values": {"color": "Emerald", "size": "One Size"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-musk-thaharah",
+        "category": "musk-thaharah",
+        "product_type": "parfum",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 189000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "parfum", "musk"],
+        "attributes": {
+            "fragrance_family": "Clean musk",
+            "notes": "Soft musk, cotton, white florals",
+            "usage": "Personal fragrance preview",
+            "volume": "30 ml",
+            "format": "Perfume oil",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/parfum/demo-musk-thaharah.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/parfum/demo-musk-thaharah-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": True,
+        "bestseller": False,
+        "featured": True,
+        "is_demo": True,
+        "translations": {
+            "en": ("Musk Thaharah", "A showcase concept for a clean, soft musk fragrance."),
+            "id": ("Musk Thaharah", "Contoh katalog aroma musk yang bersih dan lembut."),
+            "uz": ("Musk Thaharah", "Toza va mayin musk hidining katalog namunasi."),
+            "ru": ("Муск Тахара", "Витринная концепция чистого и мягкого мускусного аромата."),
+        },
+        "variants": [
+            {"sku": "DEMO-PARFUM-MUSK-30ML", "option_values": {"volume": "30 ml", "format": "Perfume oil"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-soft-floral-powdery",
+        "category": "soft-floral-powdery",
+        "product_type": "parfum",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 229000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "parfum", "floral", "powdery"],
+        "attributes": {
+            "fragrance_family": "Soft floral and powdery",
+            "notes": "Blush rose, white blossoms, soft powder",
+            "usage": "Light daily aroma preview",
+            "volume": "30 ml",
+            "format": "Eau de parfum",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/parfum/demo-soft-floral-powdery.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/parfum/demo-soft-floral-powdery-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": False,
+        "bestseller": True,
+        "featured": False,
+        "is_demo": True,
+        "translations": {
+            "en": ("Soft Floral & Powdery", "A showcase concept for a light floral aroma for every day."),
+            "id": ("Soft Floral & Powdery", "Contoh katalog aroma floral lembut dan powdery untuk harian."),
+            "uz": ("Soft Floral va Powdery", "Har kun uchun yengil floral va pudrali hid katalog namunasi."),
+            "ru": ("Мягкий цветочный и пудровый", "Витринная концепция лёгкого цветочного аромата на каждый день."),
+        },
+        "variants": [
+            {"sku": "DEMO-PARFUM-FLORAL-30ML", "option_values": {"volume": "30 ml", "format": "Eau de parfum"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-gourmand-rich-oriental",
+        "category": "gourmand-rich-oriental",
+        "product_type": "parfum",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 279000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "parfum", "gourmand", "oriental"],
+        "attributes": {
+            "fragrance_family": "Gourmand and rich oriental",
+            "notes": "Amber, vanilla, dark chocolate, rose",
+            "usage": "Private or home aroma preview",
+            "volume": "30 ml",
+            "format": "Eau de parfum",
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/parfum/demo-gourmand-rich-oriental.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/parfum/demo-gourmand-rich-oriental-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": True,
+        "bestseller": False,
+        "featured": False,
+        "is_demo": True,
+        "translations": {
+            "en": ("Gourmand & Rich Oriental", "A showcase concept for a warm, rich oriental fragrance."),
+            "id": ("Gourmand & Rich Oriental", "Contoh katalog aroma oriental kaya dengan nuansa gourmand."),
+            "uz": ("Gourmand va boy sharqona", "Boy sharqona va gourmand hidining katalog namunasi."),
+            "ru": ("Гурманский и насыщенный восточный", "Витринная концепция тёплого насыщенного восточного аромата."),
+        },
+        "variants": [
+            {"sku": "DEMO-PARFUM-GOURMAND-30ML", "option_values": {"volume": "30 ml", "format": "Eau de parfum"}, "stock_quantity": 0},
+        ],
+    },
+    {
+        "slug": "demo-alcohol-free-spray",
+        "category": "parfum-semprot-bebas-alkohol",
+        "product_type": "parfum",
+        "brand": "MUSLIMAH CANTIK",
+        "base_price": 219000,
+        "compare_at_price": None,
+        "tags": ["demo", "preview", "parfum", "alcohol-free", "spray"],
+        "attributes": {
+            "fragrance_family": "Fresh soft floral",
+            "notes": "White blossoms, green leaves, pale citrus",
+            "usage": "Light spray aroma preview",
+            "volume": "50 ml",
+            "format": "Alcohol-free spray",
+            "alcohol_free": True,
+        },
+        "media": [
+            {"url": "/assets/catalog/demo/parfum/demo-alcohol-free-spray.jpg", "sort_order": 0},
+            {"url": "/assets/catalog/demo/parfum/demo-alcohol-free-spray-detail.jpg", "sort_order": 1},
+        ],
+        "new_arrival": False,
+        "bestseller": False,
+        "featured": False,
+        "is_demo": True,
+        "translations": {
+            "en": ("Alcohol-Free Spray Perfume", "A showcase concept for a fresh, alcohol-free spray format."),
+            "id": ("Parfum Semprot Bebas Alkohol", "Contoh katalog parfum semprot ringan tanpa alkohol."),
+            "uz": ("Spirtsiz purkaladigan atir", "Spirtsiz yengil purkaladigan atir katalog namunasi."),
+            "ru": ("Спрей-парфюм без спирта", "Витринная концепция лёгкого спрей-парфюма без спирта."),
+        },
+        "variants": [
+            {"sku": "DEMO-PARFUM-SPRAY-50ML", "option_values": {"volume": "50 ml", "format": "Alcohol-free spray"}, "stock_quantity": 0},
+        ],
+    },
+]
+
+
+async def upsert_category(
+    session,
+    *,
+    slug,
+    kind,
+    department,
+    names,
+    sort_order,
+    parent_id=None,
+    image_url=None,
+    is_active=True,
+):
     existing = await session.scalar(select(Category).where(Category.slug == slug))
     if existing:
         existing.kind = kind
         existing.department = department
         existing.sort_order = sort_order
         existing.parent_id = parent_id
-        existing.image_url = image_url
-        existing.is_active = True
+        # Never replace a CMS-managed image on a repeat seed.
+        if image_url is not None and not existing.media_id:
+            existing.image_url = image_url
+        if existing.image_url and not existing.media_id and str(existing.image_url).startswith(("http://", "https://")):
+            existing.image_url = None
+        # Existing manual activation is authoritative for staged taxonomy.
+        # Legacy catalog entries are still explicitly kept active by the seed.
+        if is_active:
+            existing.is_active = True
         cat = existing
         await session.execute(
             CategoryTranslation.__table__.delete().where(
@@ -443,7 +824,8 @@ async def upsert_category(session, *, slug, kind, department, names, sort_order,
             department=department,
             sort_order=sort_order,
             parent_id=parent_id,
-            image_url=image_url,
+            image_url=None,
+            is_active=is_active,
         )
         session.add(cat)
         await session.flush()
@@ -453,10 +835,10 @@ async def upsert_category(session, *, slug, kind, department, names, sort_order,
     return cat.id
 
 
-async def upsert_product(session, spec, seller_ids, cat_ids):
+async def upsert_product(session, spec, owner_id, cat_ids):
     existing = await session.scalar(select(Product).where(Product.slug == spec["slug"]))
     fields = dict(
-        seller_id=seller_ids[spec["seller"]],
+        seller_id=owner_id,
         category_id=cat_ids[spec["category"]],
         product_type=spec["product_type"],
         brand=spec["brand"],
@@ -465,8 +847,8 @@ async def upsert_product(session, spec, seller_ids, cat_ids):
         currency="UZS",
         attributes=spec["attributes"],
         tags=spec["tags"],
-        media=[{"url": u, "alt": spec["slug"], "sort_order": i} for i, u in enumerate(spec["media"])],
         status="active",
+        is_demo=spec.get("is_demo", True),
         featured=spec["featured"],
         bestseller=spec["bestseller"],
         new_arrival=spec["new_arrival"],
@@ -474,14 +856,32 @@ async def upsert_product(session, spec, seller_ids, cat_ids):
     if existing:
         for k, v in fields.items():
             setattr(existing, k, v)
+        # External demo images are not allowed to survive a seed rerun.
+        existing.media = [
+            item for item in (existing.media or [])
+            if not (
+                (
+                    isinstance(item, str)
+                    and item.startswith(("http://", "https://"))
+                )
+                or (
+                    isinstance(item, dict)
+                    and isinstance(item.get("url"), str)
+                    and item["url"].startswith(("http://", "https://"))
+                    and not item.get("media_id")
+                )
+            )
+        ]
         product = existing
+        if not product.media:
+            product.media = list(spec.get("media", []))
         await session.execute(
             ProductTranslation.__table__.delete().where(
                 ProductTranslation.product_id == product.id
             )
         )
     else:
-        product = Product(slug=spec["slug"], **fields)
+        product = Product(slug=spec["slug"], media=list(spec.get("media", [])), **fields)
         session.add(product)
         await session.flush()
     for locale, (name, desc) in spec["translations"].items():
@@ -502,6 +902,8 @@ async def upsert_product(session, spec, seller_ids, cat_ids):
             existing_variant.stock_quantity = v["stock_quantity"]
             existing_variant.price_override = v.get("price_override")
             existing_variant.is_active = True
+            if existing_variant.image_url and not existing_variant.media_id and str(existing_variant.image_url).startswith(("http://", "https://")):
+                existing_variant.image_url = None
         else:
             session.add(
                 ProductVariant(
@@ -517,22 +919,29 @@ async def upsert_product(session, spec, seller_ids, cat_ids):
 
 async def seed():
     async with SessionLocal() as session:
-        seller_ids = {}
-        for email, name in SELLERS:
-            existing = await session.scalar(select(User).where(User.email == email))
-            if existing:
-                existing.full_name = name
-                existing.role = "seller"
-                existing.is_active = True
-                seller_ids[email] = existing.id
-            else:
-                user = User(email=email, full_name=name, role="seller")
-                session.add(user)
-                await session.flush()
-                seller_ids[email] = user.id
+        email = (
+            os.environ.get("STORE_OWNER_EMAIL", "").strip().lower()
+            or os.environ.get("SEED_ADMIN_EMAIL", "").strip().lower()
+            or STORE_OWNER[0]
+        )
+        name = STORE_OWNER[1]
+        owner = await session.scalar(select(User).where(User.email == email))
+        if not owner:
+            owner = await session.scalar(
+                select(User)
+                .where(User.role.in_(("admin", "owner")), User.is_active.is_(True))
+                .order_by(User.created_at, User.id)
+            )
+        if not owner:
+            raise RuntimeError(
+                "No active operator account found; run seed_accounts.py first"
+            )
+        owner.full_name = owner.full_name or name
+        owner.role = "admin"
+        owner.is_active = True
 
         dept_ids = {}
-        for slug, order, names, image_url in DEPARTMENTS:
+        for slug, order, names, image_url, is_active in DEPARTMENTS:
             dept_ids[slug] = await upsert_category(
                 session,
                 slug=slug,
@@ -541,6 +950,7 @@ async def seed():
                 names=names,
                 sort_order=order,
                 image_url=image_url,
+                is_active=is_active,
             )
 
         cat_ids = {}
@@ -562,8 +972,31 @@ async def seed():
                     image_url=image_url,
                 )
 
-        for spec in PRODUCTS:
-            await upsert_product(session, spec, seller_ids, cat_ids)
+        for root_slug, group_slug, group_order, group_names, leaf_specs in NEW_TAXONOMY_GROUPS:
+            group_id = await upsert_category(
+                session,
+                slug=group_slug,
+                kind="group",
+                department=root_slug,
+                names=group_names,
+                sort_order=group_order,
+                parent_id=dept_ids[root_slug],
+                is_active=True,
+            )
+            for leaf_slug, leaf_order, leaf_names in leaf_specs:
+                cat_ids[leaf_slug] = await upsert_category(
+                    session,
+                    slug=leaf_slug,
+                    kind="category",
+                    department=root_slug,
+                    names=leaf_names,
+                    sort_order=leaf_order,
+                    parent_id=group_id,
+                    is_active=True,
+                )
+
+        for spec in [*PRODUCTS, *DEMO_PRODUCTS]:
+            await upsert_product(session, spec, owner.id, cat_ids)
 
         await session.commit()
 
@@ -574,8 +1007,11 @@ async def seed():
             "categories": await session.scalar(
                 select(func.count()).select_from(Category).where(Category.kind == "category")
             ),
-            "sellers": await session.scalar(
-                select(func.count()).select_from(User).where(User.role == "seller")
+            "groups": await session.scalar(
+                select(func.count()).select_from(Category).where(Category.kind == "group")
+            ),
+            "store_owners": await session.scalar(
+                select(func.count()).select_from(User).where(User.id == owner.id)
             ),
             "products": await session.scalar(select(func.count()).select_from(Product)),
             "variants": await session.scalar(select(func.count()).select_from(ProductVariant)),

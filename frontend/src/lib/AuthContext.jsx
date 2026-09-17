@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect } from "react";
+import { createContext, useContext, useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { authLogin, authLogout, authMe, authRegister, mergeCart } from "./api";
@@ -27,6 +27,7 @@ async function mergeGuestCart(queryClient) {
 export function AuthProvider({ children }) {
   const queryClient = useQueryClient();
   const { setLocale } = useI18n();
+  const previousUserId = useRef(undefined);
   const { data: user = null, isLoading } = useQuery({
     queryKey: ["auth", "me"],
     queryFn: authMe,
@@ -39,13 +40,28 @@ export function AuthProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  useEffect(() => {
+    if (
+      previousUserId.current !== undefined &&
+      previousUserId.current !== (user?.id || null)
+    ) {
+      // Cart and wishlist are principal-scoped. Never let React Query reuse
+      // the previous account's data after login, logout, or account switch.
+      queryClient.removeQueries({ queryKey: ["cart"] });
+      queryClient.removeQueries({ queryKey: ["wishlist"] });
+    }
+    previousUserId.current = user?.id || null;
+  }, [queryClient, user?.id]);
+
   const value = {
     user,
     checking: isLoading,
     async login(email, password) {
       const u = await authLogin(email, password);
       queryClient.setQueryData(["auth", "me"], u);
-      await mergeGuestCart(queryClient);
+      // Admin sessions are for operations only and must never inherit a
+      // shopper's guest cart or wishlist state.
+      if (u.role !== "admin") await mergeGuestCart(queryClient);
       return u;
     },
     async register(data) {
@@ -59,6 +75,8 @@ export function AuthProvider({ children }) {
         await authLogout();
       } finally {
         queryClient.setQueryData(["auth", "me"], null);
+        queryClient.removeQueries({ queryKey: ["cart"] });
+        queryClient.removeQueries({ queryKey: ["wishlist"] });
       }
     },
     setUser: (u) => queryClient.setQueryData(["auth", "me"], u),

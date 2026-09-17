@@ -3,13 +3,15 @@ import { Link } from "react-router-dom";
 import { Heart, Search, ShoppingBag, User } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
-import { getDepartments } from "@/lib/api";
+import { getCatalogTree } from "@/lib/api";
 import { useShop } from "@/lib/ShopContext";
 import { pickLocalized } from "@/lib/localize";
+import { taxonomyLabel, taxonomySections } from "@/lib/taxonomy";
 import LanguageSelector from "./LanguageSelector";
 import MobileNavigation from "./MobileNavigation";
 import SecondaryNav from "./SecondaryNav";
 import SearchOverlay from "./SearchOverlay";
+import BrandLogo from "@/components/brand/BrandLogo";
 
 const UTILITY_LINKS = [
   { key: "header.wishlist", to: "/wishlist", icon: Heart, testId: "wishlist-entry" },
@@ -21,9 +23,9 @@ export default function Header() {
   const { locale, t } = useI18n();
   const { cartCount, wishlistCount } = useShop();
   const [overlay, setOverlay] = useState({ open: false, dept: null });
-  const { data: departments = [] } = useQuery({
-    queryKey: ["departments"],
-    queryFn: getDepartments,
+  const { data: catalogTree = [] } = useQuery({
+    queryKey: ["catalog-tree"],
+    queryFn: getCatalogTree,
     staleTime: 5 * 60 * 1000,
   });
   const counts = { "cart-entry": cartCount, "wishlist-entry": wishlistCount };
@@ -34,27 +36,55 @@ export default function Header() {
         <div className="border-b border-border">
           <div className="mx-auto flex h-14 w-full max-w-[1440px] items-center gap-2 px-4 sm:px-6 lg:h-16 lg:gap-4 lg:px-10">
             <MobileNavigation />
-            <Link
-              to="/"
-              data-testid="brand-logo"
-              className="text-sm font-extrabold tracking-widest sm:text-base"
-            >
-              {t("brand.name")}
-            </Link>
+            <BrandLogo size="md" to="/" testId="brand-logo" priority />
             <nav
               className="ml-6 hidden items-center gap-7 lg:flex"
               aria-label="Primary"
               data-testid="desktop-nav"
             >
-              {departments.map((dept) => (
-                <Link
-                  key={dept.id}
-                  to={`/shop?department=${dept.slug}`}
-                  data-testid={`nav-${dept.slug}`}
-                  className="text-sm font-semibold tracking-wide text-foreground transition-colors hover:text-primary"
-                >
-                  {pickLocalized(dept.translations, locale)}
-                </Link>
+              {catalogTree.map((dept) => (
+                <div key={dept.id} className="group relative">
+                  <Link
+                    to={`/shop?department=${dept.slug}`}
+                    data-testid={`nav-${dept.slug}`}
+                    className="inline-flex items-center py-5 text-sm font-semibold tracking-wide text-foreground transition-colors hover:text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    {taxonomyLabel(dept, locale, pickLocalized)}
+                  </Link>
+                  {(dept.children || []).length ? (
+                    <div
+                      className="invisible absolute left-1/2 top-full z-50 w-[min(560px,calc(100vw-2rem))] -translate-x-1/2 border border-border bg-background p-5 opacity-0 shadow-xl transition-[opacity,visibility] duration-150 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+                      data-testid={`nav-menu-${dept.slug}`}
+                    >
+                      <div className="grid gap-5 sm:grid-cols-2">
+                        {taxonomySections(dept).map(({ group, items }) => (
+                          <div key={group?.id || `${dept.id}-direct`}>
+                            {group ? (
+                              <Link
+                                to={`/shop?category=${group.slug}`}
+                                className="text-xs font-semibold uppercase tracking-[0.16em] text-primary hover:underline"
+                              >
+                                {taxonomyLabel(group, locale, pickLocalized)}
+                              </Link>
+                            ) : null}
+                            <div className="mt-2 flex flex-col gap-1">
+                              {items.map((category) => (
+                                <Link
+                                  key={category.id}
+                                  to={`/shop?category=${category.slug}`}
+                                  data-testid={`nav-category-${category.slug}`}
+                                  className="text-sm text-muted-foreground transition-colors hover:text-foreground hover:underline"
+                                >
+                                  {taxonomyLabel(category, locale, pickLocalized)}
+                                </Link>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
               ))}
             </nav>
             <div className="ml-auto flex items-center gap-0.5">
@@ -73,7 +103,7 @@ export default function Header() {
                   to={to}
                   data-testid={testId}
                   aria-label={t(key)}
-                  className="relative inline-flex h-9 w-9 items-center justify-center text-foreground transition-colors hover:text-primary"
+                  className={`relative ${testId === "cart-entry" ? "inline-flex" : "hidden sm:inline-flex"} h-9 w-9 items-center justify-center text-foreground transition-colors hover:text-primary`}
                 >
                   <Icon className="h-5 w-5" aria-hidden="true" />
                   {counts[testId] > 0 ? (
@@ -86,7 +116,9 @@ export default function Header() {
                   ) : null}
                 </Link>
               ))}
-              <LanguageSelector />
+              <span className="hidden sm:inline-flex">
+                <LanguageSelector />
+              </span>
             </div>
           </div>
         </div>

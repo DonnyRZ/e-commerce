@@ -41,11 +41,11 @@ export default function AdminDashboardPage() {
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <StatCard label="Sales total" value={fmtMoney(d.sales_total, d.currency)} testId="stat-sales-total" />
-        <StatCard label="Orders needing action" value={d.orders_needing_action ?? 0} testId="stat-orders-action" to="/admin/orders" />
-        <StatCard label="Payment review" value={d.payment_review_count ?? 0} testId="stat-payment-review" to="/admin/payments" />
-        <StatCard label="Active products" value={`${d.active_products ?? 0} / ${d.total_products ?? 0}`} testId="stat-active-products" to="/admin/products" />
-        <StatCard label="Low stock variants" value={d.low_stock_variants ?? 0} testId="stat-low-stock" to="/admin/products?inventory=low_stock" />
-        <StatCard label="Out of stock variants" value={d.out_of_stock_variants ?? 0} testId="stat-out-of-stock" to="/admin/products?inventory=out_of_stock" />
+        <StatCard label="Orders needing action" value={d.orders_needing_action ?? 0} testId="stat-orders-action" to="/orders" />
+        <StatCard label="Payment review" value={d.payment_review_count ?? 0} testId="stat-payment-review" to="/payments" />
+        <StatCard label="Active products" value={`${d.active_products ?? 0} / ${d.total_products ?? 0}`} testId="stat-active-products" to="/products" />
+        <StatCard label="Low stock variants" value={d.low_stock_variants ?? 0} testId="stat-low-stock" to="/products?inventory=low_stock" />
+        <StatCard label="Out of stock variants" value={d.out_of_stock_variants ?? 0} testId="stat-out-of-stock" to="/products?inventory=out_of_stock" />
       </div>
 
       <section className="mt-8 border border-neutral-200 bg-white" data-testid="dashboard-status-breakdown">
@@ -63,7 +63,7 @@ export default function AdminDashboardPage() {
       <section className="mt-6 border border-neutral-200 bg-white" data-testid="dashboard-recent-orders">
         <div className="flex items-center justify-between border-b border-neutral-200 px-5 py-3">
           <h2 className="text-sm font-semibold">Recent orders</h2>
-          <Link to="/admin/orders" className="inline-flex items-center gap-1 text-xs font-medium text-[#145A46] hover:underline" data-testid="dashboard-view-orders">
+          <Link to="/orders" className="inline-flex items-center gap-1 text-xs font-medium text-[#145A46] hover:underline" data-testid="dashboard-view-orders">
             View all <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
           </Link>
         </div>
@@ -81,7 +81,7 @@ export default function AdminDashboardPage() {
             {(d.recent_orders || []).map((o) => (
               <tr key={o.order_number} className="border-b border-neutral-50 hover:bg-neutral-50" data-testid={`recent-order-${o.order_number}`}>
                 <td className="px-5 py-2.5">
-                  <Link to={`/admin/orders/${o.order_number}`} className="font-medium text-[#145A46] hover:underline">
+                  <Link to={`/orders/${o.order_number}`} className="font-medium text-[#145A46] hover:underline">
                     {o.order_number}
                   </Link>
                 </td>

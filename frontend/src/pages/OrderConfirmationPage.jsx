@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2 } from "lucide-react";
 import { useI18n } from "@/i18n";
@@ -44,7 +44,7 @@ export default function OrderConfirmationPage() {
   if (orderQuery.isError || !order) {
     return (
       <div className="py-16 text-center" data-testid="confirm-invalid">
-        <p className="text-sm text-muted-foreground">{t("mockPay.invalid")}</p>
+        <p className="text-sm text-muted-foreground">{t("paymentPending.invalidBody")}</p>
         <Link
           to="/shop"
           className="mt-5 inline-flex h-11 items-center bg-foreground px-8 text-sm font-semibold text-background hover:bg-primary"
@@ -53,6 +53,13 @@ export default function OrderConfirmationPage() {
         </Link>
       </div>
     );
+  }
+
+  // A confirmation page is reserved for a provider-confirmed payment. This
+  // also protects direct links/bookmarks from presenting an unpaid order as
+  // successful.
+  if (order.payment_state !== "paid") {
+    return <Navigate replace to={`/payment-pending?${searchParams.toString()}`} />;
   }
 
   return (

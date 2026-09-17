@@ -21,6 +21,7 @@ from auth import COOKIE_SAMESITE, COOKIE_SECURE, csrf_protect, decode_token, get
 from db.models import (
     Cart,
     CartItem,
+    Category,
     Product,
     ProductTranslation,
     ProductVariant,
@@ -29,6 +30,7 @@ from db.models import (
     WishlistItem,
 )
 from db.session import get_session
+from media import media_item_url
 
 router = APIRouter(prefix="/api/v1", tags=["shop"])
 
@@ -113,7 +115,18 @@ async def _cart_payload(session: AsyncSession, cart: Optional[Cart]) -> dict:
                 )
             ).scalars().all()
             translations = {t.locale: {"title": t.name} for t in trs}
-        if not product or not variant:
+        category = (
+            await session.scalar(
+                select(Category).where(
+                    Category.id == product.category_id,
+                    Category.kind == "category",
+                    Category.is_active.is_(True),
+                )
+            )
+            if product
+            else None
+        )
+        if not product or not variant or not category:
             unit_price = 0
             compare_at = None
             availability = "unavailable"
@@ -135,8 +148,8 @@ async def _cart_payload(session: AsyncSession, cart: Optional[Cart]) -> dict:
             stock = variant.stock_quantity
             sku = variant.sku
             options = variant.option_values or {}
-            image = variant.image_url or (product.media or [{}])[0].get("url")
-            if not variant.is_active or product.status != "active":
+            image = variant.image_url or media_item_url((product.media or [None])[0])
+            if not variant.is_active or product.status != "active" or not category:
                 availability = "unavailable"
             elif stock <= 0:
                 availability = "out_of_stock"
@@ -224,6 +237,19 @@ async def add_cart_item(
     user = await _optional_user(request, session)
     product = await session.get(Product, payload.product_id)
     if not product or product.status != "active":
+        raise HTTPException(status_code=404, detail="product_not_found")
+    # Showcase products remain addable so visitors can exercise the cart while
+    # checkout is disabled. The checkout service still rejects demo products,
+    # and the checkout endpoints are currently fail-closed, so this can never
+    # create a sellable order.
+    category = await session.scalar(
+        select(Category).where(
+            Category.id == product.category_id,
+            Category.kind == "category",
+            Category.is_active.is_(True),
+        )
+    )
+    if not category:
         raise HTTPException(status_code=404, detail="product_not_found")
     variant = await session.get(ProductVariant, payload.variant_id)
     if not variant or variant.product_id != product.id or not variant.is_active:
@@ -437,7 +463,7 @@ async def _wishlist_payload(session: AsyncSession, user: User) -> dict:
                 "brand": product.brand,
                 "base_price": product.base_price,
                 "compare_at_price": product.compare_at_price,
-                "image_url": (product.media or [{}])[0].get("url"),
+                "image_url": media_item_url((product.media or [None])[0]),
                 "stock_state": "out_of_stock" if total <= 0 else ("low_stock" if total <= 5 else "in_stock"),
             }
         )
@@ -461,6 +487,15 @@ async def add_wishlist_item(
 ):
     product = await session.get(Product, payload.product_id)
     if not product or product.status != "active":
+        raise HTTPException(status_code=404, detail="product_not_found")
+    category = await session.scalar(
+        select(Category).where(
+            Category.id == product.category_id,
+            Category.kind == "category",
+            Category.is_active.is_(True),
+        )
+    )
+    if not category:
         raise HTTPException(status_code=404, detail="product_not_found")
     wishlist = await _get_or_create_wishlist(session, user)
     existing = await session.scalar(

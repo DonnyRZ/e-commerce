@@ -36,7 +36,7 @@ export default function CmsContentPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold tracking-tight">CMS Content</h1>
         <Link
-          to="/admin/cms/new"
+          to="/cms/new"
           data-testid="cms-new-button"
           className="inline-flex h-10 items-center gap-1.5 bg-[#145A46] px-4 text-sm font-semibold text-white hover:opacity-90"
         >
@@ -86,7 +86,7 @@ export default function CmsContentPage() {
               : items.map((e) => (
                   <tr key={e.id} className="border-b border-neutral-50 hover:bg-neutral-50" data-testid={`cms-row-${e.slug || e.id}`}>
                     <td className="px-5 py-3">
-                      <Link to={`/admin/cms/${e.id}`} className="font-medium text-[#145A46] hover:underline" data-testid={`cms-edit-${e.slug || e.id}`}>
+                      <Link to={`/cms/${e.id}`} className="font-medium text-[#145A46] hover:underline" data-testid={`cms-edit-${e.slug || e.id}`}>
                         {e.internal_name}
                       </Link>
                       <p className="text-xs text-neutral-400">{e.slug || "—"}</p>

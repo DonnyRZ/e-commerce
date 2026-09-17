@@ -12,6 +12,7 @@ from db.models import (
     ProductVariant,
 )
 from db.session import get_session
+from taxonomy import descendant_ids_select, get_category_ancestors
 
 router = APIRouter(prefix="/api/v1/catalog", tags=["catalog"])
 
@@ -51,6 +52,7 @@ def _category_out(c: Category) -> dict:
         "department": c.department,
         "slug": c.slug,
         "parent_id": c.parent_id,
+        "media_id": c.media_id,
         "image_url": c.image_url,
         "sort_order": c.sort_order,
         "is_active": c.is_active,
@@ -75,6 +77,7 @@ def _product_out(p: Product) -> dict:
         "tags": p.tags or [],
         "media": p.media or [],
         "status": p.status,
+        "is_demo": p.is_demo,
         "featured": p.featured,
         "bestseller": p.bestseller,
         "new_arrival": p.new_arrival,
@@ -93,6 +96,7 @@ def _variant_out(v: ProductVariant) -> dict:
         "stock_quantity": v.stock_quantity,
         "price_override": v.price_override,
         "sale_price_override": v.sale_price_override,
+        "media_id": v.media_id,
         "image_url": v.image_url,
         "is_active": v.is_active,
         "stock_state": _stock_state(v.stock_quantity) if v.is_active else "inactive",
@@ -157,25 +161,48 @@ async def _scope_filters(
     department: Optional[str],
     category: Optional[str],
 ) -> list:
-    filters = [Product.status == "active"]
+    filters = [
+        Product.status == "active",
+        Product.category_id.in_(
+            select(Category.id).where(
+                Category.kind == "category",
+                Category.is_active.is_(True),
+            )
+        ),
+    ]
     if category:
         cat_id = await session.scalar(
-            select(Category.id).where(Category.slug == category)
+            select(Category.id).where(Category.slug == category, Category.is_active.is_(True))
         )
         if not cat_id:
             raise HTTPException(status_code=404, detail="Category not found")
-        filters.append(Product.category_id == cat_id)
+        filters.append(
+            Product.category_id.in_(
+                select(Category.id)
+                .where(
+                    Category.id.in_(descendant_ids_select(cat_id)),
+                    Category.kind == "category",
+                    Category.is_active.is_(True),
+                )
+            )
+        )
     elif department:
         dept = await session.scalar(
             select(Category).where(
-                Category.slug == department, Category.kind == "department"
+                Category.slug == department,
+                Category.kind == "department",
+                Category.is_active.is_(True),
             )
         )
         if not dept:
             raise HTTPException(status_code=404, detail="Department not found")
         filters.append(
             Product.category_id.in_(
-                select(Category.id).where(Category.parent_id == dept.id)
+                select(Category.id).where(
+                    Category.id.in_(descendant_ids_select(dept.id)),
+                    Category.kind == "category",
+                    Category.is_active.is_(True),
+                )
             )
         )
     return filters
@@ -203,6 +230,34 @@ async def list_departments(session: AsyncSession = Depends(get_session)):
     return [_category_out(c) for c in rows]
 
 
+def _sort_category_nodes(nodes: list[dict]) -> list[dict]:
+    for node in nodes:
+        node["children"] = _sort_category_nodes(node.get("children", []))
+    return sorted(nodes, key=lambda item: (item.get("sort_order", 0), item.get("slug", "")))
+
+
+@router.get("/tree")
+async def catalog_tree(session: AsyncSession = Depends(get_session)):
+    """Return the active department -> group -> category navigation tree."""
+
+    rows = (
+        await session.execute(
+            select(Category)
+            .options(selectinload(Category.translations))
+            .where(Category.is_active.is_(True))
+        )
+    ).scalars().all()
+    nodes = {category.id: {**_category_out(category), "children": []} for category in rows}
+    roots = []
+    for category in rows:
+        node = nodes[category.id]
+        if category.parent_id and category.parent_id in nodes:
+            nodes[category.parent_id]["children"].append(node)
+        elif category.kind == "department":
+            roots.append(node)
+    return _sort_category_nodes(roots)
+
+
 @router.get("/categories")
 async def list_categories(
     department: Optional[str] = None,
@@ -217,12 +272,14 @@ async def list_categories(
     if department:
         dept = await session.scalar(
             select(Category).where(
-                Category.slug == department, Category.kind == "department"
+                Category.slug == department,
+                Category.kind == "department",
+                Category.is_active.is_(True),
             )
         )
         if not dept:
             raise HTTPException(status_code=404, detail="Department not found")
-        stmt = stmt.where(Category.parent_id == dept.id)
+        stmt = stmt.where(Category.id.in_(descendant_ids_select(dept.id)))
     rows = (await session.execute(stmt)).scalars().all()
     return [_category_out(c) for c in rows]
 
@@ -238,18 +295,47 @@ async def category_detail(slug: str, session: AsyncSession = Depends(get_session
     if not cat:
         raise HTTPException(status_code=404, detail="Category not found")
     out = _category_out(cat)
-    if cat.parent_id:
-        parent_stmt = (
+    ancestors = await get_category_ancestors(session, cat, active_only=True)
+    ancestor_ids = [ancestor.id for ancestor in ancestors]
+    loaded_ancestors = {}
+    if ancestor_ids:
+        ancestor_rows = (
+            await session.execute(
+                select(Category)
+                .options(selectinload(Category.translations))
+                .where(Category.id.in_(ancestor_ids))
+            )
+        ).scalars().all()
+        loaded_ancestors = {ancestor.id: ancestor for ancestor in ancestor_rows}
+    ordered_ancestors = [loaded_ancestors[item.id] for item in ancestors if item.id in loaded_ancestors]
+    out["ancestors"] = [_category_out(item) for item in ordered_ancestors]
+    department_node = ordered_ancestors[0] if ordered_ancestors else (
+        cat if cat.kind == "department" else None
+    )
+    out["department"] = _category_out(department_node) if department_node else None
+    children = (
+        await session.execute(
             select(Category)
             .options(selectinload(Category.translations))
-            .where(Category.id == cat.parent_id)
+            .where(Category.parent_id == cat.id, Category.is_active.is_(True))
+            .order_by(Category.sort_order, Category.slug)
         )
-        parent = (await session.execute(parent_stmt)).scalar_one_or_none()
-        out["department"] = _category_out(parent) if parent else None
+    ).scalars().all()
+    out["children"] = [_category_out(child) for child in children]
     out["product_count"] = await session.scalar(
         select(func.count())
         .select_from(Product)
-        .where(Product.category_id == cat.id, Product.status == "active")
+        .where(
+            Product.category_id.in_(
+                select(Category.id)
+                .where(
+                    Category.id.in_(descendant_ids_select(cat.id)),
+                    Category.kind == "category",
+                    Category.is_active.is_(True),
+                )
+            ),
+            Product.status == "active",
+        )
     )
     return out
 
@@ -288,6 +374,8 @@ async def filter_metadata(
         "colors": await distinct_option("color"),
         "sizes": await distinct_option("size"),
         "volumes": await distinct_option("volume"),
+        "motifs": await distinct_option("motif"),
+        "formats": await distinct_option("format"),
         "price": {"min": int(price[0]), "max": int(price[1])},
     }
 
@@ -302,6 +390,9 @@ async def list_products(
     max_price: Optional[int] = Query(None, ge=0),
     color: Optional[str] = None,
     size: Optional[str] = None,
+    volume: Optional[str] = None,
+    motif: Optional[str] = None,
+    format: Optional[str] = None,
     availability: Optional[str] = None,
     sort: str = "featured",
     page: int = Query(1, ge=1),
@@ -334,6 +425,13 @@ async def list_products(
                 size=ProductVariant.option_values["size"].astext == size
             )
         )
+    for option_key, option_value in (("volume", volume), ("motif", motif), ("format", format)):
+        if option_value:
+            filters.append(
+                _variant_exists_clause(
+                    **{option_key: ProductVariant.option_values[option_key].astext == option_value}
+                )
+            )
     if availability == "in_stock":
         filters.append(
             _variant_exists_clause(stock=ProductVariant.stock_quantity > 0)
@@ -405,6 +503,7 @@ async def product_detail(slug: str, session: AsyncSession = Depends(get_session)
     out["variants"] = [
         _variant_out(v)
         for v in sorted(product.variants, key=lambda v: (v.created_at, v.sku))
+        if v.is_active
     ]
     out.update(
         (await _variant_stats(session, [product.id])).get(product.id, _EMPTY_STATS)
@@ -413,23 +512,39 @@ async def product_detail(slug: str, session: AsyncSession = Depends(get_session)
         await session.execute(
             select(Category)
             .options(selectinload(Category.translations))
-            .where(Category.id == product.category_id)
+            .where(
+                Category.id == product.category_id,
+                Category.kind == "category",
+                Category.is_active.is_(True),
+            )
         )
     ).scalar_one_or_none()
-    if cat:
-        cat_out = _category_out(cat)
-        if cat.parent_id:
-            dept = (
-                await session.execute(
-                    select(Category)
-                    .options(selectinload(Category.translations))
-                    .where(Category.id == cat.parent_id)
-                )
-            ).scalar_one_or_none()
-            cat_out["department"] = _category_out(dept) if dept else None
-        out["category"] = cat_out
-    else:
-        out["category"] = None
+    if not cat:
+        raise HTTPException(status_code=404, detail="Product not found")
+    cat_out = _category_out(cat)
+    ancestors = await get_category_ancestors(session, cat, active_only=True)
+    ancestor_ids = [ancestor.id for ancestor in ancestors]
+    loaded_ancestors = {}
+    if ancestor_ids:
+        ancestor_rows = (
+            await session.execute(
+                select(Category)
+                .options(selectinload(Category.translations))
+                .where(Category.id.in_(ancestor_ids))
+            )
+        ).scalars().all()
+        loaded_ancestors = {ancestor.id: ancestor for ancestor in ancestor_rows}
+    ordered_ancestors = [
+        loaded_ancestors[item.id]
+        for item in ancestors
+        if item.id in loaded_ancestors
+    ]
+    cat_out["ancestors"] = [_category_out(item) for item in ordered_ancestors]
+    department_node = ordered_ancestors[0] if ordered_ancestors else (
+        cat if cat.kind == "department" else None
+    )
+    cat_out["department"] = _category_out(department_node) if department_node else None
+    out["category"] = cat_out
     return out
 
 
@@ -437,12 +552,26 @@ async def product_detail(slug: str, session: AsyncSession = Depends(get_session)
 async def list_product_variants(
     slug: str, session: AsyncSession = Depends(get_session)
 ):
-    product_id = await session.scalar(select(Product.id).where(Product.slug == slug))
-    if not product_id:
+    product = await session.scalar(
+        select(Product).where(Product.slug == slug, Product.status == "active")
+    )
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    category = await session.scalar(
+        select(Category).where(
+            Category.id == product.category_id,
+            Category.kind == "category",
+            Category.is_active.is_(True),
+        )
+    )
+    if not category:
         raise HTTPException(status_code=404, detail="Product not found")
     stmt = (
         select(ProductVariant)
-        .where(ProductVariant.product_id == product_id)
+        .where(
+            ProductVariant.product_id == product.id,
+            ProductVariant.is_active.is_(True),
+        )
         .order_by(ProductVariant.created_at, ProductVariant.sku)
     )
     rows = (await session.execute(stmt)).scalars().all()

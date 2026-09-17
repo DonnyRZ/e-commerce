@@ -2,8 +2,9 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useI18n } from "@/i18n";
 import { forgotPassword } from "@/lib/api";
+import BrandLogo from "@/components/brand/BrandLogo";
 
-export default function ForgotPasswordPage() {
+export default function ForgotPasswordPage({ backTo = "/login", brandTo = "/" }) {
   const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
@@ -23,6 +24,9 @@ export default function ForgotPasswordPage() {
 
   return (
     <div data-testid="forgot-password-page" className="mx-auto max-w-md py-12 lg:py-20">
+      <div className="mb-10 flex justify-center">
+        <BrandLogo size="lg" to={brandTo} testId="forgot-brand-logo" priority />
+      </div>
       <h1 className="text-2xl font-semibold tracking-tight lg:text-3xl">
         {t("auth.forgotTitle")}
       </h1>
@@ -60,7 +64,7 @@ export default function ForgotPasswordPage() {
         </>
       )}
       <p className="mt-5 text-sm">
-        <Link to="/login" data-testid="forgot-back-login" className="font-medium underline-offset-4 hover:underline">
+        <Link to={backTo} data-testid="forgot-back-login" className="font-medium underline-offset-4 hover:underline">
           {t("auth.backToLogin")}
         </Link>
       </p>

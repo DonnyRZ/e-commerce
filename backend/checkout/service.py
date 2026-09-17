@@ -18,10 +18,11 @@ from typing import Optional
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import BASE_CURRENCY, INVENTORY_RESERVATION_TTL_MINUTES
+from config import BASE_CURRENCY, CHECKOUT_ENABLED, INVENTORY_RESERVATION_TTL_MINUTES
 from db.models import (
     Cart,
     CartItem,
+    Category,
     InventoryReservation,
     Order,
     OrderItem,
@@ -31,6 +32,7 @@ from db.models import (
     SellerOrderFulfillment,
     User,
 )
+from media import media_item_url
 from shipping.factory import get_shipping_provider
 from shipping.mock import UnknownShippingMethod
 
@@ -41,6 +43,18 @@ class CheckoutError(Exception):
         self.code = code
         self.status = status
         self.extra = extra or {}
+
+
+def ensure_idempotent_owner(
+    order: Order,
+    *,
+    user_id: Optional[str],
+    cart_id: str,
+) -> None:
+    """Prevent an idempotency key from replaying another customer's order."""
+
+    if order.user_id != user_id or order.cart_id != cart_id:
+        raise CheckoutError("idempotency_key_conflict", 409)
 
 
 def _now() -> datetime:
@@ -110,7 +124,25 @@ async def compute_cart_totals(
     for row in rows:
         variant = variants.get(row.variant_id)
         product = await session.get(Product, row.product_id) if variant else None
-        if not variant or not variant.is_active or not product or product.status != "active":
+        category = (
+            await session.scalar(
+                select(Category).where(
+                    Category.id == product.category_id,
+                    Category.kind == "category",
+                    Category.is_active.is_(True),
+                )
+            )
+            if product
+            else None
+        )
+        if (
+            not variant
+            or not variant.is_active
+            or not product
+            or product.status != "active"
+            or product.is_demo
+            or not category
+        ):
             raise CheckoutError("unavailable_item", 409, {"variant_id": row.variant_id})
         available = variant.stock_quantity - reserved.get(variant.id, 0)
         if row.quantity > available:
@@ -180,10 +212,21 @@ async def create_order(
     locale: str,
 ):
     """Idempotent: an existing order with the same key is returned unchanged."""
+    if not CHECKOUT_ENABLED:
+        raise CheckoutError(
+            "checkout_unavailable",
+            503,
+            {"message": "Online checkout is temporarily unavailable."},
+        )
     existing = await session.scalar(
         select(Order).where(Order.idempotency_key == idempotency_key)
     )
     if existing:
+        ensure_idempotent_owner(
+            existing,
+            user_id=user.id if user else None,
+            cart_id=cart.id,
+        )
         return existing, False
     totals = await compute_cart_totals(session, cart, shipping_method, lock=True)
     now = _now()
@@ -217,7 +260,7 @@ async def create_order(
                 sku=variant.sku,
                 product_name=await _localized_name(session, product, locale),
                 option_values=variant.option_values or {},
-                image_url=variant.image_url or (product.media or [{}])[0].get("url"),
+                image_url=variant.image_url or media_item_url((product.media or [None])[0]),
                 unit_price=item["unit_price"],
                 quantity=row.quantity,
                 line_total=item["line_total"],

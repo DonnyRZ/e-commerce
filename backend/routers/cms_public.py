@@ -2,12 +2,13 @@
 HMAC-signed time-limited draft preview and media file serving."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cms import service as cms
-from db.models import CmsContentEntry, CmsMediaAsset
+from db.models import Category, CmsContentEntry, CmsMediaAsset
 from db.session import get_session
 from storage import get_media_storage
 
@@ -57,6 +58,68 @@ async def public_footer(session: AsyncSession = Depends(get_session)):
             i for i in items if (i["payload"] or {}).get("group") == g["slug"]
         ]
         out_groups.append({**g, "items": g_items})
+
+    # Catalog departments are data, not CMS copy.  Keep the CMS-managed shop
+    # links (new/sale/etc.) while replacing any stale hardcoded department
+    # links with the current active taxonomy roots.
+    departments = (
+        await session.execute(
+            select(Category)
+            .options(selectinload(Category.translations))
+            .where(Category.kind == "department", Category.is_active.is_(True))
+            .order_by(Category.sort_order, Category.slug)
+        )
+    ).scalars().all()
+    catalog_items = [
+        {
+            "id": f"catalog-{department.id}",
+            "content_type": "footer_item",
+            "slug": f"catalog-{department.slug}",
+            "placement": "footer",
+            "sort_order": index + 2,
+            "image_url": None,
+            "cta_url": f"/shop?department={department.slug}",
+            "secondary_cta_url": None,
+            "payload": {"group": "shop", "source": "catalog"},
+            "translations": {
+                translation.locale: {"title": translation.name}
+                for translation in department.translations
+            },
+        }
+        for index, department in enumerate(departments)
+    ]
+    for group in out_groups:
+        if group["slug"] != "shop":
+            continue
+        group["items"] = [
+            item
+            for item in group["items"]
+            if not (item.get("cta_url") or "").startswith("/shop?department=")
+        ] + catalog_items
+        break
+    else:
+        if catalog_items:
+            out_groups.insert(
+                0,
+                {
+                    "id": "catalog-shop",
+                    "content_type": "footer_group",
+                    "slug": "shop",
+                    "placement": "footer",
+                    "sort_order": 0,
+                    "image_url": None,
+                    "cta_url": None,
+                    "secondary_cta_url": None,
+                    "payload": {"source": "catalog"},
+                    "translations": {
+                        "id": {"title": "Belanja"},
+                        "en": {"title": "Shop"},
+                        "uz": {"title": "Xarid"},
+                        "ru": {"title": "Покупки"},
+                    },
+                    "items": catalog_items,
+                },
+            )
     return {"groups": out_groups, "promo": texts[0] if texts else None}
 
 
@@ -102,6 +165,15 @@ async def media_file(key: str, session: AsyncSession = Depends(get_session)):
     if not asset:
         raise HTTPException(status_code=404, detail="media_not_found")
     storage = get_media_storage()
+    public_url = storage.public_url(asset.storage_key)
+    if public_url:
+        return RedirectResponse(
+            public_url,
+            headers={
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "public, max-age=31536000, immutable",
+            },
+        )
     return FileResponse(
         storage.resolve_path(asset.storage_key),
         media_type=asset.mime_type,

@@ -1,7 +1,11 @@
 import axios from "axios";
 
+const backendOrigin = (
+  process.env.REACT_APP_BACKEND_URL || window.location.origin
+).replace(/\/$/, "");
+
 const api = axios.create({
-  baseURL: `${process.env.REACT_APP_BACKEND_URL}/api`,
+  baseURL: `${backendOrigin}/api`,
   withCredentials: true,
   headers: { "Content-Type": "application/json" },
 });
@@ -19,6 +23,38 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+let refreshPromise = null;
+
+const refreshExcluded = (url = "") =>
+  /\/v1\/auth\/(login|register|refresh|logout|me|forgot-password|reset-password)$/.test(url);
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const request = error?.config;
+    if (
+      error?.response?.status !== 401 ||
+      !request ||
+      request._retry ||
+      refreshExcluded(request.url)
+    ) {
+      return Promise.reject(error);
+    }
+
+    request._retry = true;
+    refreshPromise = refreshPromise ||
+      api.post("/v1/auth/refresh").finally(() => {
+        refreshPromise = null;
+      });
+    try {
+      await refreshPromise;
+      return api(request);
+    } catch (refreshError) {
+      return Promise.reject(refreshError);
+    }
+  }
+);
+
 const clean = (params = {}) =>
   Object.fromEntries(
     Object.entries(params).filter(
@@ -30,6 +66,9 @@ export const getHealth = () => api.get("/v1/health").then((r) => r.data);
 
 export const getDepartments = () =>
   api.get("/v1/catalog/departments").then((r) => r.data);
+
+export const getCatalogTree = () =>
+  api.get("/v1/catalog/tree").then((r) => r.data);
 
 export const getCategories = (params = {}) =>
   api.get("/v1/catalog/categories", { params: clean(params) }).then((r) => r.data);
@@ -55,6 +94,7 @@ export const authRegister = (data) =>
 export const authLogout = () => api.post("/v1/auth/logout").then((r) => r.data);
 
 export const authMe = () => api.get("/v1/auth/me").then((r) => r.data);
+export const authRefresh = () => api.post("/v1/auth/refresh").then((r) => r.data);
 
 export const updateProfile = (data) =>
   api.patch("/v1/auth/me", data).then((r) => r.data);
@@ -109,9 +149,6 @@ export const getCheckoutQuote = (shippingMethod) =>
 export const placeOrder = (data) =>
   api.post("/v1/checkout/orders", data).then((r) => r.data);
 
-export const mockPay = (data) =>
-  api.post("/v1/payments/mock/pay", data).then((r) => r.data);
-
 export const trackOrder = (orderNumber, token) =>
   api.get("/v1/orders/track", { params: { order_number: orderNumber, token } }).then((r) => r.data);
 
@@ -120,48 +157,6 @@ export const getMyOrders = () =>
 
 export const getMyOrder = (orderNumber) =>
   api.get(`/v1/account/orders/${orderNumber}`).then((r) => r.data);
-
-// ---------------- Seller ----------------
-export const getSellerDashboard = () =>
-  api.get("/v1/seller/dashboard").then((r) => r.data);
-
-export const getSellerProducts = (params) =>
-  api.get("/v1/seller/products", { params }).then((r) => r.data);
-
-export const createSellerProduct = (data) =>
-  api.post("/v1/seller/products", data).then((r) => r.data);
-
-export const getSellerProduct = (id) =>
-  api.get(`/v1/seller/products/${id}`).then((r) => r.data);
-
-export const updateSellerProduct = (id, data) =>
-  api.patch(`/v1/seller/products/${id}`, data).then((r) => r.data);
-
-export const createSellerVariant = (productId, data) =>
-  api.post(`/v1/seller/products/${productId}/variants`, data).then((r) => r.data);
-
-export const updateSellerVariant = (id, data) =>
-  api.patch(`/v1/seller/variants/${id}`, data).then((r) => r.data);
-
-export const updateSellerInventory = (id, stockQuantity) =>
-  api
-    .patch(`/v1/seller/variants/${id}/inventory`, { stock_quantity: stockQuantity })
-    .then((r) => r.data);
-
-export const getSellerOrders = (params) =>
-  api.get("/v1/seller/orders", { params }).then((r) => r.data);
-
-export const getSellerOrder = (orderNumber) =>
-  api.get(`/v1/seller/orders/${orderNumber}`).then((r) => r.data);
-
-export const updateSellerFulfillment = (orderNumber, data) =>
-  api.patch(`/v1/seller/orders/${orderNumber}/fulfillment`, data).then((r) => r.data);
-
-export const getSellerProfile = () =>
-  api.get("/v1/seller/profile").then((r) => r.data);
-
-export const updateSellerProfile = (data) =>
-  api.patch("/v1/seller/profile", data).then((r) => r.data);
 
 export const getCatalogCategories = () =>
   api.get("/v1/catalog/categories").then((r) => r.data);
@@ -205,8 +200,6 @@ export const getAdminPaymentsReview = () =>
   api.get("/v1/admin/payments/review").then((r) => r.data);
 export const addAdminReviewNote = (paymentId, note) =>
   api.post(`/v1/admin/payments/${paymentId}/review-note`, { note }).then((r) => r.data);
-export const adminMockRefund = (paymentId) =>
-  api.post(`/v1/admin/payments/${paymentId}/mock-refund`).then((r) => r.data);
 export const getAdminAudit = (params) =>
   api.get("/v1/admin/audit", { params }).then((r) => r.data);
 export const getAdminSettings = () =>

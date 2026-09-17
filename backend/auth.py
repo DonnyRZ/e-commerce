@@ -6,6 +6,7 @@ import jwt
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import COOKIE_SAMESITE, COOKIE_SECURE
 from db.models import User
 from db.session import get_session
 
@@ -13,9 +14,6 @@ JWT_ALGORITHM = "HS256"
 ACCESS_TTL_SECONDS = 15 * 60
 REFRESH_TTL_SECONDS = 7 * 24 * 3600
 PASSWORD_RESET_TTL_SECONDS = int(os.environ.get("PASSWORD_RESET_TTL", "3600"))
-
-COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "true").lower() == "true"
-COOKIE_SAMESITE = os.environ.get("SESSION_COOKIE_SAMESITE", "lax")
 
 ACCESS_COOKIE = "access_token"
 REFRESH_COOKIE = "refresh_token"

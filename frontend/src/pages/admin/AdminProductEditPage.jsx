@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, ImagePlus, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   createAdminProduct,
@@ -11,13 +11,14 @@ import {
   updateAdminInventory,
   updateAdminProduct,
   updateAdminVariant,
+  uploadCmsMedia,
 } from "@/lib/api";
-import { pickLocalized } from "@/lib/localize";
+import { mediaUrl, pickLocalized } from "@/lib/localize";
 import { Skeleton } from "@/components/ui/skeleton";
 import { inputClass } from "./adminUtils";
 
 const LOCALES = ["en", "id", "uz", "ru"];
-const EMPTY_VARIANT = { sku: "", optionsText: "", stock: 0, price_override: "", sale_price_override: "", is_active: true };
+const EMPTY_VARIANT = { sku: "", optionsText: "", stock: 0, price_override: "", sale_price_override: "", media_id: null, image_url: "", is_active: true };
 
 function parseOptions(text) {
   const out = {};
@@ -33,6 +34,59 @@ function parseOptions(text) {
 const optionsToText = (obj) =>
   Object.entries(obj || {}).map(([k, v]) => `${k}=${v}`).join(", ");
 
+const MAX_PRODUCT_IMAGES = 8;
+
+const ATTRIBUTE_FIELDS = {
+  apparel: [
+    ["material", "Material"],
+    ["fit", "Fit"],
+    ["care", "Care instructions"],
+  ],
+  hijab: [
+    ["material", "Material"],
+    ["care", "Care instructions"],
+  ],
+  batik: [
+    ["material", "Material"],
+    ["motif", "Motif"],
+    ["fit", "Fit"],
+    ["care", "Care instructions"],
+  ],
+  skincare: [
+    ["skin_type", "Skin type"],
+    ["ingredients", "Ingredients"],
+    ["benefits", "Benefits"],
+    ["directions", "How to use"],
+  ],
+  parfum: [
+    ["fragrance_family", "Fragrance family"],
+    ["notes", "Notes"],
+    ["concentration", "Concentration"],
+    ["usage", "How to wear"],
+  ],
+};
+
+const normalizeMedia = (items) =>
+  (Array.isArray(items) ? items : [])
+    .map((item, index) => {
+      if (typeof item === "string") return { url: item, sort_order: index };
+      return item && typeof item === "object" && (item.url || item.media_id)
+        ? { ...item, sort_order: item.sort_order ?? index }
+        : null;
+    })
+    .filter(Boolean)
+    .slice(0, MAX_PRODUCT_IMAGES);
+
+const uploadErrorMessage = (err) => {
+  const detail = err?.response?.data?.detail;
+  const code = typeof detail === "object" ? detail?.error : detail;
+  if (code === "file_too_large") return "Image too large (maximum 5 MB).";
+  if (["unsupported_media_type", "content_mismatch", "invalid_image"].includes(code)) {
+    return "Only valid JPEG, PNG, or WebP images are supported.";
+  }
+  return "Image upload failed.";
+};
+
 export default function AdminProductEditPage() {
   const { productId } = useParams();
   const isNew = !productId;
@@ -41,12 +95,14 @@ export default function AdminProductEditPage() {
 
   const [form, setForm] = useState({
     category_id: "", product_type: "general", brand: "",
-    base_price: "", compare_at_price: "", status: "draft", image_url: "",
+    base_price: "", compare_at_price: "", status: "draft", media: [],
   });
+  const [attributes, setAttributes] = useState({});
   const [tr, setTr] = useState({ en: { name: "", short_description: "", description: "" } });
   const [activeLocale, setActiveLocale] = useState("en");
   const [variants, setVariants] = useState([{ ...EMPTY_VARIANT }]);
   const [saving, setSaving] = useState(false);
+  const [imageUploading, setImageUploading] = useState(false);
 
   const categoriesQuery = useQuery({ queryKey: ["admin-categories"], queryFn: getAdminCategories });
   const productQuery = useQuery({
@@ -62,8 +118,9 @@ export default function AdminProductEditPage() {
       category_id: p.category_id, product_type: p.product_type, brand: p.brand || "",
       base_price: String(p.base_price),
       compare_at_price: p.compare_at_price != null ? String(p.compare_at_price) : "",
-      status: p.status, image_url: p.media?.[0]?.url || "",
+      status: p.status, media: normalizeMedia(p.media),
     });
+    setAttributes(p.attributes || {});
     setTr(p.translations || { en: { name: "" } });
     setVariants(
       (p.variants || []).map((v) => ({
@@ -71,20 +128,81 @@ export default function AdminProductEditPage() {
         stock: v.stock_quantity, active_reserved: v.active_reserved,
         price_override: v.price_override != null ? String(v.price_override) : "",
         sale_price_override: v.sale_price_override != null ? String(v.sale_price_override) : "",
+        media_id: v.media_id || null,
+        image_url: v.image_url || "",
         is_active: v.is_active,
       }))
     );
   }, [productQuery.data]);
 
-  const setF = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+  const setF = (key) => (e) => setForm((current) => ({ ...current, [key]: e.target.value }));
+  const setAttribute = (key, value) => setAttributes((current) => ({ ...current, [key]: value }));
   const setT = (key) => (e) =>
-    setTr({ ...tr, [activeLocale]: { ...(tr[activeLocale] || {}), [key]: e.target.value } });
+    setTr((current) => ({ ...current, [activeLocale]: { ...(current[activeLocale] || {}), [key]: e.target.value } }));
   const setV = (idx, key, value) =>
     setVariants(variants.map((v, i) => (i === idx ? { ...v, [key]: value } : v)));
 
+  const uploadProductImages = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = "";
+    if (!files.length) return;
+
+    const availableSlots = MAX_PRODUCT_IMAGES - form.media.length;
+    if (availableSlots <= 0) {
+      toast.error(`A product can have up to ${MAX_PRODUCT_IMAGES} images.`);
+      return;
+    }
+    const filesToUpload = files.slice(0, availableSlots);
+    setImageUploading(true);
+    const uploaded = [];
+    let firstError = null;
+    try {
+      for (const file of filesToUpload) {
+        try {
+          const asset = await uploadCmsMedia(file);
+          uploaded.push({
+            url: mediaUrl(asset.url),
+            media_id: asset.id,
+            original_filename: asset.original_filename,
+          });
+        } catch (err) {
+          firstError = firstError || err;
+        }
+      }
+      if (uploaded.length) {
+        setForm((current) => ({ ...current, media: [...current.media, ...uploaded] }));
+        queryClient.invalidateQueries({ queryKey: ["cms-media"] });
+        toast.success(`${uploaded.length} product image${uploaded.length > 1 ? "s" : ""} uploaded`);
+      }
+      if (firstError) toast.error(uploadErrorMessage(firstError));
+      if (files.length > filesToUpload.length) {
+        toast.error(`Only ${availableSlots} image${availableSlots > 1 ? "s" : ""} could be added.`);
+      }
+    } finally {
+      setImageUploading(false);
+    }
+  };
+
+  const removeProductImage = (index) => {
+    setForm((current) => ({
+      ...current,
+      media: current.media.filter((_, itemIndex) => itemIndex !== index),
+    }));
+  };
+
+  const moveProductImage = (index, direction) => {
+    setForm((current) => {
+      const next = [...current.media];
+      const target = index + direction;
+      if (target < 0 || target >= next.length) return current;
+      [next[index], next[target]] = [next[target], next[index]];
+      return { ...current, media: next };
+    });
+  };
+
   const rawCats = categoriesQuery.data;
   const catItems = (Array.isArray(rawCats) ? rawCats : rawCats?.items || []).filter(
-    (c) => c.kind !== "department"
+    (c) => c.kind === "category" && c.is_leaf !== false && (c.is_active || c.id === form.category_id)
   );
 
   const save = async (e) => {
@@ -95,6 +213,11 @@ export default function AdminProductEditPage() {
       const translations = Object.fromEntries(
         Object.entries(tr).filter(([, v]) => v && v.name && v.name.trim())
       );
+      const media = form.media.map((item, index) => ({ ...item, sort_order: index }));
+      const primaryMediaId = media[0]?.media_id || null;
+      const primaryImageUrl = media[0]?.url || null;
+      const previousPrimaryMediaId = productQuery.data?.media?.[0]?.media_id || null;
+      const previousPrimaryImageUrl = productQuery.data?.media?.[0]?.url || null;
       const base = {
         category_id: form.category_id,
         product_type: form.product_type,
@@ -102,7 +225,8 @@ export default function AdminProductEditPage() {
         base_price: parseInt(form.base_price, 10),
         compare_at_price: form.compare_at_price === "" ? null : parseInt(form.compare_at_price, 10),
         status: form.status,
-        media: form.image_url ? [{ url: form.image_url }] : [],
+        attributes,
+        media,
         translations,
       };
       if (isNew) {
@@ -114,21 +238,28 @@ export default function AdminProductEditPage() {
             stock_quantity: parseInt(v.stock, 10) || 0,
             price_override: v.price_override === "" ? null : parseInt(v.price_override, 10),
             sale_price_override: v.sale_price_override === "" ? null : parseInt(v.sale_price_override, 10),
-            image_url: form.image_url || null,
+            media_id: primaryMediaId,
+            image_url: primaryMediaId ? null : primaryImageUrl,
             is_active: Boolean(v.is_active),
           })),
         });
         toast.success("Product created");
         queryClient.invalidateQueries({ queryKey: ["admin-products"] });
-        navigate(`/admin/products/${created.id}`, { replace: true });
+        navigate(`/products/${created.id}`, { replace: true });
         return;
       }
       await updateAdminProduct(productId, base);
       for (const v of variants) {
+        const usesPreviousPrimary =
+          (Boolean(v.media_id) && v.media_id === previousPrimaryMediaId) ||
+          (!v.media_id && v.image_url === previousPrimaryImageUrl);
+        const variantMediaId = usesPreviousPrimary ? primaryMediaId : (v.media_id || null);
         const body = {
           option_values: parseOptions(v.optionsText),
           price_override: v.price_override === "" ? null : parseInt(v.price_override, 10),
           sale_price_override: v.sale_price_override === "" ? null : parseInt(v.sale_price_override, 10),
+          media_id: variantMediaId,
+          image_url: variantMediaId ? null : (usesPreviousPrimary ? primaryImageUrl : (v.image_url || null)),
           is_active: Boolean(v.is_active),
         };
         if (v.id) {
@@ -142,7 +273,8 @@ export default function AdminProductEditPage() {
           await createAdminVariant(productId, {
             ...body, sku: v.sku.trim(),
             stock_quantity: parseInt(v.stock, 10) || 0,
-            image_url: form.image_url || null,
+            media_id: primaryMediaId,
+            image_url: primaryMediaId ? null : primaryImageUrl,
           });
         }
       }
@@ -157,6 +289,10 @@ export default function AdminProductEditPage() {
         toast.error("A variant SKU already exists.");
       } else if (code === "below_active_reservations") {
         toast.error(`Stock cannot go below ${d.active_reservations} active reservations.`);
+      } else if (code === "product_type_category_mismatch") {
+        toast.error("Batik and Parfum products must use a matching active category.");
+      } else if (code === "invalid_category") {
+        toast.error("Select an active leaf category before saving.");
       } else {
         toast.error("Save failed. Check required fields.");
       }
@@ -173,7 +309,7 @@ export default function AdminProductEditPage() {
 
   return (
     <div data-testid="admin-product-editor">
-      <Link to="/admin/products" className="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 hover:text-neutral-900" data-testid="editor-back">
+      <Link to="/products" className="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 hover:text-neutral-900" data-testid="editor-back">
         <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
         Back to products
       </Link>
@@ -202,6 +338,8 @@ export default function AdminProductEditPage() {
                 <option value="general">general</option>
                 <option value="apparel">apparel</option>
                 <option value="hijab">hijab</option>
+                <option value="batik">batik</option>
+                <option value="parfum">parfum</option>
                 <option value="skincare">skincare</option>
               </select>
             </div>
@@ -225,12 +363,118 @@ export default function AdminProductEditPage() {
                 <option value="inactive">Inactive</option>
               </select>
             </div>
-            <div className="sm:col-span-2 xl:col-span-3">
-              <label className="mb-1 block text-xs font-medium text-neutral-500">Image URL</label>
-              <input type="url" value={form.image_url} onChange={setF("image_url")} className={inputClass} data-testid="editor-image-url" placeholder="https://…" />
-              <p className="mt-1 text-[11px] text-neutral-400">Primary product image (external https URL).</p>
-            </div>
           </div>
+        </section>
+
+        {(ATTRIBUTE_FIELDS[form.product_type] || []).length ? (
+          <section className="border border-neutral-200 bg-white p-5" data-testid="editor-attributes">
+            <h2 className="text-sm font-semibold">{form.product_type === "parfum" ? "Fragrance details" : "Product details"}</h2>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              {(ATTRIBUTE_FIELDS[form.product_type] || []).map(([key, label]) => (
+                <div key={key}>
+                  <label className="mb-1 block text-xs font-medium text-neutral-500">{label}</label>
+                  <textarea
+                    value={attributes[key] || ""}
+                    onChange={(e) => setAttribute(key, e.target.value)}
+                    rows={key === "care" || key === "ingredients" || key === "benefits" || key === "directions" || key === "notes" || key === "usage" ? 3 : 2}
+                    className="w-full border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#145A46]"
+                    data-testid={`editor-attribute-${key}`}
+                  />
+                </div>
+              ))}
+              {form.product_type === "parfum" ? (
+                <label className="flex items-center gap-2 text-sm sm:col-span-2" data-testid="editor-alcohol-free">
+                  <input type="checkbox" checked={Boolean(attributes.alcohol_free)} onChange={(e) => setAttribute("alcohol_free", e.target.checked)} className="accent-[#145A46]" />
+                  Alcohol-free formula (only if confirmed in the master data)
+                </label>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
+        <section className="border border-neutral-200 bg-white p-5" data-testid="editor-media">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold">Product images</h2>
+              <p className="mt-1 text-xs text-neutral-500">Upload directly from your device. The first image is the primary image.</p>
+            </div>
+            <span className="text-xs text-neutral-400" data-testid="editor-image-count">
+              {form.media.length}/{MAX_PRODUCT_IMAGES}
+            </span>
+          </div>
+
+          {form.media.length ? (
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6" data-testid="editor-image-grid">
+              {form.media.map((item, index) => (
+                <div key={`${item.media_id || item.url}-${index}`} className="group relative overflow-hidden border border-neutral-200 bg-neutral-50" data-testid={`editor-image-${index}`}>
+                  <img
+                    src={mediaUrl(item.url)}
+                    alt={item.original_filename || `${tab.name || "Product"} image ${index + 1}`}
+                    className="aspect-square w-full object-cover"
+                    data-testid={`editor-image-preview-${index}`}
+                  />
+                  <div className="absolute left-2 top-2 bg-white/95 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#145A46]">
+                    {index === 0 ? "Primary" : index + 1}
+                  </div>
+                  <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-black/65 px-1.5 py-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
+                    <button
+                      type="button"
+                      onClick={() => moveProductImage(index, -1)}
+                      disabled={index === 0}
+                      aria-label="Move image left"
+                      className="inline-flex h-7 w-7 items-center justify-center text-white disabled:opacity-30"
+                      data-testid={`editor-image-move-left-${index}`}
+                    >
+                      <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeProductImage(index)}
+                      aria-label="Remove image"
+                      className="inline-flex h-7 w-7 items-center justify-center text-white hover:text-red-300"
+                      data-testid={`editor-image-remove-${index}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveProductImage(index, 1)}
+                      disabled={index === form.media.length - 1}
+                      aria-label="Move image right"
+                      className="inline-flex h-7 w-7 items-center justify-center text-white disabled:opacity-30"
+                      data-testid={`editor-image-move-right-${index}`}
+                    >
+                      <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-4 flex h-32 items-center justify-center border border-dashed border-neutral-300 bg-neutral-50 text-xs text-neutral-400" data-testid="editor-image-empty">
+              No images selected yet.
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-wrap items-end gap-3">
+            <label
+              className={`inline-flex h-10 cursor-pointer items-center gap-1.5 bg-[#145A46] px-4 text-sm font-semibold text-white hover:opacity-90 ${imageUploading ? "opacity-50" : ""}`}
+              data-testid="editor-upload-image"
+            >
+              <ImagePlus className="h-4 w-4" aria-hidden="true" />
+              {imageUploading ? "Uploading…" : "Upload image"}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                multiple
+                className="hidden"
+                onChange={uploadProductImages}
+                disabled={imageUploading || form.media.length >= MAX_PRODUCT_IMAGES}
+                data-testid="editor-image-input"
+              />
+            </label>
+          </div>
+          <p className="mt-2 text-[11px] text-neutral-400">JPEG, PNG, or WebP up to 5 MB each. Images are stored on the VPS.</p>
         </section>
 
         <section className="border border-neutral-200 bg-white p-5" data-testid="editor-translations">

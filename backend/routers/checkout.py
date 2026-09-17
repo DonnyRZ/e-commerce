@@ -1,46 +1,40 @@
-"""Checkout API — server-authoritative totals, idempotent order creation.
+"""Checkout API while the store has no configured payment method.
 
-Guests check out with their secure guest cart (HttpOnly cookie); authenticated
-users keep CSRF protection. Prices/shipping/totals are always recomputed
-from PostgreSQL — the client sends only identity, address and choices.
+Cart operations remain available through the shop API. Checkout endpoints
+remain explicit and fail closed until a real payment workflow is selected and
+implemented; this prevents accidental orders and inventory reservations.
 """
 
-import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import csrf_protect
-from checkout import service as checkout_service
-from checkout.service import CheckoutError
-from config import BASE_CURRENCY, CLICK_MODE, INVENTORY_RESERVATION_TTL_MINUTES
-from db.models import Order, Payment, UserAddress
+from config import BASE_CURRENCY, CHECKOUT_ENABLED, INVENTORY_RESERVATION_TTL_MINUTES
 from db.session import get_session
-from notifications import notify
-from payments.providers import get_provider
-from payments.service import PaymentService
-from routers.auth import _client_ip
 from routers.shop import _cart_payload, _find_cart, _optional_user
 from shipping.factory import get_shipping_provider
 
 router = APIRouter(prefix="/api/v1/checkout", tags=["checkout"])
 
-ORDER_RATE_LIMIT = 60
-ORDER_RATE_WINDOW = 15 * 60
-_order_hits: dict = {}
+
+def _require_checkout_enabled() -> None:
+    if not CHECKOUT_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "checkout_unavailable",
+                "message": "Online checkout is temporarily unavailable.",
+            },
+        )
 
 
-def _rate_limit_orders(ip: str) -> None:
-    now = time.time()
-    hits = [t for t in _order_hits.get(ip, []) if now - t < ORDER_RATE_WINDOW]
-    if len(hits) >= ORDER_RATE_LIMIT:
-        raise HTTPException(status_code=429, detail="too_many_requests")
-    hits.append(now)
-    _order_hits[ip] = hits
+async def _checkout_write_guard(request: Request) -> None:
+    """Fail closed before CSRF checks or any future checkout mutation."""
+    _require_checkout_enabled()
+    await csrf_protect(request)
 
 
 class CheckoutAddressIn(BaseModel):
@@ -67,46 +61,6 @@ class CheckoutOrderIn(BaseModel):
     address: Optional[CheckoutAddressIn] = None
 
 
-ADDRESS_FIELDS = (
-    "recipient_name",
-    "phone",
-    "address_line_1",
-    "address_line_2",
-    "city",
-    "state_province",
-    "postal_code",
-    "country_code",
-)
-
-
-def _order_out(order: Order, payment: Payment, is_guest: bool) -> dict:
-    out = {
-        "order_number": order.order_number,
-        "status": order.status,
-        "payment_state": order.payment_state,
-        "subtotal": order.subtotal,
-        "shipping_amount": order.shipping_amount,
-        "grand_total": order.grand_total,
-        "currency": order.currency,
-        "access_token": order.guest_access_token if is_guest else None,
-        "payment": {
-            "merchant_trans_id": payment.merchant_trans_id,
-            "amount": payment.amount,
-            "currency": payment.currency,
-            "status": payment.status,
-        },
-    }
-    if CLICK_MODE == "mock":
-        url = (
-            f"/checkout/payment/mock?order={order.order_number}"
-            f"&payment={payment.merchant_trans_id}"
-        )
-        if is_guest and order.guest_access_token:
-            url += f"&token={order.guest_access_token}"
-        out["mock_payment_url"] = url
-    return out
-
-
 @router.get("/options")
 async def checkout_options(
     request: Request, session: AsyncSession = Depends(get_session)
@@ -120,8 +74,9 @@ async def checkout_options(
         "item_count": payload["item_count"],
         "items": payload["items"],
         "shipping_methods": get_shipping_provider().list_methods(payload["subtotal"]),
-        "payment_methods": [{"code": "click", "label": "CLICK"}],
-        "payment_mode": CLICK_MODE,
+        "payment_methods": [],
+        "payment_mode": "disabled",
+        "checkout_enabled": False,
         "reservation_ttl_minutes": INVENTORY_RESERVATION_TTL_MINUTES,
     }
 
@@ -129,108 +84,20 @@ async def checkout_options(
 @router.post("/quote")
 async def checkout_quote(
     payload: QuoteIn,
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-    _: None = Depends(csrf_protect),
+    _: None = Depends(_checkout_write_guard),
 ):
-    user = await _optional_user(request, session)
-    cart = await _find_cart(request, session, user)
-    if not cart:
-        raise HTTPException(status_code=400, detail="empty_cart")
-    try:
-        totals = await checkout_service.compute_cart_totals(
-            session, cart, payload.shipping_method
-        )
-    except CheckoutError as exc:
-        raise HTTPException(
-            status_code=exc.status, detail={"error": exc.code, **exc.extra}
-        )
-    await session.commit()  # persists the lazy reservation-expiry sweep
-    return {
-        "subtotal": totals["subtotal"],
-        "shipping_amount": totals["shipping_amount"],
-        "grand_total": totals["grand_total"],
-        "currency": totals["currency"],
-        "shipping": totals["shipping"],
-    }
+    _require_checkout_enabled()
+    # The guard above is deliberately unconditional in the current release.
+    # Keep the endpoint shape for the future payment workflow.
+    return None
 
 
 @router.post("/orders", status_code=201)
 async def create_checkout_order(
     payload: CheckoutOrderIn,
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-    _: None = Depends(csrf_protect),
+    _: None = Depends(_checkout_write_guard),
 ):
-    _rate_limit_orders(_client_ip(request))
-    user = await _optional_user(request, session)
-    cart = await _find_cart(request, session, user)
-    if not cart:
-        raise HTTPException(status_code=400, detail="empty_cart")
-
-    if user:
-        contact_email = user.email
-    elif payload.email:
-        contact_email = str(payload.email).lower()
-    else:
-        raise HTTPException(status_code=400, detail="email_required")
-
-    if payload.saved_address_id:
-        if not user:
-            raise HTTPException(status_code=400, detail="address_required")
-        saved = await session.scalar(
-            select(UserAddress).where(
-                UserAddress.id == payload.saved_address_id,
-                UserAddress.user_id == user.id,
-            )
-        )
-        if not saved:
-            raise HTTPException(status_code=404, detail="address_not_found")
-        address_snapshot = {k: getattr(saved, k) for k in ADDRESS_FIELDS}
-    elif payload.address:
-        address_snapshot = payload.address.model_dump()
-    else:
-        raise HTTPException(status_code=400, detail="address_required")
-
-    try:
-        order, created = await checkout_service.create_order(
-            session,
-            user=user,
-            cart=cart,
-            contact_email=contact_email,
-            address_snapshot=address_snapshot,
-            shipping_method=payload.shipping_method,
-            idempotency_key=payload.idempotency_key,
-            locale=payload.locale,
-        )
-        payment = await PaymentService(session, get_provider()).create_payment(order)
-        await session.commit()
-    except CheckoutError as exc:
-        await session.rollback()
-        raise HTTPException(
-            status_code=exc.status, detail={"error": exc.code, **exc.extra}
-        )
-    except IntegrityError:
-        # concurrent same-key submit lost the unique race — return the winner
-        await session.rollback()
-        order = await session.scalar(
-            select(Order).where(Order.idempotency_key == payload.idempotency_key)
-        )
-        if not order:
-            raise HTTPException(status_code=409, detail="order_conflict")
-        payment = await session.scalar(
-            select(Payment).where(Payment.order_id == order.id)
-        )
-        created = False
-
-    if created:
-        await notify(
-            "order.placed",
-            {
-                "order_number": order.order_number,
-                "email": contact_email,
-                "amount": order.grand_total,
-                "currency": order.currency,
-            },
-        )
-    return _order_out(order, payment, is_guest=user is None)
+    _require_checkout_enabled()
+    # The guard above is deliberately unconditional in the current release.
+    # Keep the endpoint shape for the future payment workflow.
+    return None

@@ -111,7 +111,7 @@ export default function CmsContentEditPage() {
   const [contentType, setContentType] = useState("banner");
   const [form, setForm] = useState({
     internal_name: "", slug: "", placement: "", sort_order: 0,
-    is_visible: true, cta_url: "", secondary_cta_url: "", image_url: "", media_id: null,
+    is_visible: true, cta_url: "", secondary_cta_url: "", media_id: null,
   });
   const [imagePreview, setImagePreview] = useState("");
   const [tr, setTr] = useState({});
@@ -139,7 +139,7 @@ export default function CmsContentEditPage() {
       internal_name: e.internal_name, slug: e.slug || "", placement: e.placement || "",
       sort_order: e.sort_order, is_visible: e.is_visible,
       cta_url: e.cta_url || "", secondary_cta_url: e.secondary_cta_url || "",
-      image_url: e.payload?.image_url || "", media_id: e.media_id,
+      media_id: e.media_id,
     });
     setImagePreview(e.image_url || "");
     setBasePayload(e.payload || {});
@@ -165,8 +165,9 @@ export default function CmsContentEditPage() {
       Object.entries(tr).filter(([, v]) => v && Object.values(v).some((x) => String(x || "").trim()))
     );
     const payload = { ...basePayload };
-    if (form.image_url.trim()) payload.image_url = form.image_url.trim();
-    else delete payload.image_url;
+    // Images are selected from the CMS library; external image URLs are not
+    // accepted by the operator workflow.
+    delete payload.image_url;
     return {
       internal_name: form.internal_name.trim(),
       slug: form.slug.trim(),
@@ -190,7 +191,7 @@ export default function CmsContentEditPage() {
         const created = await createCmsContent({ content_type: contentType, ...buildPayload() });
         toast.success("Draft created");
         invalidateCms();
-        navigate(`/admin/cms/${created.id}`, { replace: true });
+        navigate(`/cms/${created.id}`, { replace: true });
         return;
       }
       await updateCmsContent(entryId, buildPayload());
@@ -218,7 +219,7 @@ export default function CmsContentEditPage() {
   const preview = async () => {
     try {
       const { preview_url } = await getCmsPreviewToken(entryId);
-      window.open(`${process.env.REACT_APP_BACKEND_URL}${preview_url}`, "_blank", "noopener");
+      window.open(mediaUrl(preview_url), "_blank", "noopener");
     } catch {
       toast.error("Could not create preview link");
     }
@@ -242,7 +243,7 @@ export default function CmsContentEditPage() {
 
   return (
     <div data-testid="cms-content-editor">
-      <Link to="/admin/cms" className="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 hover:text-neutral-900" data-testid="cms-editor-back">
+      <Link to="/cms" className="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 hover:text-neutral-900" data-testid="cms-editor-back">
         <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
         Back to content
       </Link>
@@ -318,17 +319,13 @@ export default function CmsContentEditPage() {
               {form.media_id ? (
                 <button
                   type="button"
-                  onClick={() => { setForm({ ...form, media_id: null }); setImagePreview(form.image_url); }}
+                  onClick={() => { setForm({ ...form, media_id: null }); setImagePreview(""); }}
                   className="h-9 text-left text-xs font-medium text-red-600 hover:underline"
                   data-testid="cms-media-remove"
                 >
                   Remove selected media
                 </button>
               ) : null}
-              <div className="w-72">
-                <label className="mb-1 block text-[11px] font-medium text-neutral-500">…or external image URL</label>
-                <input value={form.image_url} onChange={setF("image_url")} className={inputClass} data-testid="cms-field-image-url" placeholder="https://…" />
-              </div>
             </div>
           </div>
           {pickerOpen ? (

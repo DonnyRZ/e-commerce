@@ -13,7 +13,7 @@ import pytest
 import requests
 
 BASE = os.environ.get(
-    "REACT_APP_BACKEND_URL", "https://muslimah-shop.preview.emergentagent.com"
+    "REACT_APP_BACKEND_URL", "http://127.0.0.1:8000"
 ).rstrip("/")
 API = f"{BASE}/api/v1"
 
@@ -106,7 +106,7 @@ def test_product_crud_flow(admin):
         "brand": "MC Test",
         "base_price": 99000,
         "status": "draft",
-        "media": [{"url": "https://images.unsplash.com/photo-1772714601002-fbb0fea8a911?w=800"}],
+        "media": [{"url": "/media/test-fixture.jpg"}],
         "translations": {
             "en": {"name": f"Admin Test Product {tag}"},
             "id": {"name": f"Produk Uji {tag}"},
@@ -188,10 +188,10 @@ def test_payment_review_note(admin):
     pid = items[0]["payment_id"]
     r = admin.post(
         f"{API}/admin/payments/{pid}/review-note",
-        json={"note": "Checked against CLICK dashboard — amounts match."},
+        json={"note": "Historical payment record reviewed — amounts match."},
     )
     assert r.status_code == 200, r.text
-    assert r.json()["review_note"].startswith("Checked")
+    assert r.json()["review_note"].startswith("Historical")
 
 
 # ------------------------------ CMS workflow ---------------------------------

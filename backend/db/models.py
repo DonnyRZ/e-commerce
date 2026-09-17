@@ -6,10 +6,12 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -79,6 +81,9 @@ class Category(TimestampMixin, Base):
     parent_id: Mapped[Optional[str]] = mapped_column(
         ForeignKey("categories.id"), nullable=True, index=True
     )
+    media_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("cms_media_assets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -124,6 +129,9 @@ class Product(TimestampMixin, Base):
     tags: Mapped[list] = mapped_column(JSONB, default=list)
     media: Mapped[list] = mapped_column(JSONB, default=list)
     status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
+    # Demo catalog items are visible for storefront/showcase QA but must never
+    # be treated as commercially available products.
+    is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", index=True)
     featured: Mapped[bool] = mapped_column(Boolean, default=False)
     bestseller: Mapped[bool] = mapped_column(Boolean, default=False)
     new_arrival: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
@@ -164,6 +172,9 @@ class ProductVariant(TimestampMixin, Base):
     stock_quantity: Mapped[int] = mapped_column(Integer, default=0)
     price_override: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     sale_price_override: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    media_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("cms_media_assets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
@@ -172,6 +183,20 @@ class ProductVariant(TimestampMixin, Base):
 
 class Cart(TimestampMixin, Base):
     __tablename__ = "carts"
+    __table_args__ = (
+        Index(
+            "uq_carts_user_id_not_null",
+            "user_id",
+            unique=True,
+            postgresql_where=text("user_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_carts_guest_token_not_null",
+            "guest_token",
+            unique=True,
+            postgresql_where=text("guest_token IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
     user_id: Mapped[Optional[str]] = mapped_column(
@@ -296,10 +321,12 @@ class PaymentEvent(Base):
     payment_id: Mapped[str] = mapped_column(
         ForeignKey("payments.id", ondelete="CASCADE"), index=True
     )
-    provider: Mapped[str] = mapped_column(String(20), default="click")
-    environment: Mapped[str] = mapped_column(String(12), default="mock")
+    provider: Mapped[str] = mapped_column(String(20), default="unconfigured")
+    environment: Mapped[str] = mapped_column(String(12), default="local")
     event_type: Mapped[str] = mapped_column(String(40))
-    click_trans_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    provider_transaction_id: Mapped[Optional[str]] = mapped_column(
+        String(40), nullable=True
+    )
     provider_error_code: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     meta: Mapped[dict] = mapped_column(JSONB, default=dict)
     result: Mapped[str] = mapped_column(String(20), default="ok")
@@ -310,17 +337,31 @@ class PaymentEvent(Base):
 
 class Payment(TimestampMixin, Base):
     __tablename__ = "payments"
+    __table_args__ = (
+        Index(
+            "uq_payments_one_active_order",
+            "order_id",
+            unique=True,
+            postgresql_where=text(
+                "status NOT IN ('failed', 'cancelled', 'expired', 'refunded', 'reversed')"
+            ),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
     order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"), index=True)
-    provider: Mapped[str] = mapped_column(String(20), default="click")
-    environment: Mapped[str] = mapped_column(String(12), default="mock")
+    provider: Mapped[str] = mapped_column(String(20), default="unconfigured")
+    environment: Mapped[str] = mapped_column(String(12), default="local")
     currency: Mapped[str] = mapped_column(String(3), default="UZS")
     amount: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(30), default="pending", index=True)
     merchant_trans_id: Mapped[str] = mapped_column(String(80), unique=True)
-    click_trans_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, index=True)
-    click_paydoc_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    provider_transaction_id: Mapped[Optional[str]] = mapped_column(
+        String(40), nullable=True, index=True
+    )
+    provider_document_id: Mapped[Optional[str]] = mapped_column(
+        String(40), nullable=True
+    )
     merchant_prepare_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     merchant_confirm_id: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
     provider_reference: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)

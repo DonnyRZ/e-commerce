@@ -3,7 +3,7 @@ import os
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://muslimah-shop.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 API = f"{BASE_URL}/api/v1/catalog"
 
 # Some CDNs block default python-requests UA; use a browser-like UA
@@ -28,7 +28,10 @@ def test_health(s):
 
 def test_status(s):
     r = s.get(f"{BASE_URL}/api/status")
-    assert r.status_code == 200
+    # The public API intentionally exposes only the liveness/readiness
+    # endpoints.  Keep this aligned with the production smoke contract so a
+    # generic status/debug surface is not accidentally reintroduced.
+    assert r.status_code == 404
 
 
 # ---------- Departments ----------
