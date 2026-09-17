@@ -1,14 +1,18 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { LOCALE_LABELS, SUPPORTED_LOCALES, useI18n } from "@/i18n";
 import { useAuth } from "@/lib/AuthContext";
 import { authErrorKey } from "@/lib/api";
+import { completeCustomerAuth } from "@/lib/customerAuthFlow";
 import BrandLogo from "@/components/brand/BrandLogo";
 
 export default function RegisterPage() {
   const { t, locale } = useI18n();
   const { register } = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [form, setForm] = useState({
     first_name: "",
     last_name: "",
@@ -26,8 +30,14 @@ export default function RegisterPage() {
     setError("");
     setBusy(true);
     try {
-      await register(form);
-      navigate("/account");
+      const authenticatedUser = await register(form);
+      await completeCustomerAuth({
+        state: location.state,
+        user: authenticatedUser,
+        queryClient,
+        navigate,
+        t,
+      });
     } catch (err) {
       setError(t(authErrorKey(err)));
     } finally {
@@ -101,7 +111,7 @@ export default function RegisterPage() {
       </form>
       <p className="mt-5 text-sm text-muted-foreground">
         {t("auth.haveAccount")}{" "}
-        <Link to="/login" data-testid="register-login-link" className="font-medium text-foreground underline-offset-4 hover:underline">
+        <Link to="/login" state={location.state} data-testid="register-login-link" className="font-medium text-foreground underline-offset-4 hover:underline">
           {t("auth.login")}
         </Link>
       </p>

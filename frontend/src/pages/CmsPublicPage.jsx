@@ -2,7 +2,7 @@ import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { getCmsPage } from "@/lib/api";
 import { useI18n } from "@/i18n";
-import { mediaUrl, pickLocalized } from "@/lib/localize";
+import { mediaUrl, pickCmsLocalized } from "@/lib/localize";
 import ErrorState from "@/components/common/ErrorState";
 import EmptyState from "@/components/common/EmptyState";
 import ImageWithFallback from "@/components/common/ImageWithFallback";
@@ -35,10 +35,10 @@ export default function CmsPublicPage() {
   }
 
   const entry = query.data;
-  const title = pickLocalized(entry?.translations, locale) || entry?.slug || t("errors.notFound");
-  const subtitle = pickLocalized(entry?.translations, locale, "subtitle");
-  const body = pickLocalized(entry?.translations, locale, "body") ||
-    pickLocalized(entry?.translations, locale, "description");
+  const title = pickCmsLocalized(entry?.translations, locale) || entry?.slug || t("errors.notFound");
+  const subtitle = pickCmsLocalized(entry?.translations, locale, "subtitle");
+  const body = pickCmsLocalized(entry?.translations, locale, "body") ||
+    pickCmsLocalized(entry?.translations, locale, "description");
   const image = mediaUrl(entry?.image_url);
 
   if (!entry) return <EmptyState title={t("errors.notFound")} />;
@@ -48,7 +48,7 @@ export default function CmsPublicPage() {
       {image ? (
         <ImageWithFallback
           src={image}
-          alt={pickLocalized(entry?.translations, locale, "alt_text") || title}
+          alt={pickCmsLocalized(entry?.translations, locale, "alt_text") || title}
           className="mb-8 max-h-[28rem] w-full object-cover"
         />
       ) : null}

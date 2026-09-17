@@ -1,4 +1,4 @@
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useLocation } from "react-router-dom";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/lib/AuthContext";
 import { useShop } from "@/lib/ShopContext";
@@ -11,6 +11,7 @@ export default function WishlistPage() {
   const { t, locale } = useI18n();
   const { user, checking } = useAuth();
   const { wishlist } = useShop();
+  const location = useLocation();
 
   if (checking) {
     return (
@@ -20,7 +21,26 @@ export default function WishlistPage() {
       </div>
     );
   }
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ returnTo: `${location.pathname}${location.search}` }}
+      />
+    );
+  }
+  if (user.role !== "customer") {
+    return user.role === "admin" ? (
+      <Navigate to="/admin/" replace />
+    ) : (
+      <Navigate
+        to="/login"
+        replace
+        state={{ returnTo: `${location.pathname}${location.search}` }}
+      />
+    );
+  }
 
   const items = wishlist?.items || [];
   const cards = items.map((i) => ({

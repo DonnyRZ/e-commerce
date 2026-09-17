@@ -1,39 +1,146 @@
-import { createContext, useContext, useEffect, useRef } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
-import { authLogin, authLogout, authMe, authRegister, mergeCart } from "./api";
+import { authLogin, authLogout, authMe, authRefresh, authRegister, mergeCart } from "./api";
 import { translations } from "@/i18n/translations";
 import { toast } from "sonner";
 
 const AuthContext = createContext(null);
+const AUTH_EXPIRED_EVENT = "shanicantik:auth-expired";
+const PRIVATE_QUERY_ROOTS = new Set([
+  "addresses",
+  "cart",
+  "my-order",
+  "my-orders",
+  "wishlist",
+]);
 
-async function mergeGuestCart(queryClient) {
+async function loadCurrentUser() {
   try {
-    const result = await mergeCart();
-    queryClient.invalidateQueries({ queryKey: ["cart"] });
-    queryClient.invalidateQueries({ queryKey: ["wishlist"] });
-    if (result.adjustments?.length) {
-      const loc = window.localStorage.getItem("mc_locale") || "en";
-      toast.info(
-        translations[loc]?.["cart.mergeAdjusted"] ??
-          translations.en["cart.mergeAdjusted"]
-      );
+    return await authMe();
+  } catch (error) {
+    if (error?.response?.status !== 401) throw error;
+    const accessSessionWasPresent =
+      error?.response?.data?.detail !== "not_authenticated";
+    try {
+      await authRefresh();
+      return await authMe();
+    } catch (refreshError) {
+      const detail = refreshError?.response?.data?.detail;
+      if (
+        (accessSessionWasPresent || detail !== "not_authenticated") &&
+        typeof window !== "undefined"
+      ) {
+        window.dispatchEvent(
+          new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { notify: true } })
+        );
+      }
+      return null;
     }
-  } catch {
-    /* guest-cart merge is best-effort */
   }
 }
 
-export function AuthProvider({ children }) {
+function removePrivateQueries(queryClient, userId) {
+  if (userId) {
+    queryClient.removeQueries({ queryKey: ["cart", userId] });
+    queryClient.removeQueries({ queryKey: ["wishlist", userId] });
+    queryClient.removeQueries({ queryKey: ["addresses", userId] });
+    queryClient.removeQueries({ queryKey: ["my-orders", userId] });
+    queryClient.removeQueries({ queryKey: ["my-order", userId] });
+    return;
+  }
+  queryClient.removeQueries({
+    predicate: (query) =>
+      PRIVATE_QUERY_ROOTS.has(query.queryKey[0]) &&
+      !(["cart", "wishlist"].includes(query.queryKey[0]) &&
+        query.queryKey[1] === "guest"),
+  });
+}
+
+function removeAllPrivateQueries(queryClient) {
+  queryClient.removeQueries({
+    predicate: (query) =>
+      PRIVATE_QUERY_ROOTS.has(query.queryKey[0]) &&
+      !(["cart", "wishlist"].includes(query.queryKey[0]) &&
+        query.queryKey[1] === "guest"),
+  });
+}
+
+export function AuthProvider({ children, mergeCustomerCartOnRestore = true }) {
   const queryClient = useQueryClient();
-  const { setLocale } = useI18n();
+  const { setLocale, locale } = useI18n();
   const previousUserId = useRef(undefined);
+  const mergeJobs = useRef(new Map());
+  const localeRef = useRef(locale);
+  const [cartMergeError, setCartMergeError] = useState(false);
+  const [cartMergePending, setCartMergePending] = useState(false);
+  const [cartMergeReadyUserId, setCartMergeReadyUserId] = useState(null);
   const { data: user = null, isLoading } = useQuery({
     queryKey: ["auth", "me"],
-    queryFn: authMe,
+    queryFn: async () => {
+      const restoredUser = await loadCurrentUser();
+      if (!restoredUser) removePrivateQueries(queryClient, null);
+      return restoredUser;
+    },
     retry: false,
     staleTime: 60_000,
   });
+
+  useEffect(() => {
+    localeRef.current = locale;
+  }, [locale]);
+
+  const mergeCustomerCart = useCallback((customerId) => {
+    const existingJob = mergeJobs.current.get(customerId);
+    if (existingJob) return existingJob;
+
+    const job = (async () => {
+      setCartMergePending(true);
+      setCartMergeError(false);
+      try {
+        const result = await mergeCart();
+        const { adjustments = [], ...cart } = result;
+        const stillCurrent =
+          queryClient.getQueryData(["auth", "me"])?.id === customerId;
+        if (stillCurrent) {
+          queryClient.setQueryData(["cart", customerId], cart);
+          setCartMergeError(false);
+        }
+        if (stillCurrent) {
+          queryClient.removeQueries({ queryKey: ["cart", "guest"] });
+        }
+        if (adjustments.length && stillCurrent) {
+          const loc = localeRef.current || "en";
+          toast.info(
+            translations[loc]?.["cart.mergeAdjusted"] ??
+              translations.en["cart.mergeAdjusted"]
+          );
+        }
+        return true;
+      } catch {
+        const stillCurrent =
+          queryClient.getQueryData(["auth", "me"])?.id === customerId;
+        if (stillCurrent) {
+          setCartMergeError(true);
+          const loc = localeRef.current || "en";
+          toast.error(
+            translations[loc]?.["cart.mergeFailed"] ??
+              translations.en["cart.mergeFailed"]
+          );
+        }
+        return false;
+      } finally {
+        if (queryClient.getQueryData(["auth", "me"])?.id === customerId) {
+          setCartMergeReadyUserId(customerId);
+        }
+        mergeJobs.current.delete(customerId);
+        setCartMergePending(mergeJobs.current.size > 0);
+      }
+    })();
+
+    mergeJobs.current.set(customerId, job);
+    return job;
+  }, [queryClient]);
 
   useEffect(() => {
     if (user?.preferred_locale) setLocale(user.preferred_locale);
@@ -41,45 +148,96 @@ export function AuthProvider({ children }) {
   }, [user?.id]);
 
   useEffect(() => {
-    if (
-      previousUserId.current !== undefined &&
-      previousUserId.current !== (user?.id || null)
-    ) {
-      // Cart and wishlist are principal-scoped. Never let React Query reuse
-      // the previous account's data after login, logout, or account switch.
-      queryClient.removeQueries({ queryKey: ["cart"] });
-      queryClient.removeQueries({ queryKey: ["wishlist"] });
+    const currentUserId = user?.id || null;
+    const previousId = previousUserId.current;
+    if (previousId !== undefined && previousId !== currentUserId) {
+      removePrivateQueries(queryClient, previousId);
+      setCartMergeError(false);
+      setCartMergeReadyUserId(null);
     }
-    previousUserId.current = user?.id || null;
+    previousUserId.current = currentUserId;
   }, [queryClient, user?.id]);
+
+  useEffect(() => {
+    if (mergeCustomerCartOnRestore && user?.role === "customer") {
+      void mergeCustomerCart(user.id);
+    } else if (!user) {
+      setCartMergeError(false);
+      setCartMergeReadyUserId(null);
+    }
+  }, [mergeCustomerCart, mergeCustomerCartOnRestore, user?.id, user?.role]);
+
+  useEffect(() => {
+    const handleSessionExpired = (event) => {
+      void queryClient.cancelQueries({ queryKey: ["auth", "me"] });
+      queryClient.setQueryData(["auth", "me"], null);
+      removeAllPrivateQueries(queryClient);
+      setCartMergeError(false);
+      setCartMergePending(false);
+      setCartMergeReadyUserId(null);
+      if (event.detail?.notify) {
+        const loc = localeRef.current || "en";
+        toast.error(
+          translations[loc]?.["auth.sessionExpired"] ??
+            translations.en["auth.sessionExpired"]
+        );
+      }
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleSessionExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleSessionExpired);
+  }, [queryClient]);
 
   const value = {
     user,
     checking: isLoading,
+    cartMergeError,
+    cartMergePending,
+    cartMergeReady: user?.role !== "customer" || cartMergeReadyUserId === user?.id,
+    cartMutationsBlocked:
+      user?.role === "customer" &&
+      (cartMergeReadyUserId !== user.id || cartMergePending),
+    retryCartMerge: () => (user?.role === "customer" ? mergeCustomerCart(user.id) : false),
     async login(email, password) {
-      const u = await authLogin(email, password);
-      queryClient.setQueryData(["auth", "me"], u);
-      // Admin sessions are for operations only and must never inherit a
-      // shopper's guest cart or wishlist state.
-      if (u.role !== "admin") await mergeGuestCart(queryClient);
-      return u;
+      await queryClient.cancelQueries({ queryKey: ["auth", "me"] });
+      await queryClient.cancelQueries({
+        predicate: (query) => PRIVATE_QUERY_ROOTS.has(query.queryKey[0]),
+      });
+      const authenticatedUser = await authLogin(email, password);
+      queryClient.setQueryData(["auth", "me"], authenticatedUser);
+      if (mergeCustomerCartOnRestore && authenticatedUser.role === "customer") {
+        await mergeCustomerCart(authenticatedUser.id);
+      }
+      return authenticatedUser;
     },
     async register(data) {
-      const u = await authRegister(data);
-      queryClient.setQueryData(["auth", "me"], u);
-      await mergeGuestCart(queryClient);
-      return u;
+      await queryClient.cancelQueries({ queryKey: ["auth", "me"] });
+      await queryClient.cancelQueries({
+        predicate: (query) => PRIVATE_QUERY_ROOTS.has(query.queryKey[0]),
+      });
+      const authenticatedUser = await authRegister(data);
+      queryClient.setQueryData(["auth", "me"], authenticatedUser);
+      if (mergeCustomerCartOnRestore && authenticatedUser.role === "customer") {
+        await mergeCustomerCart(authenticatedUser.id);
+      }
+      return authenticatedUser;
     },
     async logout() {
+      await queryClient.cancelQueries({ queryKey: ["auth", "me"] });
+      await queryClient.cancelQueries({
+        predicate: (query) => PRIVATE_QUERY_ROOTS.has(query.queryKey[0]),
+      });
       try {
         await authLogout();
       } finally {
         queryClient.setQueryData(["auth", "me"], null);
-        queryClient.removeQueries({ queryKey: ["cart"] });
-        queryClient.removeQueries({ queryKey: ["wishlist"] });
+        removeAllPrivateQueries(queryClient);
+        setCartMergeError(false);
+        setCartMergePending(false);
+        setCartMergeReadyUserId(null);
       }
     },
-    setUser: (u) => queryClient.setQueryData(["auth", "me"], u),
+    setUser: (authenticatedUser) =>
+      queryClient.setQueryData(["auth", "me"], authenticatedUser),
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

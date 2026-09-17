@@ -1,4 +1,5 @@
 import os
+import re
 from urllib.parse import urlparse
 from pathlib import Path
 
@@ -35,6 +36,21 @@ DEFAULT_LOCALE = "en"
 # Keeping this as a code-level default prevents stale environment files from
 # accidentally creating orders or inventory reservations.
 CHECKOUT_ENABLED = False
+
+# Telegram inquiry delivery stays fail-closed until its webhook and Business
+# account connection have been verified. Credentials are server-side secrets.
+TELEGRAM_INQUIRIES_ENABLED = os.environ.get(
+    "TELEGRAM_INQUIRIES_ENABLED", "false"
+).strip().lower() == "true"
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_WEBHOOK_SECRET = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip()
+TELEGRAM_STORE_USERNAME = os.environ.get(
+    "TELEGRAM_STORE_USERNAME", "CantikByIndonesia"
+).strip().lstrip("@").lower()
+TELEGRAM_BOT_USERNAME = os.environ.get(
+    "TELEGRAM_BOT_USERNAME", "MuslimahCantikBot"
+).strip().lstrip("@").lower()
+TELEGRAM_INQUIRY_TTL_DAYS = 7
 
 INVENTORY_RESERVATION_TTL_MINUTES = int(
     os.environ.get("INVENTORY_RESERVATION_TTL_MINUTES", "30")
@@ -112,6 +128,15 @@ def validate_runtime_config(*, strict: bool | None = None) -> list[str]:
 
     if production and CHECKOUT_ENABLED:
         errors.append("checkout must remain disabled until a payment method is configured")
+    if TELEGRAM_INQUIRIES_ENABLED:
+        if not TELEGRAM_BOT_TOKEN:
+            errors.append("TELEGRAM_BOT_TOKEN is required when Telegram inquiries are enabled")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{32,256}", TELEGRAM_WEBHOOK_SECRET):
+            errors.append(
+                "TELEGRAM_WEBHOOK_SECRET must be 32-256 letters, digits, underscores, or hyphens when Telegram inquiries are enabled"
+            )
+        if not TELEGRAM_STORE_USERNAME or not TELEGRAM_BOT_USERNAME:
+            errors.append("Telegram store and bot usernames are required when Telegram inquiries are enabled")
     if production:
         if NOTIFICATION_PROVIDER == "mock":
             errors.append("NOTIFICATION_PROVIDER=mock is not allowed in production")

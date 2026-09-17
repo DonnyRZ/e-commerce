@@ -78,6 +78,14 @@ def test_login_me_logout_cycle():
     assert me2.status_code == 401
 
 
+def test_refresh_without_token_clears_stale_auth_cookies():
+    response = requests.post(f"{API}/auth/refresh")
+    assert response.status_code == 401
+    cookie_headers = response.headers.get("Set-Cookie", "")
+    assert "access_token" in cookie_headers and "Max-Age=0" in cookie_headers
+    assert "refresh_token" in cookie_headers and "Max-Age=0" in cookie_headers
+
+
 # ---------- CSRF ----------
 
 def test_patch_me_without_csrf_403():
@@ -118,6 +126,16 @@ def test_rbac_unauth_401():
     r2 = requests.get(f"{API}/auth/admin/ping")
     assert r1.status_code == 401
     assert r2.status_code == 401
+
+
+@pytest.mark.parametrize("creds", [SELLER, ADMIN])
+def test_non_customer_roles_cannot_use_customer_surfaces(creds):
+    s = _session_login(*creds)
+    for path in ("/account/addresses", "/account/orders", "/wishlist"):
+        response = s.get(f"{API}{path}")
+        assert response.status_code == 403, (path, response.status_code, response.text)
+    merge = s.post(f"{API}/cart/merge")
+    assert merge.status_code == 403, ("/cart/merge", merge.status_code, merge.text)
 
 
 # ---------- Addresses CRUD + ownership ----------

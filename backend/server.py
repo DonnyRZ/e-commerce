@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -35,6 +36,8 @@ from routers.orders import router as orders_router
 from routers.admin import router as admin_router
 from routers.cms_admin import router as cms_admin_router
 from routers.cms_public import router as cms_public_router
+from routers.telegram import router as telegram_router
+from routers.telegram import telegram_inquiry_cleanup_loop
 
 
 class JsonFormatter(logging.Formatter):
@@ -69,9 +72,17 @@ async def lifespan(_app: FastAPI):
     # Production must fail before accepting traffic when its runtime
     # configuration is unsafe.
     validate_runtime_config(strict=APP_ENV == "production")
-    yield
-    await close_redis()
-    await engine.dispose()
+    cleanup_task = asyncio.create_task(telegram_inquiry_cleanup_loop())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+        await close_redis()
+        await engine.dispose()
 
 
 app = FastAPI(title="MUSLIMAH CANTIK API", lifespan=lifespan)
@@ -176,6 +187,7 @@ app.include_router(orders_router)
 app.include_router(admin_router)
 app.include_router(cms_admin_router)
 app.include_router(cms_public_router)
+app.include_router(telegram_router)
 
 
 @app.middleware("http")

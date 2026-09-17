@@ -28,15 +28,20 @@ CONTENT_TYPES = (
     "homepage_section", "department_visual",
 )
 
+HOMEPAGE_SECTION_KEYS = (
+    "promo_bar", "hero", "categories", "new_arrivals",
+    "departments", "best_sellers", "stories", "footer",
+)
+
 REVISION_ACTIONS = ("created", "saved_draft", "published", "unpublished", "archived", "restored")
 
 _STATUS_TRANSITIONS = {
-    "publish": {"draft", "archived"},
+    "publish": {"draft", "published", "archived"},
     "unpublish": {"published"},
     "archive": {"draft", "published"},
 }
 
-_SAFE_URL = re.compile(r"^(/[^\s]*|https?://[^\s]+)$", re.IGNORECASE)
+_SAFE_URL = re.compile(r"^(/[^\s]*|https?://[^\s]+|mailto:[^@\s]+@[^@\s]+)$", re.IGNORECASE)
 _UNSAFE_TEXT = re.compile(r"<\s*(script|iframe)|javascript:|data:text/html|on\w+\s*=", re.IGNORECASE)
 
 
@@ -45,7 +50,7 @@ def validate_url(url: Optional[str]) -> Optional[str]:
     if url in (None, ""):
         return None
     url = url.strip()
-    if len(url) > 500 or not _SAFE_URL.match(url):
+    if len(url) > 500 or url.startswith("//") or not _SAFE_URL.match(url):
         raise ValueError("invalid_url")
     return url
 
@@ -162,8 +167,56 @@ async def snapshot_entry(session: AsyncSession, entry: CmsContentEntry) -> dict:
     }
 
 
+def apply_snapshot(entry: CmsContentEntry, snapshot: dict) -> None:
+    """Apply a validated content snapshot to its live database row."""
+    for field in (
+        "internal_name", "slug", "placement", "sort_order", "is_visible",
+        "media_id", "cta_url", "secondary_cta_url",
+    ):
+        if field in snapshot:
+            setattr(entry, field, snapshot[field])
+    if "payload" in snapshot:
+        entry.payload = clean_payload(snapshot.get("payload"))
+
+
+def publish_missing_fields(content_type: str, snapshot: dict) -> list[str]:
+    """Return human-readable English/content requirements for publishing."""
+    translations = snapshot.get("translations") or {}
+    english = translations.get("en") or {}
+    missing: list[str] = []
+    if not str(snapshot.get("slug") or "").strip():
+        missing.append("slug")
+    primary_field = "alt_text" if content_type == "department_visual" else "title"
+    if not str(english.get(primary_field) or "").strip():
+        missing.append(f"translations.en.{primary_field}")
+
+    if content_type == "page" and not str(
+        english.get("body") or english.get("description") or ""
+    ).strip():
+        missing.append("translations.en.body")
+    elif content_type == "faq_item" and not str(english.get("body") or "").strip():
+        missing.append("translations.en.body")
+    elif content_type == "nav_item" and not snapshot.get("cta_url"):
+        missing.append("cta_url")
+    elif content_type == "footer_item":
+        if not snapshot.get("cta_url"):
+            missing.append("cta_url")
+        if not str((snapshot.get("payload") or {}).get("group") or "").strip():
+            missing.append("payload.group")
+    elif content_type == "homepage_section":
+        if snapshot.get("slug") not in HOMEPAGE_SECTION_KEYS:
+            missing.append("slug")
+    elif content_type == "department_visual":
+        if not snapshot.get("slug"):
+            missing.append("slug")
+        if not snapshot.get("media_id"):
+            missing.append("media_id")
+
+    return missing
+
+
 async def add_revision(session: AsyncSession, entry: CmsContentEntry, action: str,
-                       actor_id: Optional[str]) -> None:
+                       actor_id: Optional[str], snapshot_override: Optional[dict] = None) -> None:
     current_max = await session.scalar(
         select(func.coalesce(func.max(CmsRevision.version_number), 0)).where(
             CmsRevision.content_id == entry.id
@@ -175,7 +228,7 @@ async def add_revision(session: AsyncSession, entry: CmsContentEntry, action: st
             content_id=entry.id,
             version_number=int(current_max or 0) + 1,
             action=action,
-            snapshot=await snapshot_entry(session, entry),
+            snapshot=snapshot_override if snapshot_override is not None else await snapshot_entry(session, entry),
             created_by=actor_id,
         )
     )
@@ -207,7 +260,7 @@ async def entry_detail(session: AsyncSession, entry: CmsContentEntry) -> dict:
     ).scalars().all()
     payload = clean_payload(entry.payload)
     image_url = await _media_url(session, entry.media_id) or payload.get("image_url")
-    return {
+    result = {
         "id": entry.id,
         "content_type": entry.content_type,
         "internal_name": entry.internal_name,
@@ -233,9 +286,23 @@ async def entry_detail(session: AsyncSession, entry: CmsContentEntry) -> dict:
             for t in translations
         },
         "completeness": sorted(
-            t.locale for t in translations if (t.title or t.body or t.description)
+            t.locale for t in translations
+            if (t.title or t.body or t.description or t.alt_text)
         ),
+        "has_unpublished_changes": entry.draft_snapshot is not None,
     }
+    if entry.draft_snapshot is not None:
+        working = dict(entry.draft_snapshot)
+        working_payload = clean_payload(working.get("payload"))
+        working["payload"] = working_payload
+        working["image_url"] = (
+            await _media_url(session, working.get("media_id"))
+            or working_payload.get("image_url")
+        )
+        result["working_copy"] = working
+    else:
+        result["working_copy"] = None
+    return result
 
 
 async def entry_summary(session: AsyncSession, entry: CmsContentEntry) -> dict:
@@ -246,6 +313,15 @@ async def entry_summary(session: AsyncSession, entry: CmsContentEntry) -> dict:
             .where(CmsContentTranslation.entry_id == entry.id)
         )
     ).all()
+    completeness = sorted(
+        t.locale for t in translations
+        if (t.title or t.body or t.description or t.alt_text)
+    )
+    if entry.draft_snapshot is not None:
+        completeness = sorted(
+            locale for locale, tr in (entry.draft_snapshot.get("translations") or {}).items()
+            if tr.get("title") or tr.get("body") or tr.get("description") or tr.get("alt_text")
+        )
     return {
         "id": entry.id,
         "content_type": entry.content_type,
@@ -257,14 +333,16 @@ async def entry_summary(session: AsyncSession, entry: CmsContentEntry) -> dict:
         "is_visible": entry.is_visible,
         "media_id": entry.media_id,
         "updated_at": entry.updated_at,
-        "completeness": sorted(
-            t.locale for t in translations if (t.title or t.body or t.description)
-        ),
+        "completeness": completeness,
+        "has_unpublished_changes": entry.draft_snapshot is not None,
     }
 
 
-async def public_entry(session: AsyncSession, entry: CmsContentEntry) -> dict:
+async def public_entry(session: AsyncSession, entry: CmsContentEntry,
+                       use_working_copy: bool = False) -> dict:
     detail = await entry_detail(session, entry)
+    if use_working_copy and detail.get("working_copy"):
+        detail = {**detail, **detail["working_copy"]}
     return {
         "id": detail["id"],
         "content_type": detail["content_type"],

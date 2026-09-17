@@ -1,6 +1,13 @@
 export const pickLocalized = (translations, locale, field = "title") =>
   translations?.[locale]?.[field] ?? translations?.en?.[field] ?? "";
 
+export const pickCmsLocalized = (translations, locale, field = "title") => {
+  const localized = translations?.[locale]?.[field];
+  if (typeof localized === "string" && localized.trim()) return localized;
+  const english = translations?.en?.[field];
+  return typeof english === "string" && english.trim() ? english : "";
+};
+
 export const mediaUrl = (url) => {
   if (!url) return "";
   if (!url.startsWith("/")) return url;

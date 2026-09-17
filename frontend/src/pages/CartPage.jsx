@@ -1,9 +1,14 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Minus, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
-import { getCheckoutOptions } from "@/lib/api";
+import { useAuth } from "@/lib/AuthContext";
+import {
+  createTelegramCartInquiry,
+  getTelegramInquiryStatus,
+} from "@/lib/api";
 import { useShop } from "@/lib/ShopContext";
 import { pickLocalized } from "@/lib/localize";
 import EmptyState from "@/components/common/EmptyState";
@@ -13,23 +18,78 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function CartPage() {
   const { t, locale } = useI18n();
-  const { cart, cartLoading, cartError, refetchCart, updateItem, removeItem } = useShop();
-  const checkoutOptionsQuery = useQuery({
-    queryKey: ["checkout-options"],
-    queryFn: getCheckoutOptions,
-    enabled: Boolean(cart?.item_count),
+  const { cartMergeError, cartMergePending, retryCartMerge } = useAuth();
+  const {
+    cart,
+    cartLoading,
+    cartError,
+    cartMutationsBlocked,
+    guestCartMode,
+    refetchCart,
+    updateItem,
+    removeItem,
+  } = useShop();
+  const telegramStatusQuery = useQuery({
+    queryKey: ["telegram-inquiry-status"],
+    queryFn: getTelegramInquiryStatus,
+    enabled: Boolean(cart?.item_count) && !cartMutationsBlocked,
     staleTime: 60 * 1000,
     retry: false,
   });
-  // Fail closed if the backend status cannot be read. The API also blocks
-  // checkout server-side, but the cart should not advertise a dead CTA.
-  const checkoutEnabled =
-    checkoutOptionsQuery.isSuccess &&
-    checkoutOptionsQuery.data?.checkout_enabled !== false;
+  const [openingTelegram, setOpeningTelegram] = useState(false);
+  const telegramAvailable =
+    telegramStatusQuery.isSuccess && telegramStatusQuery.data?.available === true;
+
+  const handleConfirm = async () => {
+    if (!telegramAvailable || openingTelegram || cartMutationsBlocked) return;
+    setOpeningTelegram(true);
+    try {
+      const key = window.crypto?.randomUUID
+        ? window.crypto.randomUUID()
+        : Array.from(window.crypto.getRandomValues(new Uint8Array(16)))
+            .map((value) => value.toString(16).padStart(2, "0"))
+            .join("");
+      const inquiry = await createTelegramCartInquiry({
+        locale,
+        idempotencyKey: key,
+        guest: guestCartMode,
+      });
+      const target = new URL(inquiry.telegram_url);
+      const expectedUsername = telegramStatusQuery.data.store_username;
+      if (
+        target.origin !== "https://t.me" ||
+        target.pathname.toLowerCase() !== `/${expectedUsername}`.toLowerCase()
+      ) {
+        throw new Error("invalid_telegram_destination");
+      }
+      window.location.assign(target.toString());
+    } catch {
+      toast.error(t("cart.confirmFailed"));
+      setOpeningTelegram(false);
+    }
+  };
+
+  const mergeNotice = cartMergeError || cartMergePending ? (
+    <div role="alert" data-testid="cart-merge-error" className="mt-5 flex flex-wrap items-center justify-between gap-3 border border-destructive/40 bg-destructive/5 p-4 text-sm">
+      <p>{t(cartMergePending ? "cart.mergePending" : "cart.mergeFailed")}</p>
+      {cartMergeError ? (
+        <button
+          type="button"
+          data-testid="cart-merge-retry"
+          disabled={cartMergePending}
+          onClick={retryCartMerge}
+          className="h-9 border border-border px-4 font-medium disabled:opacity-50"
+        >
+          {cartMergePending ? t("common.loading") : t("common.retry")}
+        </button>
+      ) : null}
+    </div>
+  ) : null;
 
   if (cartLoading) {
     return (
       <div className="py-8" data-testid="cart-loading">
+        {mergeNotice}
         <Skeleton className="h-8 w-48" />
         <Skeleton className="mt-6 h-32 w-full" />
         <Skeleton className="mt-4 h-32 w-full" />
@@ -37,7 +97,12 @@ export default function CartPage() {
     );
   }
   if (cartError) {
-    return <ErrorState message={t("errors.network")} onRetry={() => refetchCart()} />;
+    return (
+      <div className="py-8">
+        {mergeNotice}
+        <ErrorState message={t("errors.network")} onRetry={() => refetchCart()} />
+      </div>
+    );
   }
 
   const items = cart?.items || [];
@@ -55,11 +120,20 @@ export default function CartPage() {
     }
   };
 
+  const handleRemove = async (itemId) => {
+    try {
+      await removeItem(itemId);
+    } catch {
+      toast.error(t("errors.generic"));
+    }
+  };
+
   return (
     <div data-testid="cart-page" className="py-8 lg:py-12">
       <h1 className="text-2xl font-semibold tracking-tight lg:text-3xl">
         {t("cart.title")}
       </h1>
+      {mergeNotice}
       {items.length === 0 ? (
         <div data-testid="cart-empty">
           <EmptyState
@@ -124,7 +198,8 @@ export default function CartPage() {
                         type="button"
                         data-testid={`cart-remove-${item.id}`}
                         aria-label={t("cart.remove")}
-                        onClick={() => removeItem(item.id)}
+                        disabled={cartMutationsBlocked}
+                        onClick={() => handleRemove(item.id)}
                         className="text-muted-foreground transition-colors hover:text-destructive"
                       >
                         <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -136,7 +211,7 @@ export default function CartPage() {
                           type="button"
                           data-testid={`cart-qty-minus-${item.id}`}
                           aria-label="Decrease quantity"
-                          disabled={item.quantity <= 1}
+                          disabled={item.quantity <= 1 || cartMutationsBlocked}
                           onClick={() => handleQty(item, item.quantity - 1)}
                           className="inline-flex h-9 w-9 items-center justify-center disabled:opacity-30"
                         >
@@ -149,7 +224,7 @@ export default function CartPage() {
                           type="button"
                           data-testid={`cart-qty-plus-${item.id}`}
                           aria-label="Increase quantity"
-                          disabled={item.quantity >= item.stock_quantity}
+                          disabled={item.quantity >= item.stock_quantity || cartMutationsBlocked}
                           onClick={() => handleQty(item, item.quantity + 1)}
                           className="inline-flex h-9 w-9 items-center justify-center disabled:opacity-30"
                         >
@@ -183,29 +258,24 @@ export default function CartPage() {
             <p className="mt-2 text-xs text-muted-foreground">
               {t("cart.shippingNote")}
             </p>
-            {checkoutEnabled ? (
-              <Link
-                to="/checkout"
-                data-testid="cart-checkout-cta"
-                className="mt-5 flex h-12 items-center justify-center bg-foreground text-sm font-semibold text-background transition-colors hover:bg-primary"
-              >
-                {t("cart.checkout")}
-              </Link>
-            ) : (
-              <div className="mt-5 space-y-2">
-                <button
-                  type="button"
-                  data-testid="cart-checkout-disabled"
-                  disabled
-                  className="flex h-12 w-full items-center justify-center bg-muted text-sm font-semibold text-muted-foreground"
-                >
-                  {t("cart.checkoutUnavailable")}
-                </button>
-                <p className="text-xs leading-relaxed text-muted-foreground">
-                  {t("cart.checkoutUnavailableBody")}
-                </p>
-              </div>
-            )}
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              {t("cart.confirmNote")}
+            </p>
+            <button
+              type="button"
+              data-testid="cart-telegram-confirm"
+              disabled={!telegramAvailable || openingTelegram || cartMutationsBlocked}
+              aria-busy={openingTelegram}
+              onClick={handleConfirm}
+              className="mt-5 flex h-12 w-full items-center justify-center bg-foreground text-sm font-semibold text-background transition-colors hover:bg-primary disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
+            >
+              {t("cart.confirm")}
+            </button>
+            {!telegramAvailable ? (
+              <p data-testid="cart-telegram-unavailable" className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                {t("cart.confirmUnavailable")}
+              </p>
+            ) : null}
           </aside>
         </div>
       )}

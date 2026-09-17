@@ -7,7 +7,9 @@ media upload validation, audit log.
 """
 import base64
 import os
+import struct
 import uuid
+import zlib
 
 import pytest
 import requests
@@ -23,6 +25,17 @@ CUSTOMER = ("customer.demo@muslimahcantik.id", "MC-Cust0mer-9d2m48Lw-2026")
 PNG_1PX = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 )
+
+
+def _unique_png(tag):
+    chunk_type = b"tEXt"
+    content = b"TestTag\x00" + tag.encode("ascii")
+    chunk = (
+        struct.pack(">I", len(content)) + chunk_type + content
+        + struct.pack(">I", zlib.crc32(chunk_type + content) & 0xFFFFFFFF)
+    )
+    marker = PNG_1PX.rfind(b"\x00\x00\x00\x00IEND")
+    return PNG_1PX[:marker] + chunk + PNG_1PX[marker:]
 
 
 def _login(email, password):
@@ -234,6 +247,236 @@ def test_cms_draft_never_leaks(admin):
     assert r.status_code == 200 and r.json()["status"] == "archived"
 
 
+def test_cms_crud_for_every_content_type(admin):
+    """Every CMS type can be created, edited, listed, archived and removed."""
+    tag = uuid.uuid4().hex[:10]
+    types = (
+        "hero", "announcement", "banner", "story", "page", "faq_item",
+        "nav_item", "footer_group", "footer_item", "footer_text",
+        "homepage_section", "department_visual",
+    )
+    created_ids = []
+    footer_group_slug = f"footer-{tag}"
+    footer_group_id = None
+    try:
+        for content_type in types:
+            internal_name = f"CMS {content_type} {tag}"
+            slug = "" if content_type in ("homepage_section", "department_visual") else f"{content_type}-{tag}"
+            translations = {
+                "en": {
+                    "title": f"{content_type} {tag}",
+                    "alt_text": f"{content_type} image {tag}",
+                }
+            }
+            payload = {}
+            if content_type == "footer_item":
+                payload["group"] = footer_group_slug
+            body = {
+                "content_type": content_type,
+                "internal_name": internal_name,
+                "slug": slug,
+                "placement": "home_stories" if content_type == "footer_text" else "",
+                "payload": payload,
+                "translations": translations,
+            }
+            response = admin.post(f"{API}/admin/cms/content", json=body)
+            assert response.status_code == 201, f"{content_type}: {response.status_code} {response.text}"
+            entry = response.json()
+            created_ids.append(entry["id"])
+            if content_type == "footer_group":
+                footer_group_slug = entry["slug"]
+                footer_group_id = entry["id"]
+            if content_type == "footer_item":
+                renamed_group = admin.patch(
+                    f"{API}/admin/cms/content/{footer_group_id}",
+                    json={"slug": f"renamed-{tag}"},
+                )
+                assert renamed_group.status_code == 409
+                assert renamed_group.json()["detail"]["error"] == "footer_group_in_use"
+
+            listed = admin.get(
+                f"{API}/admin/cms/content",
+                params={"type": content_type, "q": tag, "page": 1, "page_size": 10},
+            )
+            assert listed.status_code == 200 and any(item["id"] == entry["id"] for item in listed.json()["items"])
+
+            updated = admin.patch(
+                f"{API}/admin/cms/content/{entry['id']}",
+                json={"internal_name": f"{internal_name} edited"},
+            )
+            assert updated.status_code == 200, f"{content_type}: {updated.status_code} {updated.text}"
+            assert admin.get(f"{API}/admin/cms/content/{entry['id']}").json()["internal_name"].endswith("edited")
+    finally:
+        # Delete children before their footer group, preserving test data safety
+        # even if an assertion fails partway through the type matrix.
+        for entry_id in reversed(created_ids):
+            current = admin.get(f"{API}/admin/cms/content/{entry_id}")
+            if current.status_code != 200:
+                continue
+            if current.json()["status"] != "archived":
+                admin.post(f"{API}/admin/cms/content/{entry_id}/status", json={"action": "archive"})
+            admin.delete(f"{API}/admin/cms/content/{entry_id}")
+
+
+def test_published_cms_edits_are_staged_until_publish(admin):
+    slug = f"staged-{uuid.uuid4().hex[:10]}"
+    created = admin.post(
+        f"{API}/admin/cms/content",
+        json={
+            "content_type": "page",
+            "internal_name": f"Staged page {slug}",
+            "slug": slug,
+            "translations": {"en": {"title": "Live title", "body": "Live body"}},
+        },
+    )
+    assert created.status_code == 201, created.text
+    entry_id = created.json()["id"]
+    try:
+        r = admin.post(f"{API}/admin/cms/content/{entry_id}/status", json={"action": "publish"})
+        assert r.status_code == 200, r.text
+        assert requests.get(f"{API}/cms/public/pages/{slug}").json()["translations"]["en"]["title"] == "Live title"
+
+        r = admin.patch(
+            f"{API}/admin/cms/content/{entry_id}",
+            json={"translations": {"en": {"title": "Draft title", "body": "Draft body"}}},
+        )
+        assert r.status_code == 200, r.text
+        detail = r.json()
+        assert detail["status"] == "published"
+        assert detail["has_unpublished_changes"] is True
+        assert detail["translations"]["en"]["title"] == "Live title"
+        assert detail["working_copy"]["translations"]["en"]["title"] == "Draft title"
+        assert requests.get(f"{API}/cms/public/pages/{slug}").json()["translations"]["en"]["title"] == "Live title"
+        listed = admin.get(f"{API}/admin/cms/content", params={"q": slug}).json()
+        assert next(item for item in listed["items"] if item["id"] == entry_id)["has_unpublished_changes"] is True
+
+        token = admin.post(f"{API}/admin/cms/content/{entry_id}/preview-token").json()
+        preview = requests.get(f"{BASE}{token['preview_url']}")
+        assert preview.status_code == 200
+        assert preview.json()["translations"]["en"]["title"] == "Draft title"
+
+        revisions = admin.get(f"{API}/admin/cms/content/{entry_id}/revisions").json()
+        published_revision = next(revision for revision in revisions if revision["action"] == "published")
+        restored = admin.post(
+            f"{API}/admin/cms/content/{entry_id}/restore/{published_revision['id']}"
+        )
+        assert restored.status_code == 200, restored.text
+        assert restored.json()["has_unpublished_changes"] is True
+        assert restored.json()["working_copy"]["translations"]["en"]["title"] == "Live title"
+        assert requests.get(f"{API}/cms/public/pages/{slug}").json()["translations"]["en"]["title"] == "Live title"
+
+        r = admin.patch(
+            f"{API}/admin/cms/content/{entry_id}",
+            json={"translations": {"en": {"title": "Draft title", "body": "Draft body"}}},
+        )
+        assert r.status_code == 200, r.text
+
+        r = admin.post(f"{API}/admin/cms/content/{entry_id}/status", json={"action": "publish"})
+        assert r.status_code == 200, r.text
+        assert r.json()["has_unpublished_changes"] is False
+        assert requests.get(f"{API}/cms/public/pages/{slug}").json()["translations"]["en"]["title"] == "Draft title"
+
+        assert admin.delete(f"{API}/admin/cms/content/{entry_id}").status_code == 409
+    finally:
+        current = admin.get(f"{API}/admin/cms/content/{entry_id}")
+        if current.status_code == 200:
+            if current.json()["status"] != "archived":
+                admin.post(f"{API}/admin/cms/content/{entry_id}/status", json={"action": "archive"})
+            admin.delete(f"{API}/admin/cms/content/{entry_id}")
+
+
+def test_publish_requires_english_content_and_delete_requires_archive(admin):
+    created = admin.post(
+        f"{API}/admin/cms/content",
+        json={
+            "content_type": "banner",
+            "internal_name": f"Incomplete banner {uuid.uuid4().hex[:8]}",
+            "translations": {"id": {"title": "Banner Indonesia"}},
+        },
+    )
+    assert created.status_code == 201, created.text
+    entry_id = created.json()["id"]
+    try:
+        r = admin.post(f"{API}/admin/cms/content/{entry_id}/status", json={"action": "publish"})
+        assert r.status_code == 400
+        assert r.json()["detail"]["error"] == "incomplete_english"
+        assert admin.delete(f"{API}/admin/cms/content/{entry_id}").status_code == 409
+    finally:
+        current = admin.get(f"{API}/admin/cms/content/{entry_id}")
+        if current.status_code == 200:
+            if current.json()["status"] != "archived":
+                admin.post(f"{API}/admin/cms/content/{entry_id}/status", json={"action": "archive"})
+            admin.delete(f"{API}/admin/cms/content/{entry_id}")
+
+
+def test_cms_validates_relations_sections_and_duplicate_slugs(admin):
+    tag = uuid.uuid4().hex[:10]
+    invalid_cases = (
+        {
+            "content_type": "footer_item",
+            "slug": f"footer-item-{tag}",
+            "cta_url": "/shop",
+            "payload": {"group": f"missing-{tag}"},
+            "expected": "invalid_footer_group",
+        },
+        {
+            "content_type": "homepage_section",
+            "slug": f"unknown-{tag}",
+            "expected": "invalid_homepage_section",
+        },
+        {
+            "content_type": "department_visual",
+            "slug": f"unknown-department-{tag}",
+            "expected": "invalid_department",
+        },
+    )
+    for case in invalid_cases:
+        response = admin.post(
+            f"{API}/admin/cms/content",
+            json={
+                "content_type": case["content_type"],
+                "internal_name": f"Invalid relation {tag}",
+                "slug": case["slug"],
+                "cta_url": case.get("cta_url"),
+                "payload": case.get("payload", {}),
+                "translations": {"en": {"title": "Invalid relation"}},
+            },
+        )
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"]["error"] == case["expected"]
+
+    slug = f"duplicate-{tag}"
+    first = admin.post(
+        f"{API}/admin/cms/content",
+        json={
+            "content_type": "banner",
+            "internal_name": f"Duplicate test {tag}",
+            "slug": slug,
+            "translations": {"en": {"title": "Duplicate test"}},
+        },
+    )
+    assert first.status_code == 201, first.text
+    entry_id = first.json()["id"]
+    try:
+        second = admin.post(
+            f"{API}/admin/cms/content",
+            json={
+                "content_type": "banner",
+                "internal_name": f"Duplicate second {tag}",
+                "slug": slug,
+                "translations": {"en": {"title": "Duplicate test"}},
+            },
+        )
+        assert second.status_code == 409
+        assert second.json()["detail"]["error"] == "duplicate_slug"
+    finally:
+        current = admin.get(f"{API}/admin/cms/content/{entry_id}")
+        if current.status_code == 200:
+            if current.json()["status"] != "archived":
+                admin.post(f"{API}/admin/cms/content/{entry_id}/status", json={"action": "archive"})
+            admin.delete(f"{API}/admin/cms/content/{entry_id}")
+
+
 def test_cms_preview_token(admin):
     r = admin.post(
         f"{API}/admin/cms/content",
@@ -316,6 +559,13 @@ def test_media_upload_validation_and_serving(admin):
 
     r = admin.post(
         f"{API}/admin/cms/media",
+        files={"file": ("oversize.png", b"x" * (5 * 1024 * 1024 + 1), "image/png")},
+    )
+    assert r.status_code == 413
+    assert r.json()["detail"]["error"] == "file_too_large"
+
+    r = admin.post(
+        f"{API}/admin/cms/media",
         files={"file": ("pixel.png", PNG_1PX, "image/png")},
     )
     assert r.status_code == 201, r.text
@@ -328,12 +578,56 @@ def test_media_upload_validation_and_serving(admin):
 
     r = admin.patch(
         f"{API}/admin/cms/media/{asset['id']}",
-        json={"translations": {"en": {"alt_text": "pixel", "caption": ""}}},
+        json={"translations": {"en": {"alt_text": "pixel", "caption": "Caption retained"}}},
     )
     assert r.status_code == 200
+    r = admin.patch(
+        f"{API}/admin/cms/media/{asset['id']}",
+        json={"translations": {"en": {"alt_text": "updated pixel"}}},
+    )
+    assert r.status_code == 200
+    assert r.json()["translations"]["en"]["caption"] == "Caption retained"
+    assert r.json()["translations"]["en"]["alt_text"] == "updated pixel"
 
     r = admin.delete(f"{API}/admin/cms/media/{asset['id']}")
     assert r.status_code in (200, 204), r.text
+
+
+def test_media_in_use_cannot_be_deleted(admin):
+    tag = uuid.uuid4().hex
+    uploaded = admin.post(
+        f"{API}/admin/cms/media",
+        files={"file": (f"used-{tag[:8]}.png", _unique_png(tag), "image/png")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    asset = uploaded.json()
+    entry_id = None
+    try:
+        created = admin.post(
+            f"{API}/admin/cms/content",
+            json={
+                "content_type": "banner",
+                "internal_name": f"Media reference {uuid.uuid4().hex[:8]}",
+                "media_id": asset["id"],
+                "translations": {"en": {"title": "Referenced banner"}},
+            },
+        )
+        assert created.status_code == 201, created.text
+        entry_id = created.json()["id"]
+        current_media = admin.get(f"{API}/admin/cms/media", params={"q": asset["original_filename"]})
+        current_asset = next(item for item in current_media.json()["items"] if item["id"] == asset["id"])
+        assert current_asset["usage_count"] >= 1
+        blocked = admin.delete(f"{API}/admin/cms/media/{asset['id']}")
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"]["error"] == "media_in_use"
+    finally:
+        if entry_id:
+            current = admin.get(f"{API}/admin/cms/content/{entry_id}")
+            if current.status_code == 200:
+                if current.json()["status"] != "archived":
+                    admin.post(f"{API}/admin/cms/content/{entry_id}/status", json={"action": "archive"})
+                admin.delete(f"{API}/admin/cms/content/{entry_id}")
+        admin.delete(f"{API}/admin/cms/media/{asset['id']}")
 
 
 # ------------------------------ audit ----------------------------------------

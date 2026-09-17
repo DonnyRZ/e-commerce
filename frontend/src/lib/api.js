@@ -24,6 +24,7 @@ api.interceptors.request.use((config) => {
 });
 
 let refreshPromise = null;
+let authExpiredNotified = false;
 
 const refreshExcluded = (url = "") =>
   /\/v1\/auth\/(login|register|refresh|logout|me|forgot-password|reset-password)$/.test(url);
@@ -43,7 +44,15 @@ api.interceptors.response.use(
 
     request._retry = true;
     refreshPromise = refreshPromise ||
-      api.post("/v1/auth/refresh").finally(() => {
+      api.post("/v1/auth/refresh").catch((refreshError) => {
+        if (!authExpiredNotified && typeof window !== "undefined") {
+          authExpiredNotified = true;
+          window.dispatchEvent(
+            new CustomEvent("shanicantik:auth-expired", { detail: { notify: true } })
+          );
+        }
+        throw refreshError;
+      }).finally(() => {
         refreshPromise = null;
       });
     try {
@@ -86,10 +95,16 @@ export const getFilters = (params = {}) =>
   api.get("/v1/catalog/filters", { params: clean(params) }).then((r) => r.data);
 
 export const authLogin = (email, password) =>
-  api.post("/v1/auth/login", { email, password }).then((r) => r.data);
+  api.post("/v1/auth/login", { email, password }).then((r) => {
+    authExpiredNotified = false;
+    return r.data;
+  });
 
 export const authRegister = (data) =>
-  api.post("/v1/auth/register", data).then((r) => r.data);
+  api.post("/v1/auth/register", data).then((r) => {
+    authExpiredNotified = false;
+    return r.data;
+  });
 
 export const authLogout = () => api.post("/v1/auth/logout").then((r) => r.data);
 
@@ -117,18 +132,22 @@ export const updateAddress = (id, data) =>
 export const deleteAddress = (id) =>
   api.delete(`/v1/account/addresses/${id}`).then((r) => r.data);
 
-export const getCart = () => api.get("/v1/cart").then((r) => r.data);
+const cartScopeConfig = (guest) => (guest ? { params: { guest: true } } : undefined);
 
-export const addCartItem = (data) =>
-  api.post("/v1/cart/items", data).then((r) => r.data);
+export const getCart = ({ guest = false } = {}) =>
+  api.get("/v1/cart", cartScopeConfig(guest)).then((r) => r.data);
 
-export const updateCartItem = (id, quantity) =>
-  api.patch(`/v1/cart/items/${id}`, { quantity }).then((r) => r.data);
+export const addCartItem = (data, { guest = false } = {}) =>
+  api.post("/v1/cart/items", data, cartScopeConfig(guest)).then((r) => r.data);
 
-export const removeCartItem = (id) =>
-  api.delete(`/v1/cart/items/${id}`).then((r) => r.data);
+export const updateCartItem = (id, quantity, { guest = false } = {}) =>
+  api.patch(`/v1/cart/items/${id}`, { quantity }, cartScopeConfig(guest)).then((r) => r.data);
 
-export const clearCart = () => api.delete("/v1/cart").then((r) => r.data);
+export const removeCartItem = (id, { guest = false } = {}) =>
+  api.delete(`/v1/cart/items/${id}`, cartScopeConfig(guest)).then((r) => r.data);
+
+export const clearCart = ({ guest = false } = {}) =>
+  api.delete("/v1/cart", cartScopeConfig(guest)).then((r) => r.data);
 
 export const mergeCart = () => api.post("/v1/cart/merge").then((r) => r.data);
 
@@ -142,6 +161,25 @@ export const removeWishlistItem = (productId) =>
 
 export const getCheckoutOptions = () =>
   api.get("/v1/checkout/options").then((r) => r.data);
+
+export const getTelegramInquiryStatus = () =>
+  api.get("/v1/telegram/status").then((r) => r.data);
+
+export const createTelegramCartInquiry = ({
+  locale,
+  idempotencyKey,
+  guest = false,
+}) =>
+  api
+    .post(
+      "/v1/telegram/inquiries",
+      { locale },
+      {
+        params: clean({ guest: guest ? true : undefined }),
+        headers: { "Idempotency-Key": idempotencyKey },
+      }
+    )
+    .then((r) => r.data);
 
 export const getCheckoutQuote = (shippingMethod) =>
   api.post("/v1/checkout/quote", { shipping_method: shippingMethod }).then((r) => r.data);
@@ -214,6 +252,8 @@ export const getCmsContentEntry = (id) =>
   api.get(`/v1/admin/cms/content/${id}`).then((r) => r.data);
 export const updateCmsContent = (id, data) =>
   api.patch(`/v1/admin/cms/content/${id}`, data).then((r) => r.data);
+export const deleteCmsContent = (id) =>
+  api.delete(`/v1/admin/cms/content/${id}`).then((r) => r.data);
 export const setCmsContentStatus = (id, action) =>
   api.post(`/v1/admin/cms/content/${id}/status`, { action }).then((r) => r.data);
 export const getCmsPreviewToken = (id) =>
@@ -247,6 +287,8 @@ export const getCmsPage = (slug) =>
   api.get(`/v1/cms/public/pages/${slug}`).then((r) => r.data);
 export const getCmsFaq = () =>
   api.get("/v1/cms/public/faq").then((r) => r.data);
+export const getCmsPreviewEntry = (token) =>
+  api.get(`/v1/cms/preview/${token}`).then((r) => r.data);
 
 export const authErrorKey = (error) => {
   const detail = error?.response?.data?.detail;

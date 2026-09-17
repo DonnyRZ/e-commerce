@@ -6,12 +6,13 @@ are never settable through the content payload).
 
 import hashlib
 import re
+import unicodedata
 import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import csrf_protect, require_roles
@@ -87,8 +88,26 @@ class StatusIn(BaseModel):
     action: str  # publish | unpublish | archive
 
 
+class CmsMediaTranslationIn(BaseModel):
+    alt_text: str = Field(default="", max_length=255)
+    caption: str = Field(default="", max_length=500)
+
+
 class MediaPatchIn(BaseModel):
-    translations: dict[str, dict] = Field(default_factory=dict)  # locale -> {alt_text, caption}
+    translations: dict[str, CmsMediaTranslationIn] = Field(default_factory=dict)
+
+
+def _validate_payload_strings(value) -> None:
+    if isinstance(value, str):
+        cms.sanitize_text(value)
+    elif isinstance(value, dict):
+        for nested in value.values():
+            _validate_payload_strings(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            _validate_payload_strings(nested)
+    elif value is not None and not isinstance(value, (bool, int, float)):
+        raise ValueError("invalid_payload")
 
 
 def _validate_content(content_type: str, slug: str, translations: dict,
@@ -103,10 +122,11 @@ def _validate_content(content_type: str, slug: str, translations: dict,
         raise HTTPException(status_code=400, detail={"error": "invalid_locale", "locales": sorted(unknown)})
     try:
         cms.validate_payload(payload or {})
+        _validate_payload_strings(payload or {})
         cms.validate_url(cta_url)
         cms.validate_url(secondary_cta_url)
         for tr in translations.values():
-            values = tr if isinstance(tr, dict) else tr.model_dump()
+            values = tr if isinstance(tr, dict) else tr.model_dump(exclude_unset=True)
             for value in values.values():
                 cms.sanitize_text(value)
     except ValueError as exc:
@@ -115,8 +135,130 @@ def _validate_content(content_type: str, slug: str, translations: dict,
         raise HTTPException(status_code=400, detail={"error": "invalid_media"})
 
 
-async def _get_entry(session: AsyncSession, entry_id: str) -> CmsContentEntry:
-    entry = await session.get(CmsContentEntry, entry_id)
+def _generated_slug(content_type: str, internal_name: str) -> str:
+    normalized = unicodedata.normalize("NFKD", internal_name)
+    ascii_name = normalized.encode("ascii", "ignore").decode("ascii").lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_name).strip("-")[:140].rstrip("-")
+    return slug or f"{content_type}-{uuid.uuid4().hex[:10]}"
+
+
+async def _ensure_unique_slug(session: AsyncSession, content_type: str, slug: str,
+                              entry_id: Optional[str] = None) -> None:
+    if not slug:
+        return
+    query = select(CmsContentEntry.id).where(
+        CmsContentEntry.content_type == content_type,
+        CmsContentEntry.slug == slug,
+    )
+    if entry_id:
+        query = query.where(CmsContentEntry.id != entry_id)
+    if await session.scalar(query.limit(1)):
+        raise HTTPException(status_code=409, detail={"error": "duplicate_slug"})
+
+
+async def _validate_references(session: AsyncSession, content_type: str, slug: str,
+                               payload: dict, media_id: Optional[str]) -> None:
+    if media_id and not await session.get(CmsMediaAsset, media_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_media"})
+    if content_type == "homepage_section" and slug and slug not in cms.HOMEPAGE_SECTION_KEYS:
+        raise HTTPException(status_code=400, detail={"error": "invalid_homepage_section"})
+    if content_type == "footer_item":
+        group = (payload or {}).get("group")
+        if group and not await session.scalar(
+            select(CmsContentEntry.id).where(
+                CmsContentEntry.content_type == "footer_group",
+                CmsContentEntry.slug == group,
+                CmsContentEntry.status != "archived",
+            )
+        ):
+            raise HTTPException(status_code=400, detail={"error": "invalid_footer_group"})
+    if content_type == "department_visual" and slug and not await session.scalar(
+        select(Category.id).where(Category.kind == "department", Category.slug == slug)
+    ):
+        raise HTTPException(status_code=400, detail={"error": "invalid_department"})
+
+
+async def _footer_group_in_use(session: AsyncSession, slug: str) -> bool:
+    if not slug:
+        return False
+    items = (
+        await session.execute(
+            select(CmsContentEntry).where(
+                CmsContentEntry.content_type == "footer_item",
+                CmsContentEntry.status != "archived",
+            )
+        )
+    ).scalars().all()
+    return any(
+        (item.payload or {}).get("group") == slug
+        or ((item.draft_snapshot or {}).get("payload") or {}).get("group") == slug
+        for item in items
+    )
+
+
+async def _validate_publish(session: AsyncSession, content_type: str, snapshot: dict,
+                            entry_id: str) -> None:
+    missing = cms.publish_missing_fields(content_type, snapshot)
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "incomplete_english", "missing": missing},
+        )
+    slug = str(snapshot.get("slug") or "")
+    await _ensure_unique_slug(session, content_type, slug, entry_id)
+    await _validate_references(
+        session, content_type, slug, snapshot.get("payload") or {}, snapshot.get("media_id")
+    )
+    if content_type in ("hero", "announcement"):
+        active_entry = await session.scalar(
+            select(CmsContentEntry.id).where(
+                CmsContentEntry.content_type == content_type,
+                CmsContentEntry.status == "published",
+                CmsContentEntry.is_visible.is_(True),
+                CmsContentEntry.id != entry_id,
+            ).limit(1)
+        )
+        if active_entry:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": f"{content_type}_already_published"},
+            )
+    if content_type == "footer_item":
+        group = (snapshot.get("payload") or {}).get("group")
+        valid_group = await session.scalar(
+            select(CmsContentEntry.id).where(
+                CmsContentEntry.content_type == "footer_group",
+                CmsContentEntry.slug == group,
+                CmsContentEntry.status == "published",
+                CmsContentEntry.is_visible.is_(True),
+            )
+        )
+        if not valid_group:
+            raise HTTPException(status_code=400, detail={"error": "footer_group_not_published"})
+    if content_type == "footer_group":
+        current = await session.get(CmsContentEntry, entry_id)
+        if current and snapshot.get("slug") != current.slug and await _footer_group_in_use(session, current.slug):
+            raise HTTPException(status_code=409, detail={"error": "footer_group_in_use"})
+    if content_type == "department_visual":
+        if not await session.scalar(
+            select(Category.id).where(
+                Category.kind == "department", Category.slug == slug,
+                Category.is_active.is_(True),
+            )
+        ):
+            raise HTTPException(status_code=400, detail={"error": "invalid_department"})
+
+
+async def _get_entry(session: AsyncSession, entry_id: str,
+                     lock: bool = False) -> CmsContentEntry:
+    if lock:
+        entry = await session.scalar(
+            select(CmsContentEntry)
+            .where(CmsContentEntry.id == entry_id)
+            .with_for_update()
+        )
+    else:
+        entry = await session.get(CmsContentEntry, entry_id)
     if not entry:
         raise HTTPException(status_code=404, detail="content_not_found")
     return entry
@@ -132,13 +274,26 @@ async def _upsert_translations(session: AsyncSession, entry_id: str, translation
         ).scalars().all()
     }
     for locale, tr in translations.items():
-        values = tr.model_dump() if hasattr(tr, "model_dump") else tr
+        values = tr.model_dump(exclude_unset=True) if hasattr(tr, "model_dump") else tr
         if locale in existing:
             row = existing[locale]
             for key, value in values.items():
                 setattr(row, key, value)
         else:
             session.add(CmsContentTranslation(entry_id=entry_id, locale=locale, **values))
+
+
+async def _replace_translations(session: AsyncSession, entry_id: str, translations: dict) -> None:
+    rows = (
+        await session.execute(
+            select(CmsContentTranslation).where(CmsContentTranslation.entry_id == entry_id)
+        )
+    ).scalars().all()
+    keep = set(translations)
+    for row in rows:
+        if row.locale not in keep:
+            await session.delete(row)
+    await _upsert_translations(session, entry_id, translations)
 
 
 # ------------------------------ content -----------------------------------
@@ -197,13 +352,15 @@ async def create_content(
     _validate_content(payload.content_type, payload.slug, payload.translations,
                       payload.cta_url, payload.secondary_cta_url, payload.media_id,
                       payload.payload)
-    if payload.media_id:
-        if not await session.get(CmsMediaAsset, payload.media_id):
-            raise HTTPException(status_code=400, detail={"error": "invalid_media"})
+    slug = payload.slug.strip()
+    if not slug and payload.content_type not in ("homepage_section", "department_visual"):
+        slug = _generated_slug(payload.content_type, payload.internal_name)
+    await _ensure_unique_slug(session, payload.content_type, slug)
+    await _validate_references(session, payload.content_type, slug, payload.payload, payload.media_id)
     entry = CmsContentEntry(
         content_type=payload.content_type,
         internal_name=payload.internal_name,
-        slug=payload.slug or re.sub(r"[^a-z0-9]+", "-", payload.internal_name.lower()).strip("-")[:80],
+        slug=slug,
         status="draft",
         placement=payload.placement,
         sort_order=payload.sort_order,
@@ -242,28 +399,89 @@ async def update_content(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    entry = await _get_entry(session, entry_id)
+    entry = await _get_entry(session, entry_id, lock=True)
     data = payload.model_dump(exclude_unset=True)
     translations = data.pop("translations", None)
-    _validate_content(entry.content_type, data.get("slug", entry.slug),
-                      translations or {}, data.get("cta_url", entry.cta_url),
-                      data.get("secondary_cta_url", entry.secondary_cta_url),
-                      data.get("media_id", entry.media_id),
-                      data.get("payload", entry.payload or {}))
-    if data.get("media_id"):
-        if not await session.get(CmsMediaAsset, data["media_id"]):
-            raise HTTPException(status_code=400, detail={"error": "invalid_media"})
-    for field in ("internal_name", "slug", "placement", "sort_order", "is_visible",
-                  "media_id", "cta_url", "secondary_cta_url", "payload"):
-        if field in data:
-            value = data[field]
-            if field in ("cta_url", "secondary_cta_url"):
-                value = cms.validate_url(value)
-            setattr(entry, field, value)
+    if "translations" in payload.model_fields_set and translations is None:
+        raise HTTPException(status_code=400, detail={"error": "invalid_translations"})
+    nullable_fields = {"media_id", "cta_url", "secondary_cta_url"}
+    for field, value in data.items():
+        if value is None and field not in nullable_fields:
+            raise HTTPException(status_code=400, detail={"error": "invalid_null", "field": field})
+
+    use_working_copy = entry.status == "published" or entry.draft_snapshot is not None
+    if use_working_copy:
+        working = dict(entry.draft_snapshot or await cms.snapshot_entry(session, entry))
+        working["translations"] = {
+            locale: dict(values)
+            for locale, values in (working.get("translations") or {}).items()
+        }
+        for field in ("internal_name", "slug", "placement", "sort_order", "is_visible",
+                      "media_id", "cta_url", "secondary_cta_url", "payload"):
+            if field in data:
+                value = data[field]
+                if field in ("cta_url", "secondary_cta_url"):
+                    value = cms.validate_url(value)
+                working[field] = value
+        if "slug" in data and not str(working.get("slug") or "").strip() and entry.content_type not in ("homepage_section", "department_visual"):
+            working["slug"] = _generated_slug(
+                entry.content_type, working.get("internal_name") or entry.internal_name
+            )
+        if translations is not None:
+            for locale, values in translations.items():
+                current = working["translations"].setdefault(locale, {})
+                current.update(
+                    values.model_dump(exclude_unset=True)
+                    if hasattr(values, "model_dump") else values
+                )
+        _validate_content(entry.content_type, working.get("slug", ""),
+                          working.get("translations", {}), working.get("cta_url"),
+                          working.get("secondary_cta_url"), working.get("media_id"),
+                          working.get("payload", {}))
+        await _ensure_unique_slug(session, entry.content_type, working.get("slug", ""), entry.id)
+        await _validate_references(
+            session, entry.content_type, working.get("slug", ""),
+            working.get("payload") or {}, working.get("media_id"),
+        )
+        if (
+            entry.content_type == "footer_group"
+            and working.get("slug") != entry.slug
+            and await _footer_group_in_use(session, entry.slug)
+        ):
+            raise HTTPException(status_code=409, detail={"error": "footer_group_in_use"})
+        entry.draft_snapshot = working
+        await cms.add_revision(session, entry, "saved_draft", user.id, snapshot_override=working)
+    else:
+        _validate_content(entry.content_type, data.get("slug", entry.slug),
+                          translations or {}, data.get("cta_url", entry.cta_url),
+                          data.get("secondary_cta_url", entry.secondary_cta_url),
+                          data.get("media_id", entry.media_id),
+                          data.get("payload", entry.payload or {}))
+        new_slug = data.get("slug", entry.slug)
+        await _ensure_unique_slug(session, entry.content_type, new_slug, entry.id)
+        await _validate_references(
+            session, entry.content_type, new_slug,
+            data.get("payload", entry.payload or {}), data.get("media_id", entry.media_id),
+        )
+        if (
+            entry.content_type == "footer_group"
+            and new_slug != entry.slug
+            and await _footer_group_in_use(session, entry.slug)
+        ):
+            raise HTTPException(status_code=409, detail={"error": "footer_group_in_use"})
+        for field in ("internal_name", "slug", "placement", "sort_order", "is_visible",
+                      "media_id", "cta_url", "secondary_cta_url", "payload"):
+            if field in data:
+                value = data[field]
+                if field in ("cta_url", "secondary_cta_url"):
+                    value = cms.validate_url(value)
+                setattr(entry, field, value)
+        if "slug" in data and not str(entry.slug or "").strip() and entry.content_type not in ("homepage_section", "department_visual"):
+            entry.slug = _generated_slug(entry.content_type, entry.internal_name)
+        if translations is not None:
+            await _upsert_translations(session, entry.id, translations)
+        await cms.add_revision(session, entry, "saved_draft", user.id)
     entry.updated_by = user.id
-    if translations:
-        await _upsert_translations(session, entry.id, translations)
-    await cms.add_revision(session, entry, "saved_draft", user.id)
     await cms.audit(session, user.id, "cms.content.update", entry.content_type, entry.id, None)
     await session.commit()
     return await cms.entry_detail(session, entry)
@@ -277,13 +495,22 @@ async def change_status(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    entry = await _get_entry(session, entry_id)
+    entry = await _get_entry(session, entry_id, lock=True)
     target = cms.status_transition_allowed(entry.status, payload.action)
     if not target:
         raise HTTPException(
             status_code=400,
             detail={"error": "invalid_transition", "current": entry.status, "action": payload.action},
         )
+    if payload.action == "publish":
+        if entry.status == "published" and entry.draft_snapshot is None:
+            raise HTTPException(status_code=409, detail={"error": "no_unpublished_changes"})
+        snapshot = entry.draft_snapshot or await cms.snapshot_entry(session, entry)
+        await _validate_publish(session, entry.content_type, snapshot, entry.id)
+        if entry.draft_snapshot is not None:
+            cms.apply_snapshot(entry, snapshot)
+            await _replace_translations(session, entry.id, snapshot.get("translations") or {})
+            entry.draft_snapshot = None
     entry.status = target
     entry.updated_by = user.id
     if target == "published":
@@ -305,7 +532,11 @@ async def make_preview(
 ):
     entry = await _get_entry(session, entry_id)
     token = cms.make_preview_token(entry.id)
-    return {"preview_url": f"/api/v1/cms/preview/{token}", "expires_in": 3600}
+    return {
+        "preview_url": f"/api/v1/cms/preview/{token}",
+        "preview_page_url": f"/preview/{token}",
+        "expires_in": 3600,
+    }
 
 
 @router.get("/content/{entry_id}/revisions")
@@ -342,7 +573,7 @@ async def restore_revision(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    entry = await _get_entry(session, entry_id)
+    entry = await _get_entry(session, entry_id, lock=True)
     revision = await session.scalar(
         select(CmsRevision).where(
             CmsRevision.id == revision_id, CmsRevision.content_id == entry_id
@@ -351,23 +582,53 @@ async def restore_revision(
     if not revision or not revision.snapshot:
         raise HTTPException(status_code=404, detail="revision_not_found")
     snap = revision.snapshot
-    entry.internal_name = snap.get("internal_name", entry.internal_name)
-    entry.slug = snap.get("slug", entry.slug)
-    entry.placement = snap.get("placement", entry.placement)
-    entry.sort_order = snap.get("sort_order", entry.sort_order)
-    entry.is_visible = snap.get("is_visible", entry.is_visible)
-    entry.media_id = snap.get("media_id")
-    entry.cta_url = snap.get("cta_url")
-    entry.secondary_cta_url = snap.get("secondary_cta_url")
-    entry.payload = cms.clean_payload(snap.get("payload"))
-    entry.status = "draft"  # restore always creates a new Draft
+    _validate_content(entry.content_type, snap.get("slug", ""), snap.get("translations", {}),
+                      snap.get("cta_url"), snap.get("secondary_cta_url"),
+                      snap.get("media_id"), snap.get("payload", {}))
+    await _ensure_unique_slug(session, entry.content_type, snap.get("slug", ""), entry.id)
+    await _validate_references(session, entry.content_type, snap.get("slug", ""),
+                               snap.get("payload", {}), snap.get("media_id"))
+    if entry.status in ("published", "archived"):
+        entry.draft_snapshot = snap
+    else:
+        cms.apply_snapshot(entry, snap)
+        await _replace_translations(session, entry.id, snap.get("translations", {}))
+        entry.draft_snapshot = None
     entry.updated_by = user.id
-    await _upsert_translations(session, entry.id, snap.get("translations", {}))
-    await cms.add_revision(session, entry, "restored", user.id)
+    await cms.add_revision(
+        session, entry, "restored", user.id,
+        snapshot_override=snap if entry.draft_snapshot is not None else None,
+    )
     await cms.audit(session, user.id, "cms.content.restore", entry.content_type, entry.id,
                     {"from_version": revision.version_number})
     await session.commit()
     return await cms.entry_detail(session, entry)
+
+
+@router.delete("/content/{entry_id}", status_code=204)
+async def delete_content(
+    entry_id: str,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(csrf_protect),
+):
+    entry = await _get_entry(session, entry_id, lock=True)
+    if entry.status != "archived":
+        raise HTTPException(status_code=409, detail={"error": "content_must_be_archived"})
+    if entry.content_type == "footer_group":
+        if await _footer_group_in_use(session, entry.slug):
+            raise HTTPException(status_code=409, detail={"error": "footer_group_in_use"})
+    await session.execute(
+        delete(CmsContentTranslation).where(CmsContentTranslation.entry_id == entry.id)
+    )
+    await session.execute(delete(CmsRevision).where(CmsRevision.content_id == entry.id))
+    await cms.audit(
+        session, user.id, "cms.content.delete", entry.content_type, entry.id,
+        {"name": entry.internal_name, "slug": entry.slug},
+    )
+    await session.delete(entry)
+    await session.commit()
+    return None
 
 
 # ------------------------------ media -------------------------------------
@@ -390,7 +651,20 @@ async def upload_media(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    data = await file.read()
+    chunks = []
+    size = 0
+    while True:
+        chunk = await file.read(min(64 * 1024, MAX_UPLOAD_BYTES + 1 - size))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+        if size > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail={"error": "file_too_large", "max_bytes": MAX_UPLOAD_BYTES},
+            )
+    data = b"".join(chunks)
     if not data:
         raise HTTPException(status_code=400, detail={"error": "empty_file"})
     if len(data) > MAX_UPLOAD_BYTES:
@@ -437,11 +711,19 @@ async def upload_media(
         checksum=checksum,
         created_by=user.id,
     )
-    session.add(asset)
-    await session.flush()
-    await cms.audit(session, user.id, "cms.media.upload", "media", asset.id,
-                    {"filename": asset.original_filename, "size": asset.file_size})
-    await session.commit()
+    try:
+        session.add(asset)
+        await session.flush()
+        await cms.audit(session, user.id, "cms.media.upload", "media", asset.id,
+                        {"filename": asset.original_filename, "size": asset.file_size})
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        try:
+            await storage.delete(key)
+        except Exception:
+            pass
+        raise
     return await _media_payload(session, asset)
 
 
@@ -500,6 +782,21 @@ async def _media_usage_details(session: AsyncSession, asset: CmsMediaAsset) -> l
             "href": f"/admin/cms/{entry.id}",
         }
         for entry in content_rows
+    )
+    staged_rows = (
+        await session.execute(
+            select(CmsContentEntry).where(CmsContentEntry.draft_snapshot.is_not(None))
+        )
+    ).scalars().all()
+    usages.extend(
+        {
+            "type": "cms-draft",
+            "id": entry.id,
+            "label": entry.internal_name or entry.slug,
+            "href": f"/admin/cms/{entry.id}",
+        }
+        for entry in staged_rows
+        if (entry.draft_snapshot or {}).get("media_id") == asset.id
     )
 
     category_rows = (
@@ -600,14 +897,21 @@ async def update_media(
         ).scalars().all()
     }
     for locale, values in payload.translations.items():
-        alt = cms.sanitize_text(values.get("alt_text", ""), 255)
-        caption = cms.sanitize_text(values.get("caption", ""), 500)
+        values = values.model_dump(exclude_unset=True)
+        alt = cms.sanitize_text(values["alt_text"], 255) if "alt_text" in values else None
+        caption = cms.sanitize_text(values["caption"], 500) if "caption" in values else None
         if locale in existing:
-            existing[locale].alt_text = alt
-            existing[locale].caption = caption
+            if alt is not None:
+                existing[locale].alt_text = alt
+            if caption is not None:
+                existing[locale].caption = caption
         else:
             session.add(CmsMediaTranslation(media_id=asset.id, locale=locale,
-                                            alt_text=alt, caption=caption))
+                                            alt_text=alt or "", caption=caption or ""))
+    await cms.audit(
+        session, user.id, "cms.media.update", "media", asset.id,
+        {"filename": asset.original_filename},
+    )
     await session.commit()
     return await _media_payload(session, asset)
 
@@ -629,9 +933,14 @@ async def delete_media(
             detail={"error": "media_in_use", "usage_count": int(usage)},
         )
     storage = get_media_storage()
-    await storage.delete(asset.storage_key)
+    storage_key = asset.storage_key
+    filename = asset.original_filename
     await cms.audit(session, user.id, "cms.media.delete", "media", asset.id,
-                    {"filename": asset.original_filename})
+                    {"filename": filename})
     await session.delete(asset)
     await session.commit()
-    return {"deleted": True}
+    try:
+        await storage.delete(storage_key)
+        return {"deleted": True}
+    except Exception:
+        return {"deleted": True, "storage_cleanup_pending": True}

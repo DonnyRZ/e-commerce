@@ -10,6 +10,7 @@ import ShopPage from "@/pages/ShopPage";
 import SearchPage from "@/pages/SearchPage";
 import ProductPage from "@/pages/ProductPage";
 import CmsPublicPage from "@/pages/CmsPublicPage";
+import CmsPreviewPage from "@/pages/CmsPreviewPage";
 import FaqPage from "@/pages/FaqPage";
 import PlaceholderPage from "@/pages/PlaceholderPage";
 import LoginPage from "@/pages/LoginPage";
@@ -38,6 +39,7 @@ function App() {
               <Route path="/search" element={<SearchPage />} />
               <Route path="/product/:slug" element={<ProductPage />} />
               <Route path="/page/:slug" element={<CmsPublicPage />} />
+              <Route path="/preview/:token" element={<CmsPreviewPage />} />
               <Route path="/faq" element={<FaqPage />} />
               <Route path="/login" element={<LoginPage />} />
               <Route path="/register" element={<RegisterPage />} />

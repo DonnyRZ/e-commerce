@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Heart, Minus, Plus, ShoppingBag } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -38,8 +38,14 @@ function PdpSkeleton() {
 export default function ProductPage() {
   const { slug } = useParams();
   const { locale, t } = useI18n();
+  const location = useLocation();
   const navigate = useNavigate();
-  const { addToCart: addCartItem, toggleWishlist, wishlistIds } = useShop();
+  const {
+    addToCart: addCartItem,
+    cartMutationsBlocked,
+    toggleWishlist,
+    wishlistIds,
+  } = useShop();
   const [selected, setSelected] = useState({});
   const [imageIndex, setImageIndex] = useState(0);
   const [quantity, setQuantity] = useState(1);
@@ -201,12 +207,21 @@ export default function ProductPage() {
 
   const wished = wishlistIds.has(product.id);
   const handleWishlist = async () => {
-    const result = await toggleWishlist(product.id);
-    if (result === "auth_required") {
-      toast.info(t("wishlist.loginRequired"));
-      navigate("/login");
-    } else {
-      toast.success(t(result === "added" ? "wishlist.added" : "wishlist.removed"));
+    try {
+      const result = await toggleWishlist(product.id);
+      if (result === "auth_required") {
+        toast.info(t("wishlist.loginRequired"));
+        navigate("/login", {
+          state: {
+            returnTo: `${location.pathname}${location.search}`,
+            intent: { type: "wishlist_add", productId: product.id },
+          },
+        });
+      } else {
+        toast.success(t(result === "added" ? "wishlist.added" : "wishlist.removed"));
+      }
+    } catch {
+      toast.error(t("errors.generic"));
     }
   };
 
@@ -489,7 +504,7 @@ export default function ProductPage() {
             <button
               type="button"
               data-testid="pdp-add-to-cart"
-              disabled={!selectedVariant || outOfStock}
+              disabled={!selectedVariant || outOfStock || cartMutationsBlocked}
               onClick={addToCart}
               className="flex h-12 flex-1 items-center justify-center gap-2 bg-foreground text-sm font-semibold text-background transition-colors hover:bg-primary disabled:cursor-not-allowed disabled:opacity-40"
             >

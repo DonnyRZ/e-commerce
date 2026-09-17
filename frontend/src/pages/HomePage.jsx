@@ -2,11 +2,12 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { getCatalogTree, getCmsBundle, getProducts } from "@/lib/api";
-import { mediaUrl, pickLocalized, toCardCategory, toCardProduct } from "@/lib/localize";
+import { mediaUrl, pickCmsLocalized, pickLocalized, toCardCategory, toCardProduct } from "@/lib/localize";
 import { HERO_IMAGE } from "@/data/demo";
 import { leafTaxonomy } from "@/lib/taxonomy";
 import CategoryStrip from "@/components/common/CategoryStrip";
 import EditorialSection from "@/components/common/EditorialSection";
+import CmsBannerStrip from "@/components/common/CmsBannerStrip";
 import ProductGrid from "@/components/common/ProductGrid";
 import ErrorState from "@/components/common/ErrorState";
 import ImageWithFallback from "@/components/common/ImageWithFallback";
@@ -50,20 +51,24 @@ export default function HomePage() {
   });
   const cmsBundle = cmsBundleQuery.data;
 
+  const cmsFailed = cmsBundleQuery.isError;
   const hero = cmsBundle?.hero;
-  const heroImage = mediaUrl(hero?.image_url) || HERO_IMAGE;
-  const heroEyebrow = pickLocalized(hero?.translations, locale, "eyebrow") || t("brand.tagline");
-  const heroTitle = pickLocalized(hero?.translations, locale) || t("page.home.heroTitle");
-  const heroAlt = pickLocalized(hero?.translations, locale, "alt_text") || heroTitle;
-  const heroSubtitle = pickLocalized(hero?.translations, locale, "subtitle") || t("page.home.heroSubtitle");
+  const heroImage = mediaUrl(hero?.image_url) || (cmsFailed ? HERO_IMAGE : "");
+  const heroEyebrow = pickCmsLocalized(hero?.translations, locale, "eyebrow") || (cmsFailed ? t("brand.tagline") : "");
+  const heroTitle = pickCmsLocalized(hero?.translations, locale) || (cmsFailed ? t("page.home.heroTitle") : "");
+  const heroAlt = pickCmsLocalized(hero?.translations, locale, "alt_text") || heroTitle;
+  const heroSubtitle = pickCmsLocalized(hero?.translations, locale, "subtitle") || (cmsFailed ? t("page.home.heroSubtitle") : "");
   const heroPrimary = {
-    label: pickLocalized(hero?.translations, locale, "cta_label") || t("home.shopNow"),
+    label: pickCmsLocalized(hero?.translations, locale, "cta_label") || (cmsFailed ? t("home.shopNow") : ""),
     to: hero?.cta_url || "/shop",
   };
   const heroSecondary = {
-    label: pickLocalized(hero?.translations, locale, "secondary_cta_label") || t("home.allDepartments"),
+    label: pickCmsLocalized(hero?.translations, locale, "secondary_cta_label") || (cmsFailed ? t("home.allDepartments") : ""),
     to: hero?.secondary_cta_url || "/shop",
   };
+  const departmentVisuals = Object.fromEntries(
+    (cmsBundle?.department_visuals || []).map((visual) => [visual.slug, visual])
+  );
 
   const stripCategories = leafTaxonomy(catalogTree)
     .slice()
@@ -71,135 +76,68 @@ export default function HomePage() {
     .slice(0, 8)
     .map((c) => toCardCategory(c, locale));
 
-  return (
-    <div data-testid="home-page">
-      <section data-testid="home-hero" className="relative -mx-4 sm:-mx-6 lg:-mx-10">
-        <ImageWithFallback
-          src={heroImage}
-          alt={heroAlt}
-          className="h-[60vh] w-full object-cover lg:h-[72vh]"
-        />
-        <div className="absolute inset-x-0 bottom-0 pb-8 pt-24 text-center text-white [background:linear-gradient(to_top,rgba(0,0,0,0.55),transparent)] lg:pb-12">
-          <p className="text-[11px] font-medium uppercase tracking-[0.2em] sm:text-xs">
-            {heroEyebrow}
-          </p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl lg:text-4xl">
-            {heroTitle}
-          </h1>
-          <p className="mx-auto mt-2 max-w-xl px-4 text-sm text-white/85">
-            {heroSubtitle}
-          </p>
-          <div className="mt-5 flex items-center justify-center gap-3">
-            <Link
-              to={heroPrimary.to}
-              data-testid="hero-cta-shop"
-              className="rounded-full bg-background px-6 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary"
-            >
-              {heroPrimary.label}
-            </Link>
-            <Link
-              to={heroSecondary.to}
-              data-testid="hero-cta-departments"
-              className="rounded-full border border-white/70 px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/10"
-            >
-              {heroSecondary.label}
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      <section data-testid="home-categories" className="py-10 lg:py-14">
-        <h2 className="mb-5 text-lg font-semibold lg:text-xl">
-          {t("home.shopByCategory")}
-        </h2>
-        {catalogQuery.isError ? (
-          <ErrorState onRetry={() => catalogQuery.refetch()} />
-        ) : stripCategories.length ? (
-          <CategoryStrip categories={stripCategories} nameOf={(c) => c.name} />
-        ) : (
-          <div className="flex gap-4">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="aspect-[3/4] w-36 shrink-0 sm:w-44 lg:w-48" />
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section data-testid="home-new-arrivals" className="py-4 lg:py-6">
-        <div className="mb-5 flex items-end justify-between">
-          <h2 className="text-lg font-semibold lg:text-xl">{t("home.newArrivals")}</h2>
-          <Link
-            to="/shop?badge=new"
-            data-testid="new-arrivals-view-all"
-            className="text-sm font-medium text-foreground underline-offset-4 hover:underline"
-          >
-            {t("home.viewAll")}
-          </Link>
-        </div>
-        {newArrivals.isError ? (
-          <ErrorState onRetry={() => newArrivals.refetch()} />
-        ) : newArrivals.isLoading ? (
-          <GridSkeleton testId="new-arrivals-loading" />
-        ) : (
-          <ProductGrid
-            products={(newArrivals.data?.items || []).map((p) => toCardProduct(p, locale))}
-            testId="new-arrivals-grid"
-          />
-        )}
-      </section>
-
-      <section data-testid="home-departments" className="py-10 lg:py-14">
-        <div className="grid gap-4 sm:grid-cols-3 lg:gap-5">
-          {departments.map((dept) => (
-            <Link
-              key={dept.id}
-              to={`/shop?department=${dept.slug}`}
-              data-testid={`department-tile-${dept.slug}`}
-              className="group relative block overflow-hidden bg-secondary"
-            >
-              <ImageWithFallback
-                src={dept.image_url}
-                alt={pickLocalized(dept.translations, locale)}
-                loading="lazy"
-                className="aspect-[4/5] w-full object-cover transition-transform duration-300 group-hover:scale-105"
-              />
-              <div className="absolute inset-x-0 bottom-0 flex items-center justify-between p-4 text-white [background:linear-gradient(to_top,rgba(0,0,0,0.55),transparent)]">
-                <span className="text-sm font-semibold">
-                  {pickLocalized(dept.translations, locale)}
-                </span>
-                <span className="text-xs underline underline-offset-4">
-                  {t("home.deptCta")}
-                </span>
+  const sections = {
+    hero: (
+      <div key="hero">
+        {hero || cmsFailed ? (
+          <section data-testid="home-hero" className="relative -mx-4 sm:-mx-6 lg:-mx-10">
+            {heroImage ? <ImageWithFallback src={heroImage} alt={heroAlt} className="h-[60vh] w-full object-cover lg:h-[72vh]" /> : <div className="h-[45vh] bg-brand-ivory" />}
+            <div className="absolute inset-x-0 bottom-0 pb-8 pt-24 text-center text-white [background:linear-gradient(to_top,rgba(0,0,0,0.55),transparent)] lg:pb-12">
+              {heroEyebrow ? <p className="text-[11px] font-medium uppercase tracking-[0.2em] sm:text-xs">{heroEyebrow}</p> : null}
+              {heroTitle ? <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl lg:text-4xl">{heroTitle}</h1> : null}
+              {heroSubtitle ? <p className="mx-auto mt-2 max-w-xl px-4 text-sm text-white/85">{heroSubtitle}</p> : null}
+              <div className="mt-5 flex items-center justify-center gap-3">
+                {heroPrimary.label ? <Link to={heroPrimary.to} data-testid="hero-cta-shop" className="rounded-full bg-background px-6 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary">{heroPrimary.label}</Link> : null}
+                {heroSecondary.label ? <Link to={heroSecondary.to} data-testid="hero-cta-departments" className="rounded-full border border-white/70 px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/10">{heroSecondary.label}</Link> : null}
               </div>
-            </Link>
-          ))}
+            </div>
+          </section>
+        ) : null}
+        <CmsBannerStrip banners={cmsBundle?.banners || []} />
+      </div>
+    ),
+    categories: (
+      <section key="categories" data-testid="home-categories" className="py-10 lg:py-14">
+        <h2 className="mb-5 text-lg font-semibold lg:text-xl">{t("home.shopByCategory")}</h2>
+        {catalogQuery.isError ? <ErrorState onRetry={() => catalogQuery.refetch()} /> : stripCategories.length ? <CategoryStrip categories={stripCategories} nameOf={(c) => c.name} /> : <div className="flex gap-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="aspect-[3/4] w-36 shrink-0 sm:w-44 lg:w-48" />)}</div>}
+      </section>
+    ),
+    new_arrivals: (
+      <section key="new_arrivals" data-testid="home-new-arrivals" className="py-4 lg:py-6">
+        <div className="mb-5 flex items-end justify-between"><h2 className="text-lg font-semibold lg:text-xl">{t("home.newArrivals")}</h2><Link to="/shop?badge=new" data-testid="new-arrivals-view-all" className="text-sm font-medium text-foreground underline-offset-4 hover:underline">{t("home.viewAll")}</Link></div>
+        {newArrivals.isError ? <ErrorState onRetry={() => newArrivals.refetch()} /> : newArrivals.isLoading ? <GridSkeleton testId="new-arrivals-loading" /> : <ProductGrid products={(newArrivals.data?.items || []).map((p) => toCardProduct(p, locale))} testId="new-arrivals-grid" />}
+      </section>
+    ),
+    departments: (
+      <section key="departments" data-testid="home-departments" className="py-10 lg:py-14">
+        <div className="grid gap-4 sm:grid-cols-3 lg:gap-5">
+          {departments.map((dept) => {
+            const visual = departmentVisuals[dept.slug];
+            const departmentName = pickLocalized(dept.translations, locale);
+            const departmentAlt = pickCmsLocalized(visual?.translations, locale, "alt_text") || departmentName;
+            return <Link key={dept.id} to={`/shop?department=${dept.slug}`} data-testid={`department-tile-${dept.slug}`} className="group relative block overflow-hidden bg-secondary">
+              <ImageWithFallback src={mediaUrl(visual?.image_url) || dept.image_url} alt={departmentAlt} loading="lazy" className="aspect-[4/5] w-full object-cover transition-transform duration-300 group-hover:scale-105" />
+              <div className="absolute inset-x-0 bottom-0 flex items-center justify-between p-4 text-white [background:linear-gradient(to_top,rgba(0,0,0,0.55),transparent)]"><span className="text-sm font-semibold">{departmentName}</span><span className="text-xs underline underline-offset-4">{t("home.deptCta")}</span></div>
+            </Link>;
+          })}
         </div>
       </section>
-
-      <section data-testid="home-best-sellers" className="pb-12 pt-2 lg:pb-16">
-        <div className="mb-5 flex items-end justify-between">
-          <h2 className="text-lg font-semibold lg:text-xl">{t("home.bestSellers")}</h2>
-          <Link
-            to="/shop?badge=bestseller"
-            data-testid="best-sellers-view-all"
-            className="text-sm font-medium text-foreground underline-offset-4 hover:underline"
-          >
-            {t("home.viewAll")}
-          </Link>
-        </div>
-        {bestSellers.isError ? (
-          <ErrorState onRetry={() => bestSellers.refetch()} />
-        ) : bestSellers.isLoading ? (
-          <GridSkeleton testId="best-sellers-loading" />
-        ) : (
-          <ProductGrid
-            products={(bestSellers.data?.items || []).map((p) => toCardProduct(p, locale))}
-            testId="best-sellers-grid"
-          />
-        )}
+    ),
+    best_sellers: (
+      <section key="best_sellers" data-testid="home-best-sellers" className="pb-12 pt-2 lg:pb-16">
+        <div className="mb-5 flex items-end justify-between"><h2 className="text-lg font-semibold lg:text-xl">{t("home.bestSellers")}</h2><Link to="/shop?badge=bestseller" data-testid="best-sellers-view-all" className="text-sm font-medium text-foreground underline-offset-4 hover:underline">{t("home.viewAll")}</Link></div>
+        {bestSellers.isError ? <ErrorState onRetry={() => bestSellers.refetch()} /> : bestSellers.isLoading ? <GridSkeleton testId="best-sellers-loading" /> : <ProductGrid products={(bestSellers.data?.items || []).map((p) => toCardProduct(p, locale))} testId="best-sellers-grid" />}
       </section>
+    ),
+    stories: <EditorialSection key="stories" stories={cmsBundle?.stories} title={pickCmsLocalized(cmsBundle?.story_title?.translations, locale)} cmsFailed={cmsFailed} />,
+  };
+  const defaultOrder = ["hero", "categories", "new_arrivals", "departments", "best_sellers", "stories"];
+  const order = cmsBundleQuery.isSuccess
+    ? (cmsBundle.sections || []).filter((section) => section.key in sections && !["promo_bar", "footer"].includes(section.key)).sort((a, b) => a.sort_order - b.sort_order).map((section) => section.key)
+    : defaultOrder;
+  if (cmsBundleQuery.isSuccess && (cmsBundle?.banners || []).length && !order.includes("hero")) {
+    order.unshift("hero");
+  }
 
-      <EditorialSection stories={cmsBundle?.stories} />
-    </div>
-  );
+  return <div data-testid="home-page">{order.map((key) => sections[key])}</div>;
 }

@@ -1,4 +1,4 @@
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useLocation, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { useI18n } from "@/i18n";
@@ -12,10 +12,11 @@ export default function OrderDetailPage() {
   const { t, locale } = useI18n();
   const { user, checking } = useAuth();
   const { orderNumber } = useParams();
+  const location = useLocation();
   const orderQuery = useQuery({
-    queryKey: ["my-order", orderNumber],
+    queryKey: ["my-order", user?.id || "anonymous", orderNumber],
     queryFn: () => getMyOrder(orderNumber),
-    enabled: Boolean(user),
+    enabled: user?.role === "customer",
     retry: false,
   });
 
@@ -26,7 +27,26 @@ export default function OrderDetailPage() {
       </div>
     );
   }
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ returnTo: `${location.pathname}${location.search}` }}
+      />
+    );
+  }
+  if (user.role !== "customer") {
+    return user.role === "admin" ? (
+      <Navigate to="/admin/" replace />
+    ) : (
+      <Navigate
+        to="/login"
+        replace
+        state={{ returnTo: `${location.pathname}${location.search}` }}
+      />
+    );
+  }
 
   if (orderQuery.isError) {
     return (

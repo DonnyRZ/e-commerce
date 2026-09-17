@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { getCmsFaq } from "@/lib/api";
 import { useI18n } from "@/i18n";
-import { pickLocalized } from "@/lib/localize";
+import { pickCmsLocalized } from "@/lib/localize";
 import ErrorState from "@/components/common/ErrorState";
 import EmptyState from "@/components/common/EmptyState";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -37,9 +37,9 @@ export default function FaqPage() {
       {items.length ? (
         <div className="mt-8 divide-y divide-border border-y border-border">
           {items.map((item) => {
-            const question = pickLocalized(item.translations, locale) || item.slug;
-            const answer = pickLocalized(item.translations, locale, "body") ||
-              pickLocalized(item.translations, locale, "description");
+            const question = pickCmsLocalized(item.translations, locale) || item.slug;
+            const answer = pickCmsLocalized(item.translations, locale, "body") ||
+              pickCmsLocalized(item.translations, locale, "description");
             const questionId = `faq-question-${item.slug}`;
             const answerId = `faq-answer-${item.slug}`;
             return (

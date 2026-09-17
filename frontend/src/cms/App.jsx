@@ -98,7 +98,7 @@ function CmsRoutes() {
 export default function CmsApp() {
   return (
     <I18nProvider>
-      <AuthProvider>
+      <AuthProvider mergeCustomerCartOnRestore={false}>
         <BrowserRouter basename="/admin">
           <CmsRoutes />
         </BrowserRouter>

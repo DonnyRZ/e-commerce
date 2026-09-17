@@ -60,8 +60,8 @@ export default function AdminLayout() {
       <NavItem to="/payments" icon={ShieldAlert} label="Payment Review" onClick={onClick} testId="admin-nav-payments" />
       <NavItem to="/customers" icon={Users} label="Customers" onClick={onClick} testId="admin-nav-customers" />
       <NavGroup label="CMS" />
-      <NavItem to="/cms" icon={FileText} label="Content" onClick={onClick} testId="admin-nav-cms" />
-      <NavItem to="/media" icon={Image} label="Media Library" onClick={onClick} testId="admin-nav-media" />
+      <NavItem to="/cms" icon={FileText} label="Konten" onClick={onClick} testId="admin-nav-cms" />
+      <NavItem to="/media" icon={Image} label="Pustaka Media" onClick={onClick} testId="admin-nav-media" />
       <NavGroup label="System" />
       <NavItem to="/settings" icon={Settings} label="Settings" onClick={onClick} testId="admin-nav-settings" />
     </nav>

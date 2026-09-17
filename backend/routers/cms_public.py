@@ -1,7 +1,7 @@
 """Public CMS API — published content only (drafts never leak), plus
 HMAC-signed time-limited draft preview and media file serving."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -35,6 +35,7 @@ async def public_bundle(session: AsyncSession = Depends(get_session)):
     sections = await _published(session, "homepage_section")
     heroes = await _published(session, "hero")
     announcements = await _published(session, "announcement")
+    footer_texts = await _published(session, "footer_text")
     return {
         "sections": [
             {"key": s["slug"], "sort_order": s["sort_order"]} for s in sections
@@ -42,6 +43,7 @@ async def public_bundle(session: AsyncSession = Depends(get_session)):
         "hero": heroes[0] if heroes else None,
         "announcement": announcements[0] if announcements else None,
         "stories": await _published(session, "story"),
+        "story_title": next((item for item in footer_texts if item["placement"] == "home_stories"), None),
         "banners": await _published(session, "banner"),
         "department_visuals": await _published(session, "department_visual"),
     }
@@ -97,30 +99,10 @@ async def public_footer(session: AsyncSession = Depends(get_session)):
             if not (item.get("cta_url") or "").startswith("/shop?department=")
         ] + catalog_items
         break
-    else:
-        if catalog_items:
-            out_groups.insert(
-                0,
-                {
-                    "id": "catalog-shop",
-                    "content_type": "footer_group",
-                    "slug": "shop",
-                    "placement": "footer",
-                    "sort_order": 0,
-                    "image_url": None,
-                    "cta_url": None,
-                    "secondary_cta_url": None,
-                    "payload": {"source": "catalog"},
-                    "translations": {
-                        "id": {"title": "Belanja"},
-                        "en": {"title": "Shop"},
-                        "uz": {"title": "Xarid"},
-                        "ru": {"title": "Покупки"},
-                    },
-                    "items": catalog_items,
-                },
-            )
-    return {"groups": out_groups, "promo": texts[0] if texts else None}
+    return {
+        "groups": out_groups,
+        "promo": next((item for item in texts if item["placement"] == "footer"), None),
+    }
 
 
 @router.get("/public/navigation")
@@ -149,12 +131,20 @@ async def public_faq(session: AsyncSession = Depends(get_session)):
 
 
 @router.get("/preview/{token}")
-async def preview_entry(token: str, session: AsyncSession = Depends(get_session)):
+async def preview_entry(
+    token: str,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+):
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
     entry_id = cms.verify_preview_token(token)
     entry = await session.get(CmsContentEntry, entry_id) if entry_id else None
     if not entry:
         raise HTTPException(status_code=404, detail="preview_not_found")
-    return await cms.public_entry(session, entry)
+    result = await cms.public_entry(session, entry, use_working_copy=True)
+    result["internal_name"] = (entry.draft_snapshot or {}).get("internal_name", entry.internal_name)
+    return result
 
 
 @router.get("/media/file/{key}")

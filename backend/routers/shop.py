@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import COOKIE_SAMESITE, COOKIE_SECURE, csrf_protect, decode_token, get_current_user
+from auth import COOKIE_SAMESITE, COOKIE_SECURE, csrf_protect, decode_token, require_roles
 from db.models import (
     Cart,
     CartItem,
@@ -46,12 +46,16 @@ async def _optional_user(request: Request, session: AsyncSession) -> Optional[Us
     token = request.cookies.get("access_token")
     if not token:
         return None
-    try:
-        payload = decode_token(token, "access")
-    except Exception:
-        return None
+    # A present-but-invalid access token is not a guest session. Return 401 so
+    # the client can refresh it (or clear a revoked session) instead of
+    # silently switching a signed-in customer to the guest cart.
+    payload = decode_token(token, "access")
     user = await session.get(User, payload.get("sub") or "")
-    return user if user and user.is_active else None
+    if not user or not user.is_active or payload.get("ver", 0) != user.token_version:
+        raise HTTPException(status_code=401, detail="session_expired")
+    if user.role != "customer":
+        return None
+    return user
 
 
 async def _find_cart(request: Request, session: AsyncSession, user: Optional[User]) -> Optional[Cart]:
@@ -220,8 +224,12 @@ class CartItemUpdateIn(BaseModel):
 
 
 @router.get("/cart")
-async def get_cart(request: Request, session: AsyncSession = Depends(get_session)):
-    user = await _optional_user(request, session)
+async def get_cart(
+    request: Request,
+    guest: bool = False,
+    session: AsyncSession = Depends(get_session),
+):
+    user = None if guest else await _optional_user(request, session)
     cart = await _find_cart(request, session, user)
     return await _cart_payload(session, cart)
 
@@ -231,10 +239,11 @@ async def add_cart_item(
     payload: CartItemIn,
     request: Request,
     response: Response,
+    guest: bool = False,
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    user = await _optional_user(request, session)
+    user = None if guest else await _optional_user(request, session)
     product = await session.get(Product, payload.product_id)
     if not product or product.status != "active":
         raise HTTPException(status_code=404, detail="product_not_found")
@@ -294,10 +303,11 @@ async def update_cart_item(
     item_id: str,
     payload: CartItemUpdateIn,
     request: Request,
+    guest: bool = False,
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    user = await _optional_user(request, session)
+    user = None if guest else await _optional_user(request, session)
     item = await _owned_cart_item(item_id, request, session, user)
     variant = await session.get(ProductVariant, item.variant_id)
     if variant and payload.quantity > variant.stock_quantity:
@@ -315,10 +325,11 @@ async def update_cart_item(
 async def remove_cart_item(
     item_id: str,
     request: Request,
+    guest: bool = False,
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    user = await _optional_user(request, session)
+    user = None if guest else await _optional_user(request, session)
     item = await _owned_cart_item(item_id, request, session, user)
     await session.delete(item)
     await session.commit()
@@ -328,10 +339,11 @@ async def remove_cart_item(
 @router.delete("/cart", status_code=204)
 async def clear_cart(
     request: Request,
+    guest: bool = False,
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    user = await _optional_user(request, session)
+    user = None if guest else await _optional_user(request, session)
     cart = await _find_cart(request, session, user)
     if cart:
         await session.execute(delete(CartItem).where(CartItem.cart_id == cart.id))
@@ -343,7 +355,7 @@ async def clear_cart(
 async def merge_guest_cart(
     request: Request,
     response: Response,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_roles("customer")),
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
@@ -472,7 +484,7 @@ async def _wishlist_payload(session: AsyncSession, user: User) -> dict:
 
 @router.get("/wishlist")
 async def get_wishlist(
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_roles("customer")),
     session: AsyncSession = Depends(get_session),
 ):
     return await _wishlist_payload(session, user)
@@ -481,7 +493,7 @@ async def get_wishlist(
 @router.post("/wishlist/items", status_code=201)
 async def add_wishlist_item(
     payload: WishlistItemIn,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_roles("customer")),
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
@@ -513,7 +525,7 @@ async def add_wishlist_item(
 @router.delete("/wishlist/items/{product_id}")
 async def remove_wishlist_item(
     product_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_roles("customer")),
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):

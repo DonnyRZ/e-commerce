@@ -188,8 +188,13 @@ async def refresh(
 ):
     token = request.cookies.get("refresh_token")
     if not token:
+        clear_auth_cookies(response)
         raise HTTPException(status_code=401, detail="not_authenticated")
-    payload = decode_token(token, "refresh")
+    try:
+        payload = decode_token(token, "refresh")
+    except HTTPException:
+        clear_auth_cookies(response)
+        raise
     user = await session.get(User, payload.get("sub", ""))
     if not user or not user.is_active or payload.get("ver", 0) != user.token_version:
         clear_auth_cookies(response)

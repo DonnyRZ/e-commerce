@@ -1,14 +1,18 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/lib/AuthContext";
 import { authErrorKey } from "@/lib/api";
+import { completeCustomerAuth } from "@/lib/customerAuthFlow";
 import BrandLogo from "@/components/brand/BrandLogo";
 
 export default function LoginPage() {
   const { t } = useI18n();
   const { login, logout } = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -20,12 +24,18 @@ export default function LoginPage() {
     setBusy(true);
     try {
       const authenticatedUser = await login(email, password);
-      if (authenticatedUser.role === "admin") {
+      if (authenticatedUser.role !== "customer") {
         await logout();
-        setError(t("auth.adminOnly"));
+        setError(t("auth.customerOnly"));
         return;
       }
-      navigate("/account");
+      await completeCustomerAuth({
+        state: location.state,
+        user: authenticatedUser,
+        queryClient,
+        navigate,
+        t,
+      });
     } catch (err) {
       setError(t(authErrorKey(err)));
     } finally {
@@ -96,6 +106,7 @@ export default function LoginPage() {
         </Link>
         <Link
           to="/register"
+          state={location.state}
           data-testid="login-register-link"
           className="font-medium underline-offset-4 hover:underline"
         >

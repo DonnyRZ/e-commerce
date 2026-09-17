@@ -243,6 +243,34 @@ def test_auth_cart_isolation(hoodie):
     _clear_cart(sa)
 
 
+def test_signed_in_customer_can_keep_using_guest_cart_scope(hoodie):
+    customer = _login()
+    _clear_cart(customer)
+    guest = requests.Session()
+    added = _add(guest, hoodie["id"], hoodie["normal"]["id"], 1)
+    assert added.status_code == 201, added.text
+    item_id = added.json()["items"][0]["id"]
+    customer.cookies.set("guest_cart_token", guest.cookies.get("guest_cart_token"))
+
+    guest_cart = customer.get(f"{API}/cart", params={"guest": "true"})
+    assert guest_cart.status_code == 200 and guest_cart.json()["item_count"] == 1
+    account_cart = customer.get(f"{API}/cart")
+    assert account_cart.status_code == 200 and account_cart.json()["item_count"] == 0
+
+    updated = customer.patch(
+        f"{API}/cart/items/{item_id}",
+        params={"guest": "true"},
+        json={"quantity": 2},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["item_count"] == 2
+    removed = customer.delete(
+        f"{API}/cart/items/{item_id}", params={"guest": "true"}
+    )
+    assert removed.status_code == 204
+    _clear_cart(customer)
+
+
 # ---------------- Guest -> auth merge ----------------
 
 def test_merge_clamps_to_stock_and_reports_adjustments(hoodie):

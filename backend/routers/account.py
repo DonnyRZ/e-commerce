@@ -5,11 +5,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import csrf_protect, get_current_user
+from auth import csrf_protect, require_roles
 from db.models import User, UserAddress
 from db.session import get_session
 
 router = APIRouter(prefix="/api/v1/account", tags=["account"])
+require_customer = require_roles("customer")
 
 
 class AddressIn(BaseModel):
@@ -69,7 +70,7 @@ async def _apply_default(
 
 @router.get("/addresses")
 async def list_addresses(
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_customer),
     session: AsyncSession = Depends(get_session),
 ):
     rows = (
@@ -85,7 +86,7 @@ async def list_addresses(
 @router.post("/addresses", status_code=201)
 async def create_address(
     payload: AddressIn,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_customer),
     _: None = Depends(csrf_protect),
     session: AsyncSession = Depends(get_session),
 ):
@@ -106,7 +107,7 @@ async def create_address(
 async def update_address(
     address_id: str,
     payload: AddressIn,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_customer),
     _: None = Depends(csrf_protect),
     session: AsyncSession = Depends(get_session),
 ):
@@ -122,7 +123,7 @@ async def update_address(
 @router.delete("/addresses/{address_id}", status_code=204)
 async def delete_address(
     address_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_customer),
     _: None = Depends(csrf_protect),
     session: AsyncSession = Depends(get_session),
 ):

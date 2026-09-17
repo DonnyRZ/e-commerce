@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -223,6 +224,55 @@ class CartItem(Base):
     quantity: Mapped[int] = mapped_column(Integer, default=1)
 
     cart: Mapped[Cart] = relationship(back_populates="items")
+
+
+class TelegramBusinessConnection(Base):
+    """Latest Telegram Business connection state for a linked store account."""
+
+    __tablename__ = "telegram_business_connections"
+
+    connection_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    business_user_id: Mapped[str] = mapped_column(String(32), default="")
+    username: Mapped[str] = mapped_column(String(32), default="", index=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    can_reply: Mapped[bool] = mapped_column(Boolean, default=False)
+    can_read_messages: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class TelegramCartInquiry(Base):
+    """Short-lived, server-priced cart snapshot awaiting a customer Telegram send."""
+
+    __tablename__ = "telegram_cart_inquiries"
+    __table_args__ = (
+        UniqueConstraint("cart_id", "idempotency_key", name="uq_telegram_inquiry_cart_idempotency"),
+        Index("ix_telegram_cart_inquiries_expires_status", "expires_at", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    reference: Mapped[str] = mapped_column(String(40), unique=True)
+    cart_id: Mapped[str] = mapped_column(String(32), index=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(80))
+    locale: Mapped[str] = mapped_column(String(5), default="en")
+    snapshot: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TelegramUpdateReceipt(Base):
+    """Webhook update IDs ensure Telegram retries do not duplicate replies."""
+
+    __tablename__ = "telegram_update_receipts"
+    __table_args__ = (Index("ix_telegram_update_receipts_received_at", "received_at"),)
+
+    update_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    status: Mapped[str] = mapped_column(String(20), default="processing", index=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Wishlist(TimestampMixin, Base):
@@ -493,6 +543,7 @@ class CmsContentEntry(TimestampMixin, Base):
         String(500), nullable=True
     )
     payload: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    draft_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     published_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

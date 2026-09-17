@@ -116,9 +116,9 @@ export default function CheckoutPage() {
   const checkoutEnabled =
     optionsQuery.isSuccess && optionsQuery.data?.checkout_enabled !== false;
   const addressesQuery = useQuery({
-    queryKey: ["addresses"],
+    queryKey: ["addresses", user?.id || "anonymous"],
     queryFn: getAddresses,
-    enabled: Boolean(user),
+    enabled: user?.role === "customer",
   });
   const hasItems = Boolean(cart?.item_count);
   const quoteQuery = useQuery({
@@ -130,7 +130,14 @@ export default function CheckoutPage() {
 
   const addresses = addressesQuery.data || [];
   useEffect(() => {
-    if (user && addresses.length && !savedAddressId) {
+    setSavedAddressId(null);
+    setAddressMode("new");
+    setAddr(EMPTY_ADDR);
+    setEmail(user?.email || "");
+  }, [user?.id, user?.email]);
+
+  useEffect(() => {
+    if (user?.role === "customer" && addresses.length && !savedAddressId) {
       const def = addresses.find((a) => a.is_default) || addresses[0];
       setSavedAddressId(def.id);
       setAddressMode("saved");

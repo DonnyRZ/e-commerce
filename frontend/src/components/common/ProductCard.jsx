@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Heart } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
@@ -9,19 +9,29 @@ import ImageWithFallback from "./ImageWithFallback";
 export default function ProductCard({ product }) {
   const { t } = useI18n();
   const { toggleWishlist, wishlistIds } = useShop();
+  const location = useLocation();
   const navigate = useNavigate();
   const href = product.href || "/shop";
   const wished = wishlistIds.has(product.id);
 
   const handleWishlist = async () => {
-    const result = await toggleWishlist(product.id);
-    if (result === "auth_required") {
-      toast.info(t("wishlist.loginRequired"));
-      navigate("/login");
-    } else if (result === "added") {
-      toast.success(t("wishlist.added"));
-    } else if (result === "removed") {
-      toast.success(t("wishlist.removed"));
+    try {
+      const result = await toggleWishlist(product.id);
+      if (result === "auth_required") {
+        toast.info(t("wishlist.loginRequired"));
+        navigate("/login", {
+          state: {
+            returnTo: `${location.pathname}${location.search}`,
+            intent: { type: "wishlist_add", productId: product.id },
+          },
+        });
+      } else if (result === "added") {
+        toast.success(t("wishlist.added"));
+      } else if (result === "removed") {
+        toast.success(t("wishlist.removed"));
+      }
+    } catch {
+      toast.error(t("errors.generic"));
     }
   };
   return (

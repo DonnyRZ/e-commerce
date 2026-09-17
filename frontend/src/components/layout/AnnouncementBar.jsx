@@ -1,17 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { getCmsBundle } from "@/lib/api";
-import { pickLocalized } from "@/lib/localize";
+import { pickCmsLocalized } from "@/lib/localize";
 
 export default function AnnouncementBar() {
   const { locale, t } = useI18n();
-  const { data: bundle } = useQuery({
+  const { data: bundle, isLoading, isError } = useQuery({
     queryKey: ["cms", "bundle"],
     queryFn: getCmsBundle,
     staleTime: 60_000,
   });
-  const text =
-    pickLocalized(bundle?.announcement?.translations, locale) || t("announcement.text");
+  if (isLoading) return null;
+  const configured = bundle?.sections?.some((section) => section.key === "promo_bar");
+  const text = isError
+    ? t("announcement.text")
+    : configured
+      ? pickCmsLocalized(bundle?.announcement?.translations, locale)
+      : "";
+  if (!text) return null;
   return (
     <div
       data-testid="announcement-bar"

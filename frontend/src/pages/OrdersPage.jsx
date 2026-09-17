@@ -1,4 +1,4 @@
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { useAuth } from "@/lib/AuthContext";
@@ -30,10 +30,11 @@ export function StatusBadge({ value, kind, testId }) {
 export default function OrdersPage() {
   const { t, locale } = useI18n();
   const { user, checking } = useAuth();
+  const location = useLocation();
   const ordersQuery = useQuery({
-    queryKey: ["my-orders"],
+    queryKey: ["my-orders", user?.id || "anonymous"],
     queryFn: getMyOrders,
-    enabled: Boolean(user),
+    enabled: user?.role === "customer",
   });
 
   if (checking) {
@@ -44,7 +45,26 @@ export default function OrdersPage() {
       </div>
     );
   }
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ returnTo: `${location.pathname}${location.search}` }}
+      />
+    );
+  }
+  if (user.role !== "customer") {
+    return user.role === "admin" ? (
+      <Navigate to="/admin/" replace />
+    ) : (
+      <Navigate
+        to="/login"
+        replace
+        state={{ returnTo: `${location.pathname}${location.search}` }}
+      />
+    );
+  }
 
   const orders = ordersQuery.data || [];
   const tag = LOCALE_TAGS[locale] || "en-US";

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { LOCALE_LABELS, SUPPORTED_LOCALES, useI18n } from "@/i18n";
@@ -105,31 +105,42 @@ function AddressForm({ initial, onSubmit, onCancel, busy, testPrefix }) {
 export default function AccountPage() {
   const { t, locale, setLocale } = useI18n();
   const { user, checking, logout, setUser } = useAuth();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [profile, setProfile] = useState(null);
+  const [profileOwnerId, setProfileOwnerId] = useState(null);
   const [showAddressForm, setShowAddressForm] = useState(false);
   const [editingAddress, setEditingAddress] = useState(null);
+  const [editingAddressOwnerId, setEditingAddressOwnerId] = useState(null);
 
   useEffect(() => {
-    if (user && !profile) {
+    if (user) {
       setProfile({
         first_name: user.first_name || "",
         last_name: user.last_name || "",
         preferred_locale: user.preferred_locale || locale,
       });
+      setProfileOwnerId(user.id);
+    } else {
+      setProfile(null);
+      setProfileOwnerId(null);
     }
+    setEditingAddress(null);
+    setEditingAddressOwnerId(null);
+    setShowAddressForm(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   const addressesQuery = useQuery({
-    queryKey: ["addresses"],
+    queryKey: ["addresses", user?.id || "anonymous"],
     queryFn: getAddresses,
-    enabled: Boolean(user),
+    enabled: user?.role === "customer",
   });
 
   const profileMutation = useMutation({
     mutationFn: updateProfile,
     onSuccess: (u) => {
+      if (queryClient.getQueryData(["auth", "me"])?.id !== user.id) return;
       setUser(u);
       setLocale(u.preferred_locale);
       const msg =
@@ -144,7 +155,7 @@ export default function AccountPage() {
     mutationFn: (data) =>
       editingAddress ? updateAddress(editingAddress.id, data) : createAddress(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["addresses"] });
+      queryClient.invalidateQueries({ queryKey: ["addresses", user.id] });
       setShowAddressForm(false);
       setEditingAddress(null);
       toast.success(t("auth.addressSaved"));
@@ -155,9 +166,10 @@ export default function AccountPage() {
   const addressDelete = useMutation({
     mutationFn: deleteAddress,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["addresses"] });
+      queryClient.invalidateQueries({ queryKey: ["addresses", user.id] });
       toast.success(t("auth.addressDeleted"));
     },
+    onError: (e) => toast.error(t(authErrorKey(e))),
   });
 
   if (checking) {
@@ -168,7 +180,26 @@ export default function AccountPage() {
       </div>
     );
   }
-  if (!user) return <Navigate to="/login" replace />;
+  if (!user) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ returnTo: `${location.pathname}${location.search}` }}
+      />
+    );
+  }
+  if (user.role !== "customer") {
+    return user.role === "admin" ? (
+      <Navigate to="/admin/" replace />
+    ) : (
+      <Navigate
+        to="/login"
+        replace
+        state={{ returnTo: `${location.pathname}${location.search}` }}
+      />
+    );
+  }
 
   const addresses = addressesQuery.data || [];
 
@@ -196,7 +227,7 @@ export default function AccountPage() {
           <h2 className="text-sm font-semibold uppercase tracking-wide">
             {t("auth.profile")}
           </h2>
-          {profile ? (
+          {profile && profileOwnerId === user.id ? (
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -309,6 +340,7 @@ export default function AccountPage() {
                         data-testid={`address-edit-${a.id}`}
                         onClick={() => {
                           setEditingAddress(a);
+                          setEditingAddressOwnerId(user.id);
                           setShowAddressForm(false);
                         }}
                         className="underline-offset-4 hover:underline"
@@ -346,8 +378,9 @@ export default function AccountPage() {
               onCancel={() => setShowAddressForm(false)}
             />
           ) : null}
-          {editingAddress ? (
+          {editingAddress && editingAddressOwnerId === user.id ? (
             <AddressForm
+              key={`address-form-edit-${editingAddress.id}`}
               testPrefix="address-form-edit"
               initial={editingAddress}
               busy={addressSave.isPending}

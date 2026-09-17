@@ -11,11 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import get_current_user
+from auth import require_roles
 from db.models import Order, OrderItem, User
 from db.session import get_session
 
 router = APIRouter(prefix="/api/v1", tags=["orders"])
+require_customer = require_roles("customer")
 
 
 def _item_out(item: OrderItem) -> dict:
@@ -67,7 +68,7 @@ async def _items(session: AsyncSession, order_id: str):
 
 @router.get("/account/orders")
 async def list_my_orders(
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_customer),
     session: AsyncSession = Depends(get_session),
 ):
     orders = (
@@ -89,7 +90,7 @@ async def list_my_orders(
 @router.get("/account/orders/{order_number}")
 async def get_my_order(
     order_number: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_customer),
     session: AsyncSession = Depends(get_session),
 ):
     order = await session.scalar(
