@@ -5,6 +5,8 @@ import { ArrowLeft, ChevronLeft, ChevronRight, ImagePlus, Plus, Trash2 } from "l
 import { toast } from "sonner";
 import {
   createAdminProduct,
+  deleteAdminProduct,
+  deleteAdminVariant,
   getAdminCategories,
   getAdminProduct,
   saveAdminProductEditor,
@@ -13,7 +15,7 @@ import {
 import { mediaUrl, pickLocalized } from "@/lib/localize";
 import ImageWithFallback from "@/components/common/ImageWithFallback";
 import { Skeleton } from "@/components/ui/skeleton";
-import { inputClass } from "./adminUtils";
+import { adminDeleteError, inputClass } from "./adminUtils";
 
 const LOCALES = ["en", "id", "uz", "ru"];
 const EMPTY_VARIANT = { sku: "", optionsText: "", stock: 0, price_override: "", sale_price_override: "", media_id: null, image_url: "", is_active: true };
@@ -101,6 +103,8 @@ export default function AdminProductEditPage() {
   const [variants, setVariants] = useState([{ ...EMPTY_VARIANT }]);
   const [saving, setSaving] = useState(false);
   const [imageUploading, setImageUploading] = useState(false);
+  const [deletingVariantId, setDeletingVariantId] = useState(null);
+  const [deletingProduct, setDeletingProduct] = useState(false);
 
   const categoriesQuery = useQuery({ queryKey: ["admin-categories"], queryFn: getAdminCategories });
   const productQuery = useQuery({
@@ -186,6 +190,50 @@ export default function AdminProductEditPage() {
       ...current,
       media: current.media.filter((_, itemIndex) => itemIndex !== index),
     }));
+  };
+
+  const removeVariant = async (index, variant) => {
+    if (!variant.id) {
+      setVariants((current) => current.filter((_, itemIndex) => itemIndex !== index));
+      return;
+    }
+    if (deletingVariantId || saving || deletingProduct) return;
+    if (!window.confirm(`Delete variant "${variant.sku}" permanently?`)) return;
+
+    setDeletingVariantId(variant.id);
+    try {
+      await deleteAdminVariant(variant.id);
+      setVariants((current) => current.filter((item) => item.id !== variant.id));
+      // Keep any unsaved local variant rows intact. The product query is
+      // marked stale for the next navigation/refresh without replacing the
+      // editor state while the operator is still working.
+      queryClient.invalidateQueries({ queryKey: ["admin-product", productId], refetchType: "none" });
+      queryClient.invalidateQueries({ queryKey: ["admin-products"] });
+      toast.success("Variant deleted");
+    } catch (err) {
+      toast.error(adminDeleteError(err, "Variant"));
+    } finally {
+      setDeletingVariantId(null);
+    }
+  };
+
+  const removeProduct = async () => {
+    if (isNew || deletingProduct || saving || deletingVariantId) return;
+    const productName = tr.en?.name || productId;
+    if (!window.confirm(`Delete product "${productName}" permanently?`)) return;
+
+    setDeletingProduct(true);
+    try {
+      await deleteAdminProduct(productId);
+      queryClient.invalidateQueries({ queryKey: ["admin-products"] });
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      toast.success("Product deleted");
+      navigate("/products", { replace: true });
+    } catch (err) {
+      toast.error(adminDeleteError(err, "Produk"));
+    } finally {
+      setDeletingProduct(false);
+    }
   };
 
   const moveProductImage = (index, direction) => {
@@ -577,15 +625,43 @@ export default function AdminProductEditPage() {
                   <input type="checkbox" checked={Boolean(v.is_active)} onChange={(e) => setV(idx, "is_active", e.target.checked)} className="accent-[#145A46]" data-testid={`variant-active-${idx}`} />
                   Active
                 </label>
-                {variants.length > 1 && !v.id ? (
-                  <button type="button" onClick={() => setVariants(variants.filter((_, i) => i !== idx))} className="flex h-10 items-center text-neutral-400 hover:text-red-600" aria-label="remove" data-testid={`variant-remove-${idx}`}>
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                ) : <span className="w-4" />}
+                <button
+                  type="button"
+                  onClick={() => removeVariant(idx, v)}
+                  disabled={variants.length <= 1 || Boolean(deletingVariantId) || saving || deletingProduct}
+                  title={variants.length <= 1 ? "A product must keep at least one variant." : "Delete variant"}
+                  className="flex h-10 items-center text-neutral-400 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
+                  aria-label={`Delete variant ${v.sku || idx + 1}`}
+                  data-testid={`variant-remove-${idx}`}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
               </div>
             ))}
           </div>
         </section>
+
+        {!isNew ? (
+          <section className="border border-red-200 bg-red-50/40 p-5" data-testid="editor-danger-zone">
+            <h2 className="text-sm font-semibold text-red-900">Danger zone</h2>
+            <p className="mt-1 max-w-2xl text-xs leading-5 text-red-800/80">
+              Permanent deletion is only allowed for an inactive or draft product with no order, cart, wishlist, or stock-reservation references.
+            </p>
+            {form.status === "active" ? (
+              <p className="mt-2 text-xs font-medium text-amber-800">Set the product to Inactive and save it before deleting.</p>
+            ) : null}
+            <button
+              type="button"
+              onClick={removeProduct}
+              disabled={deletingProduct || saving || Boolean(deletingVariantId)}
+              className="mt-4 inline-flex h-10 items-center gap-2 border border-red-300 px-4 text-sm font-semibold text-red-800 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              data-testid="editor-delete-product"
+            >
+              <Trash2 className="h-4 w-4" aria-hidden="true" />
+              {deletingProduct ? "Deleting…" : "Delete permanently"}
+            </button>
+          </section>
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-3">
           <button

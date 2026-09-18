@@ -145,6 +145,106 @@ def test_product_crud_flow(admin):
     assert r.status_code == 200
 
 
+def test_product_and_variant_delete_guards(admin, customer):
+    categories = admin.get(f"{API}/admin/categories").json()
+    cats = categories if isinstance(categories, list) else categories.get("items", [])
+    cat = next(c for c in cats if c.get("kind") == "category" and c.get("is_active"))
+    tag = uuid.uuid4().hex[:8].upper()
+    created = admin.post(
+        f"{API}/admin/products",
+        json={
+            "category_id": cat["id"],
+            "product_type": "general",
+            "brand": "MC Delete Test",
+            "base_price": 99000,
+            "status": "draft",
+            "media": [{"url": "/media/delete-test.jpg"}],
+            "translations": {"en": {"name": f"Delete Test {tag}"}},
+            "variants": [
+                {"sku": f"DEL-{tag}-A", "option_values": {"size": "S"}, "stock_quantity": 4},
+                {"sku": f"DEL-{tag}-B", "option_values": {"size": "M"}, "stock_quantity": 4},
+            ],
+        },
+    )
+    assert created.status_code == 201, created.text
+    product = created.json()
+    product_id = product["id"]
+    first_variant, last_variant = product["variants"]
+    guest = requests.Session()
+
+    try:
+        assert customer.delete(
+            f"{API}/admin/products/{product_id}",
+            headers={"X-CSRF-Token": customer.cookies.get("csrf_token")},
+        ).status_code == 403
+
+        no_csrf = requests.Session()
+        no_csrf.cookies.update(admin.cookies)
+        assert no_csrf.delete(f"{API}/admin/products/{product_id}").status_code == 403
+
+        deleted_variant = admin.delete(f"{API}/admin/variants/{first_variant['id']}")
+        assert deleted_variant.status_code == 200, deleted_variant.text
+        assert deleted_variant.json()["deleted"] is True
+
+        last_variant_delete = admin.delete(f"{API}/admin/variants/{last_variant['id']}")
+        assert last_variant_delete.status_code == 409
+        assert last_variant_delete.json()["detail"]["error"] == "last_variant"
+
+        activated = admin.patch(
+            f"{API}/admin/products/{product_id}",
+            json={"status": "active"},
+        )
+        assert activated.status_code == 200, activated.text
+
+        cart_add = guest.post(
+            f"{API}/cart/items",
+            json={
+                "product_id": product_id,
+                "variant_id": last_variant["id"],
+                "quantity": 1,
+            },
+        )
+        assert cart_add.status_code == 201, cart_add.text
+
+        active_delete = admin.delete(f"{API}/admin/products/{product_id}")
+        assert active_delete.status_code == 409
+        assert active_delete.json()["detail"]["error"] == "product_must_be_inactive"
+
+        deactivated = admin.patch(
+            f"{API}/admin/products/{product_id}",
+            json={"status": "inactive"},
+        )
+        assert deactivated.status_code == 200, deactivated.text
+
+        in_use_delete = admin.delete(f"{API}/admin/products/{product_id}")
+        assert in_use_delete.status_code == 409
+        in_use_detail = in_use_delete.json()["detail"]
+        assert in_use_detail["error"] == "product_in_use"
+        assert in_use_detail["references"]["cart_items"] == 1
+
+        assert guest.delete(f"{API}/cart", params={"guest": "true"}).status_code == 204
+        deleted_product = admin.delete(f"{API}/admin/products/{product_id}")
+        assert deleted_product.status_code == 200, deleted_product.text
+        assert deleted_product.json() == {"deleted": True, "product_id": product_id}
+        assert admin.get(f"{API}/admin/products/{product_id}").status_code == 404
+
+        audit = admin.get(f"{API}/admin/audit", params={"page_size": 100})
+        assert audit.status_code == 200
+        assert any(
+            row["action"] == "admin.product.delete"
+            and row["target_id"] == product_id
+            for row in audit.json()["items"]
+        )
+    finally:
+        guest.delete(f"{API}/cart", params={"guest": "true"})
+        # The successful path above removes the product; this is only for an
+        # assertion failure before the final delete.
+        current = admin.get(f"{API}/admin/products/{product_id}")
+        if current.status_code == 200:
+            admin.patch(f"{API}/admin/products/{product_id}", json={"status": "inactive"})
+            admin.delete(f"{API}/admin/products/{product_id}")
+
+
 def test_categories_crud(admin):
     tag = uuid.uuid4().hex[:8]
     r = admin.post(

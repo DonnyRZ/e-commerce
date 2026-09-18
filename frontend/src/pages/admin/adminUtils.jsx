@@ -54,3 +54,32 @@ export function StatusPill({ value, tone }) {
     </span>
   );
 }
+
+export function adminDeleteError(error, subject = "Item") {
+  const detail = error?.response?.data?.detail;
+  const code = typeof detail === "string" ? detail : detail?.error;
+  const references = typeof detail === "object" ? detail?.references || {} : {};
+  const labels = {
+    order_items: "riwayat order",
+    cart_items: "keranjang",
+    wishlist_items: "wishlist",
+    reservations: "reservasi stok",
+  };
+  const usedBy = Object.entries(references)
+    .filter(([, count]) => Number(count) > 0)
+    .map(([key, count]) => `${labels[key] || key} (${count})`)
+    .join(", ");
+
+  if (code === "product_must_be_inactive") {
+    return "Nonaktifkan produk terlebih dahulu sebelum menghapus permanen.";
+  }
+  if (code === "last_variant") {
+    return "Variant terakhir tidak dapat dihapus. Hapus produknya jika memang sudah tidak diperlukan.";
+  }
+  if (code === "product_in_use" || code === "variant_in_use") {
+    return usedBy
+      ? `${subject} masih digunakan oleh ${usedBy}. Lepaskan referensi tersebut terlebih dahulu.`
+      : `${subject} masih digunakan dan belum dapat dihapus.`;
+  }
+  return `${subject} gagal dihapus. Coba lagi.`;
+}

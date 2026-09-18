@@ -28,7 +28,9 @@ from config import (
 from db.models import (
     Category,
     CategoryTranslation,
+    CartItem,
     CmsMediaAsset,
+    InventoryReservation,
     Order,
     OrderItem,
     Payment,
@@ -38,6 +40,7 @@ from db.models import (
     ProductVariant,
     SellerOrderFulfillment,
     User,
+    WishlistItem,
 )
 from db.session import get_session
 from routers.seller import (
@@ -111,6 +114,64 @@ async def _normalize_product_media(session: AsyncSession, media: list[dict]) -> 
             item["url"] = await _resolve_media_url(session, item["media_id"])
         normalized.append(item)
     return normalized
+
+
+async def _catalog_delete_references(
+    session: AsyncSession,
+    product_id: str,
+    variant_ids: list[str],
+) -> dict[str, int]:
+    """Return all references that make a catalog row unsafe to hard-delete.
+
+    Order items are immutable snapshots, but they intentionally retain the
+    catalog identifiers for audit and support. Treating them as a delete guard
+    keeps historical product/variant identity intact. Cart, wishlist, and
+    reservation rows are live relational references and must never be removed
+    implicitly by an admin delete action.
+    """
+
+    variant_filter = (
+        or_(OrderItem.product_id == product_id, OrderItem.variant_id.in_(variant_ids))
+        if variant_ids
+        else OrderItem.product_id == product_id
+    )
+    cart_filter = (
+        or_(CartItem.product_id == product_id, CartItem.variant_id.in_(variant_ids))
+        if variant_ids
+        else CartItem.product_id == product_id
+    )
+    reservations = (
+        await session.scalar(
+            select(func.count(InventoryReservation.id)).where(
+                InventoryReservation.product_variant_id.in_(variant_ids)
+            )
+        )
+        if variant_ids
+        else 0
+    )
+    return {
+        "order_items": int(
+            await session.scalar(select(func.count(OrderItem.id)).where(variant_filter))
+            or 0
+        ),
+        "cart_items": int(
+            await session.scalar(select(func.count(CartItem.id)).where(cart_filter))
+            or 0
+        ),
+        "wishlist_items": int(
+            await session.scalar(
+                select(func.count(WishlistItem.id)).where(
+                    WishlistItem.product_id == product_id
+                )
+            )
+            or 0
+        ),
+        "reservations": int(reservations or 0),
+    }
+
+
+def _has_delete_references(references: dict[str, int]) -> bool:
+    return any(value > 0 for value in references.values())
 
 
 class AdminVariantEditorIn(VariantIn):
@@ -612,6 +673,62 @@ async def admin_save_product_editor(
     return await _product_payload(session, saved)
 
 
+@router.delete("/products/{product_id}")
+async def admin_delete_product(
+    product_id: str,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(csrf_protect),
+):
+    product = await session.scalar(
+        select(Product).where(Product.id == product_id).with_for_update()
+    )
+    if not product:
+        raise HTTPException(status_code=404, detail="product_not_found")
+    if product.status not in ("draft", "inactive"):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "product_must_be_inactive", "status": product.status},
+        )
+
+    variant_ids = list(
+        (
+            await session.execute(
+                select(ProductVariant.id)
+                .where(ProductVariant.product_id == product.id)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    references = await _catalog_delete_references(session, product.id, variant_ids)
+    if _has_delete_references(references):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "product_in_use", "references": references},
+        )
+
+    await session.delete(product)
+    await audit(
+        session,
+        user.id,
+        "admin.product.delete",
+        "product",
+        product.id,
+        {"variant_count": len(variant_ids)},
+    )
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "product_in_use", "references": references},
+        )
+    return {"deleted": True, "product_id": product_id}
+
+
 @router.post("/products/{product_id}/variants", status_code=201)
 async def admin_create_variant(
     product_id: str,
@@ -650,6 +767,102 @@ async def admin_create_variant(
         await session.rollback()
         raise HTTPException(status_code=409, detail={"error": "sku_exists", "skus": [sku]})
     return await _product_payload(session, product)
+
+
+@router.delete("/variants/{variant_id}")
+async def admin_delete_variant(
+    variant_id: str,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(csrf_protect),
+):
+    product_id = await session.scalar(
+        select(ProductVariant.product_id).where(ProductVariant.id == variant_id)
+    )
+    if not product_id:
+        raise HTTPException(status_code=404, detail="variant_not_found")
+
+    product = await session.scalar(
+        select(Product).where(Product.id == product_id).with_for_update()
+    )
+    variant = await session.scalar(
+        select(ProductVariant)
+        .where(
+            ProductVariant.id == variant_id,
+            ProductVariant.product_id == product_id,
+        )
+        .with_for_update()
+    )
+    if not product or not variant:
+        raise HTTPException(status_code=404, detail="variant_not_found")
+    if product.status not in ("draft", "inactive"):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "product_must_be_inactive", "status": product.status},
+        )
+
+    variant_count = await session.scalar(
+        select(func.count(ProductVariant.id)).where(
+            ProductVariant.product_id == product.id
+        )
+    )
+    if int(variant_count or 0) <= 1:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "last_variant", "product_id": product.id},
+        )
+
+    references = {
+        "order_items": int(
+            await session.scalar(
+                select(func.count(OrderItem.id)).where(
+                    OrderItem.variant_id == variant.id
+                )
+            )
+            or 0
+        ),
+        "cart_items": int(
+            await session.scalar(
+                select(func.count(CartItem.id)).where(
+                    CartItem.variant_id == variant.id
+                )
+            )
+            or 0
+        ),
+        "wishlist_items": 0,
+        "reservations": int(
+            await session.scalar(
+                select(func.count(InventoryReservation.id)).where(
+                    InventoryReservation.product_variant_id == variant.id
+                )
+            )
+            or 0
+        ),
+    }
+    if _has_delete_references(references):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "variant_in_use", "references": references},
+        )
+
+    await session.delete(variant)
+    await audit(
+        session,
+        user.id,
+        "admin.variant.delete",
+        "variant",
+        variant.id,
+        {"product_id": product.id, "sku": variant.sku},
+    )
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "variant_in_use", "references": references},
+        )
+    return {"deleted": True, "variant_id": variant_id, "product_id": product.id}
 
 
 @router.patch("/variants/{variant_id}")

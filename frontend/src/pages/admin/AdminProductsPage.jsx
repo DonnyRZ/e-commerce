@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { Plus, Search } from "lucide-react";
-import { getAdminProducts } from "@/lib/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus, Search, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import { deleteAdminProduct, getAdminProducts } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatusPill, fmtMoney, inputClass } from "./adminUtils";
+import { StatusPill, adminDeleteError, fmtMoney, inputClass } from "./adminUtils";
 
 export default function AdminProductsPage() {
   const [params, setParams] = useSearchParams();
   const [q, setQ] = useState(params.get("q") || "");
+  const [deletingId, setDeletingId] = useState(null);
+  const queryClient = useQueryClient();
   const page = parseInt(params.get("page") || "1", 10);
   const status = params.get("status") || "";
   const inventory = params.get("inventory") || "";
@@ -31,6 +34,20 @@ export default function AdminProductsPage() {
   const total = data?.total || 0;
   const pageSize = data?.page_size || 20;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  const removeProduct = async (product) => {
+    if (deletingId || !window.confirm(`Delete product "${product.name}" permanently?`)) return;
+    setDeletingId(product.id);
+    try {
+      await deleteAdminProduct(product.id);
+      toast.success("Product deleted");
+      queryClient.invalidateQueries({ queryKey: ["admin-products"] });
+    } catch (err) {
+      toast.error(adminDeleteError(err, "Produk"));
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
     <div data-testid="admin-products-page">
@@ -87,12 +104,13 @@ export default function AdminProductsPage() {
               <th className="px-5 py-3 font-medium">Variants</th>
               <th className="px-5 py-3 font-medium">Stock</th>
               <th className="px-5 py-3 text-right font-medium">Price</th>
+              <th className="px-5 py-3 text-right font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
             {isLoading
               ? Array.from({ length: 5 }).map((_, i) => (
-                  <tr key={i}><td colSpan={6} className="px-5 py-3"><Skeleton className="h-5 w-full" /></td></tr>
+                  <tr key={i}><td colSpan={7} className="px-5 py-3"><Skeleton className="h-5 w-full" /></td></tr>
                 ))
               : items.map((p) => (
                   <tr key={p.id} className="border-b border-neutral-50 hover:bg-neutral-50" data-testid={`product-row-${p.slug}`}>
@@ -110,10 +128,22 @@ export default function AdminProductsPage() {
                       <StatusPill value={p.stock_state} />
                     </td>
                     <td className="px-5 py-3 text-right font-medium">{fmtMoney(p.base_price)}</td>
+                    <td className="px-5 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => removeProduct(p)}
+                        disabled={deletingId === p.id}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-red-700 hover:underline disabled:opacity-50"
+                        data-testid={`product-delete-${p.slug}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        {deletingId === p.id ? "Deleting…" : "Delete"}
+                      </button>
+                    </td>
                   </tr>
                 ))}
             {!isLoading && !items.length ? (
-              <tr><td colSpan={6} className="px-5 py-10 text-center text-sm text-neutral-400" data-testid="products-empty">No products found.</td></tr>
+              <tr><td colSpan={7} className="px-5 py-10 text-center text-sm text-neutral-400" data-testid="products-empty">No products found.</td></tr>
             ) : null}
           </tbody>
         </table>

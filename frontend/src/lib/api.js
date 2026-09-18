@@ -210,12 +210,16 @@ export const createAdminProduct = (data) =>
   api.post("/v1/admin/products", data).then((r) => r.data);
 export const getAdminProduct = (id) =>
   api.get(`/v1/admin/products/${id}`).then((r) => r.data);
+export const deleteAdminProduct = (id) =>
+  api.delete(`/v1/admin/products/${id}`).then((r) => r.data);
 export const updateAdminProduct = (id, data) =>
   api.patch(`/v1/admin/products/${id}`, data).then((r) => r.data);
 export const saveAdminProductEditor = (id, data) =>
   api.put(`/v1/admin/products/${id}/editor`, data).then((r) => r.data);
 export const createAdminVariant = (productId, data) =>
   api.post(`/v1/admin/products/${productId}/variants`, data).then((r) => r.data);
+export const deleteAdminVariant = (id) =>
+  api.delete(`/v1/admin/variants/${id}`).then((r) => r.data);
 export const updateAdminVariant = (id, data) =>
   api.patch(`/v1/admin/variants/${id}`, data).then((r) => r.data);
 export const updateAdminInventory = (id, stockQuantity) =>
