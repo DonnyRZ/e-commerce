@@ -1277,7 +1277,10 @@ async def admin_update_category(
         if active_descendants:
             _bad_request("active_children_present")
     if translations:
-        _validate_category_translations(translations, require_en=False)
+        # Validate the Pydantic models, not the plain dictionaries returned by
+        # ``model_dump`` above.  The latter caused a 500 whenever an operator
+        # edited a category name or description through the CMS.
+        _validate_category_translations(payload.translations or {}, require_en=False)
         existing = {
             t.locale: t
             for t in (

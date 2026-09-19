@@ -264,6 +264,139 @@ def test_categories_crud(admin):
     assert r.status_code in (200, 204), r.text
 
 
+def test_taxonomy_department_group_category_crud_and_guards(admin, customer):
+    """Exercise the full Catalog taxonomy flow through the real HTTP API."""
+
+    tag = uuid.uuid4().hex[:10]
+    department_slug = f"crud-department-{tag}"
+    group_id = category_id = department_id = None
+
+    # The endpoint must be protected by both admin RBAC and CSRF.
+    assert customer.get(f"{API}/admin/categories").status_code == 403
+    no_csrf = requests.Session()
+    no_csrf.cookies.update(admin.cookies)
+    assert no_csrf.post(
+        f"{API}/admin/categories",
+        json={
+            "slug": department_slug,
+            "department": department_slug,
+            "kind": "department",
+            "translations": {"en": {"name": "No CSRF Department"}},
+        },
+    ).status_code == 403
+
+    try:
+        created_department = admin.post(
+            f"{API}/admin/categories",
+            json={
+                "slug": department_slug,
+                "department": department_slug,
+                "kind": "department",
+                "is_active": False,
+                "translations": {
+                    "en": {"name": f"CRUD Department {tag}"},
+                    "id": {"name": f"Departemen CRUD {tag}"},
+                },
+            },
+        )
+        assert created_department.status_code == 201, created_department.text
+        department = created_department.json()
+        department_id = department["id"]
+        assert department["kind"] == "department"
+        assert department["parent_id"] is None
+        assert department["is_active"] is False
+
+        activated_department = admin.patch(
+            f"{API}/admin/categories/{department_id}",
+            json={"is_active": True, "sort_order": 7},
+        )
+        assert activated_department.status_code == 200, activated_department.text
+        assert activated_department.json()["is_active"] is True
+        assert activated_department.json()["sort_order"] == 7
+
+        created_group = admin.post(
+            f"{API}/admin/categories",
+            json={
+                "slug": f"{department_slug}-group",
+                "department": department_slug,
+                "kind": "group",
+                "parent_id": department_id,
+                "translations": {"en": {"name": f"CRUD Group {tag}"}},
+            },
+        )
+        assert created_group.status_code == 201, created_group.text
+        group = created_group.json()
+        group_id = group["id"]
+        assert group["kind"] == "group"
+        assert group["parent_id"] == department_id
+        assert group["is_active"] is False
+
+        activated_group = admin.patch(
+            f"{API}/admin/categories/{group_id}",
+            json={"is_active": True, "translations": {"en": {"name": f"Edited Group {tag}"}}},
+        )
+        assert activated_group.status_code == 200, activated_group.text
+        assert activated_group.json()["is_active"] is True
+        assert activated_group.json()["translations"]["en"]["name"] == f"Edited Group {tag}"
+
+        created_category = admin.post(
+            f"{API}/admin/categories",
+            json={
+                "slug": f"{department_slug}-category",
+                "department": department_slug,
+                "kind": "category",
+                "parent_id": group_id,
+                "translations": {"en": {"name": f"CRUD Category {tag}"}},
+            },
+        )
+        assert created_category.status_code == 201, created_category.text
+        category = created_category.json()
+        category_id = category["id"]
+        assert category["kind"] == "category"
+        assert category["parent_id"] == group_id
+        assert category["is_leaf"] is True
+
+        activated_category = admin.patch(
+            f"{API}/admin/categories/{category_id}",
+            json={"is_active": True, "sort_order": 3},
+        )
+        assert activated_category.status_code == 200, activated_category.text
+        assert activated_category.json()["is_active"] is True
+
+        # Active descendants prevent deactivating a parent, and children prevent
+        # deleting a group. These are the safeguards the Catalog UI relies on.
+        blocked_deactivate = admin.patch(
+            f"{API}/admin/categories/{group_id}",
+            json={"is_active": False},
+        )
+        assert blocked_deactivate.status_code == 400
+        assert blocked_deactivate.json()["detail"]["error"] == "active_children_present"
+
+        assert admin.patch(
+            f"{API}/admin/categories/{category_id}",
+            json={"is_active": False},
+        ).status_code == 200
+        assert admin.patch(
+            f"{API}/admin/categories/{group_id}",
+            json={"is_active": False},
+        ).status_code == 200
+
+        blocked_delete = admin.delete(f"{API}/admin/categories/{group_id}")
+        assert blocked_delete.status_code == 409
+        assert blocked_delete.json()["detail"]["error"] == "category_in_use"
+        assert blocked_delete.json()["detail"]["children"] == 1
+
+        assert admin.delete(f"{API}/admin/categories/{category_id}").status_code in (200, 204)
+        assert admin.delete(f"{API}/admin/categories/{group_id}").status_code in (200, 204)
+        assert admin.delete(f"{API}/admin/categories/{department_id}").status_code in (200, 204)
+    finally:
+        # Cleanup is deliberately idempotent so a failed assertion cannot leave
+        # taxonomy nodes in the local verification database.
+        for node_id in (category_id, group_id, department_id):
+            if node_id:
+                admin.delete(f"{API}/admin/categories/{node_id}")
+
+
 # ------------------------------ orders / customers --------------------------
 
 

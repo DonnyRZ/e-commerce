@@ -247,9 +247,24 @@ export default function AdminProductEditPage() {
   };
 
   const rawCats = categoriesQuery.data;
-  const catItems = (Array.isArray(rawCats) ? rawCats : rawCats?.items || []).filter(
+  const categoryNodes = Array.isArray(rawCats) ? rawCats : rawCats?.items || [];
+  const catItems = categoryNodes.filter(
     (c) => c.kind === "category" && c.is_leaf !== false && (c.is_active || c.id === form.category_id)
   );
+  const categoryById = new Map(categoryNodes.map((node) => [node.id, node]));
+  const categoryBreadcrumb = (category) => {
+    const chain = [];
+    const seen = new Set();
+    let current = category;
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id);
+      chain.unshift(current);
+      current = categoryById.get(current.parent_id);
+    }
+    return chain
+      .map((node) => pickLocalized(node.translations, "en", "name") || node.slug)
+      .join(" / ");
+  };
 
   const save = async (e) => {
     e.preventDefault();
@@ -387,7 +402,7 @@ export default function AdminProductEditPage() {
                 <option value="" disabled>—</option>
                 {catItems.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {(c.translations ? pickLocalized(c.translations, "en", "name") : null) || c.slug}
+                    {categoryBreadcrumb(c)}
                   </option>
                 ))}
               </select>

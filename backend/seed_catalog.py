@@ -804,16 +804,15 @@ async def upsert_category(
         if existing.image_url and not existing.media_id and str(existing.image_url).startswith(("http://", "https://")):
             existing.image_url = None
         cat = existing
-        current_translations = {
-            t.locale
-            for t in (
+        current_translations = set(
+            (
                 await session.execute(
                     select(CategoryTranslation.locale).where(
                         CategoryTranslation.category_id == cat.id
                     )
                 )
             ).scalars().all()
-        }
+        )
         for locale, name in names.items():
             if locale not in current_translations:
                 session.add(CategoryTranslation(category_id=cat.id, locale=locale, name=name))
