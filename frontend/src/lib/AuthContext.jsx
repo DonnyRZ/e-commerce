@@ -228,7 +228,21 @@ export function AuthProvider({ children, mergeCustomerCartOnRestore = true }) {
         predicate: (query) => PRIVATE_QUERY_ROOTS.has(query.queryKey[0]),
       });
       try {
-        await authLogout();
+        try {
+          await authLogout();
+        } catch (error) {
+          // A stale CSRF cookie can survive an older frontend release. Refresh
+          // rotates the CSRF cookie, then logout can clear the auth cookies.
+          if (
+            error?.response?.status === 403 &&
+            error?.response?.data?.detail === "csrf_failed"
+          ) {
+            await authRefresh();
+            await authLogout();
+          } else {
+            throw error;
+          }
+        }
       } finally {
         queryClient.setQueryData(["auth", "me"], null);
         removeAllPrivateQueries(queryClient);

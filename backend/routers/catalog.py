@@ -292,7 +292,7 @@ def _sort_category_nodes(nodes: list[dict]) -> list[dict]:
 
 @router.get("/tree")
 async def catalog_tree(session: AsyncSession = Depends(get_session)):
-    """Return the active department -> group -> category navigation tree."""
+    """Return the active department -> category navigation tree."""
 
     rows = (
         await session.execute(
@@ -300,7 +300,7 @@ async def catalog_tree(session: AsyncSession = Depends(get_session)):
             .options(selectinload(Category.translations))
             .where(
                 Category.is_active.is_(True),
-                Category.kind.in_(("department", "group", "category")),
+                Category.kind.in_(("department", "category")),
                 Category.id.in_(active_taxonomy_ids_select()),
             )
         )
@@ -377,11 +377,9 @@ async def category_detail(slug: str, session: AsyncSession = Depends(get_session
         cat if cat.kind == "department" else None
     )
     out["department"] = _category_out(department_node) if department_node else None
-    valid_child_kinds = {
-        "department": ("group", "category"),
-        "group": ("category",),
-        "category": (),
-    }[cat.kind]
+    valid_child_kinds = {"department": ("category",), "category": ()}.get(cat.kind)
+    if valid_child_kinds is None:
+        raise HTTPException(status_code=404, detail="Category not found")
     children = []
     if valid_child_kinds:
         children = (

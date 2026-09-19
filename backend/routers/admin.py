@@ -986,7 +986,7 @@ class CategoryTranslationIn(BaseModel):
 class CategoryCreateIn(BaseModel):
     slug: str = Field(min_length=2, max_length=120)
     department: str = Field(min_length=1, max_length=50)
-    kind: Literal["department", "group", "category"] = "category"
+    kind: Literal["department", "category"] = "category"
     parent_id: Optional[str] = Field(default=None, min_length=8, max_length=40)
     sort_order: int = Field(default=0, ge=0)
     media_id: Optional[str] = Field(default=None, max_length=40)
@@ -1103,10 +1103,8 @@ async def _category_parent(
         _bad_request("invalid_category_parent")
     if current_id and parent.id == current_id:
         _bad_request("category_parent_cycle")
-    if kind == "group" and parent.kind != "department":
-        _bad_request("group_parent_must_be_department")
-    if kind == "category" and parent.kind not in ("department", "group"):
-        _bad_request("category_parent_must_be_department_or_group")
+    if kind == "category" and parent.kind != "department":
+        _bad_request("category_parent_must_be_department")
     parent_root = await get_root_category(session, parent, lock=True)
     if not parent_root or parent_root.id != root.id:
         _bad_request("invalid_category_parent")
@@ -1159,7 +1157,6 @@ async def admin_list_categories(
             select(Category).order_by(
                 case(
                     (Category.kind == "category", 0),
-                    (Category.kind == "group", 1),
                     else_=2,
                 ),
                 Category.department,

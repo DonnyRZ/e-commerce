@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { deleteAdminProduct, getAdminProducts } from "@/lib/api";
+import { deleteAdminProduct, getAdminProducts, updateAdminProduct } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill, adminDeleteError, fmtMoney, inputClass } from "./adminUtils";
 
@@ -11,6 +11,7 @@ export default function AdminProductsPage() {
   const [params, setParams] = useSearchParams();
   const [q, setQ] = useState(params.get("q") || "");
   const [deletingId, setDeletingId] = useState(null);
+  const [updatingStatusId, setUpdatingStatusId] = useState(null);
   const queryClient = useQueryClient();
   const page = parseInt(params.get("page") || "1", 10);
   const status = params.get("status") || "";
@@ -36,7 +37,7 @@ export default function AdminProductsPage() {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   const removeProduct = async (product) => {
-    if (deletingId || !window.confirm(`Delete product "${product.name}" permanently?`)) return;
+    if (deletingId || updatingStatusId || !window.confirm(`Delete product "${product.name}" permanently?`)) return;
     setDeletingId(product.id);
     try {
       await deleteAdminProduct(product.id);
@@ -46,6 +47,32 @@ export default function AdminProductsPage() {
       toast.error(adminDeleteError(err, "Produk"));
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const toggleProductStatus = async (product) => {
+    if (deletingId || updatingStatusId || !["active", "inactive"].includes(product.status)) return;
+    const nextStatus = product.status === "active" ? "inactive" : "active";
+    const action = nextStatus === "inactive" ? "deactivate" : "activate";
+    if (!window.confirm(`${action === "deactivate" ? "Deactivate" : "Activate"} product "${product.name}"?`)) return;
+
+    setUpdatingStatusId(product.id);
+    try {
+      await updateAdminProduct(product.id, { status: nextStatus });
+      toast.success(nextStatus === "inactive" ? "Product deactivated" : "Product activated");
+      queryClient.invalidateQueries({ queryKey: ["admin-products"] });
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      const code = typeof detail === "string" ? detail : detail?.error;
+      toast.error(
+        code === "invalid_category"
+          ? "Product must use an active leaf category before it can be activated."
+          : code === "product_type_category_mismatch"
+            ? "Product type and category must match before activation."
+            : "Product status could not be updated. Open the product to review its fields."
+      );
+    } finally {
+      setUpdatingStatusId(null);
     }
   };
 
@@ -129,16 +156,29 @@ export default function AdminProductsPage() {
                     </td>
                     <td className="px-5 py-3 text-right font-medium">{fmtMoney(p.base_price)}</td>
                     <td className="px-5 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => removeProduct(p)}
-                        disabled={deletingId === p.id}
-                        className="inline-flex items-center gap-1 text-xs font-medium text-red-700 hover:underline disabled:opacity-50"
-                        data-testid={`product-delete-${p.slug}`}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                        {deletingId === p.id ? "Deleting…" : "Delete"}
-                      </button>
+                      <div className="flex flex-wrap justify-end gap-x-3 gap-y-1">
+                        {["active", "inactive"].includes(p.status) ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleProductStatus(p)}
+                            disabled={deletingId === p.id || updatingStatusId === p.id}
+                            className={`text-xs font-medium hover:underline disabled:opacity-50 ${p.status === "active" ? "text-amber-700" : "text-[#145A46]"}`}
+                            data-testid={`product-toggle-status-${p.slug}`}
+                          >
+                            {updatingStatusId === p.id ? "Saving…" : p.status === "active" ? "Deactivate" : "Activate"}
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => removeProduct(p)}
+                          disabled={deletingId === p.id || updatingStatusId === p.id}
+                          className="inline-flex items-center gap-1 text-xs font-medium text-red-700 hover:underline disabled:opacity-50"
+                          data-testid={`product-delete-${p.slug}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                          {deletingId === p.id ? "Deleting…" : "Delete"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

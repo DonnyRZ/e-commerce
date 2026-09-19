@@ -117,10 +117,8 @@ export default function ShopPage() {
         ? t(BADGE_TITLES[badge])
         : t("page.title.shop");
 
-  // Keep every department on the same storefront pattern. Nested departments
-  // still retain their group hierarchy in navigation and group pages, but the
-  // department landing page presents one flat, leaf-category strip just like
-  // the legacy departments.
+  // Every department exposes one flat category strip. Products are assigned
+  // directly to these categories.
   const stripNodes = activeNode?.kind === "department"
     ? leafTaxonomy([activeNode])
     : activeNode?.children?.length

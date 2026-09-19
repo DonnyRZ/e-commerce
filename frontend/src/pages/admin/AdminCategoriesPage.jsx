@@ -41,11 +41,13 @@ const makeEmptyForm = () => ({
   sort_order: 0,
   media_id: null,
   image_url: "",
-  is_active: false,
+  // A category created from the CMS should be immediately usable when its
+  // parent is already active. The backend still validates the parent chain.
+  is_active: true,
   names: { en: "", id: "", uz: "", ru: "" },
 });
 
-const kindLabel = (kind) => ({ department: "Department", group: "Group", category: "Category" }[kind] || kind);
+const kindLabel = (kind) => ({ department: "Department", category: "Category" }[kind] || kind);
 const nodeName = (node) => pickLocalized(node?.translations, "en", "name") || node?.slug || "Unnamed";
 const sortNodes = (nodes) => [...nodes].sort((a, b) => (a.sort_order - b.sort_order) || nodeName(a).localeCompare(nodeName(b)));
 const slugify = (value) => String(value || "")
@@ -172,13 +174,8 @@ export default function AdminCategoriesPage() {
   const raw = data;
   const items = useMemo(() => (Array.isArray(raw) ? raw : raw?.items || []), [raw]);
   const departments = useMemo(() => sortNodes(items.filter((c) => c.kind === "department")), [items]);
-  const nodeById = useMemo(() => new Map(items.map((node) => [node.id, node])), [items]);
   const requestedDepartment = searchParams.get("department");
   const activeDepartment = departments.find((department) => department.slug === requestedDepartment) || departments[0] || null;
-  const activeGroups = useMemo(
-    () => activeDepartment ? sortNodes(items.filter((item) => item.parent_id === activeDepartment.id && item.kind === "group")) : [],
-    [activeDepartment, items],
-  );
   const directCategories = useMemo(
     () => activeDepartment ? sortNodes(items.filter((item) => item.parent_id === activeDepartment.id && item.kind === "category")) : [],
     [activeDepartment, items],
@@ -197,13 +194,10 @@ export default function AdminCategoriesPage() {
     queryClient.invalidateQueries({ queryKey: ["categories"] });
   };
 
-  const parentName = (parentId) => nodeName(nodeById.get(parentId));
   const departmentNode = form.department ? departments.find((d) => d.slug === form.department) : null;
   const placementLabel = form.kind === "department"
     ? "Top-level department"
-    : form.parent_id === departmentNode?.id
-      ? nodeName(departmentNode)
-      : `${nodeName(departmentNode)} / ${parentName(form.parent_id)}`;
+    : nodeName(departmentNode);
 
   const setName = (locale, value) => {
     setForm((current) => ({ ...current, names: { ...current.names, [locale]: value } }));
@@ -212,12 +206,16 @@ export default function AdminCategoriesPage() {
   const openNew = (kind = "department", parent = null) => {
     const department = kind === "department" ? null : activeDepartment;
     const parentId = kind === "department" ? "" : (parent?.id || department?.id || "");
+    const placementParent = parent || department;
     setForm({
       ...makeEmptyForm(),
       kind,
       department: department?.slug || "",
       parent_id: parentId,
-      is_active: false,
+      // New departments have no parent. For categories, only default
+      // to active when the selected parent is active; otherwise the server
+      // would correctly reject the create with parent_inactive.
+      is_active: kind === "department" || Boolean(placementParent?.is_active),
     });
     setAdvancedOpen(false);
     setPickerOpen(false);
@@ -322,41 +320,6 @@ export default function AdminCategoriesPage() {
     }
   };
 
-  const renderGroup = (group) => {
-    const children = sortNodes(items.filter((item) => item.parent_id === group.id && item.kind === "category"));
-    return (
-      <article key={group.id} className={`overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm ${group.is_active ? "" : "opacity-80"}`} data-testid={`catalog-group-${group.slug}`}>
-        <div className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#145A46]/[0.07] text-[#145A46]">
-              <Folder className="h-5 w-5" aria-hidden="true" />
-            </span>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="truncate text-base font-semibold text-neutral-900">{nodeName(group)}</h2>
-                <span className="rounded-full bg-[#145A46]/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#145A46]">Group</span>
-                {!group.is_active ? <StatusPill value="inactive" /> : null}
-              </div>
-              <p className="mt-1 text-xs text-neutral-400">{children.length} categories · {group.product_count || 0} products</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={() => openNew("category", group)} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#145A46] px-3 text-xs font-semibold text-white hover:bg-[#0f4938]" data-testid={`catalog-add-category-${group.slug}`}>
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              Add category
-            </button>
-            <NodeActions node={group} onEdit={() => openEdit(group)} onToggle={() => toggleActive(group)} onDelete={() => remove(group)} />
-          </div>
-        </div>
-        <div>
-          {children.length ? children.map((child) => <CategoryRow key={child.id} node={child} onEdit={() => openEdit(child)} onToggle={() => toggleActive(child)} onDelete={() => remove(child)} />) : (
-            <div className="border-t border-neutral-100 px-5 py-6 text-sm text-neutral-400">No categories yet. Add the first category to this group.</div>
-          )}
-        </div>
-      </article>
-    );
-  };
-
   const renderDirectCategories = () => (
     <article className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm" data-testid="catalog-direct-categories">
       <div className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5">
@@ -369,7 +332,11 @@ export default function AdminCategoriesPage() {
           Add category
         </button>
       </div>
-      <div>{directCategories.map((category) => <CategoryRow key={category.id} node={category} onEdit={() => openEdit(category)} onToggle={() => toggleActive(category)} onDelete={() => remove(category)} />)}</div>
+      <div>
+        {directCategories.length ? directCategories.map((category) => <CategoryRow key={category.id} node={category} onEdit={() => openEdit(category)} onToggle={() => toggleActive(category)} onDelete={() => remove(category)} />) : (
+          <div className="border-t border-neutral-100 px-5 py-6 text-sm text-neutral-400">Belum ada category. Tambahkan category pertama untuk department ini.</div>
+        )}
+      </div>
     </article>
   );
 
@@ -378,11 +345,11 @@ export default function AdminCategoriesPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-[#17392C]">Catalog</h1>
-          <p className="mt-1 text-sm text-neutral-500">Atur katalog dengan urutan Department → Group → Category</p>
+          <p className="mt-1 text-sm text-neutral-500">Atur katalog dengan urutan Department → Category</p>
         </div>
         <div className="flex items-start gap-2 rounded-lg border border-[#CD9B3A]/20 bg-[#FDF7E9] px-3 py-2.5 text-xs text-[#5e4a26] sm:max-w-md">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#CD9B3A]" aria-hidden="true" />
-          <span>Product masuk ke category, bukan department atau group.</span>
+          <span>Product masuk langsung ke category.</span>
         </div>
       </div>
 
@@ -430,30 +397,18 @@ export default function AdminCategoriesPage() {
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h2 className="text-2xl font-semibold tracking-tight text-[#17392C]">{nodeName(activeDepartment)}</h2>
-                    <p className="mt-1 text-xs text-neutral-400">Kelola group dan category untuk department ini.</p>
+                    <p className="mt-1 text-xs text-neutral-400">Kelola category untuk department ini.</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button type="button" onClick={() => openNew("group")} className="inline-flex h-9 items-center gap-1.5 rounded-md border border-[#145A46] px-3 text-xs font-semibold text-[#145A46] hover:bg-[#145A46]/5" data-testid="catalog-add-group">
+                    <button type="button" onClick={() => openNew("category", activeDepartment)} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#145A46] px-3 text-xs font-semibold text-white hover:bg-[#0f4938]" data-testid="catalog-add-category">
                       <Plus className="h-4 w-4" aria-hidden="true" />
-                      Add group
+                      Add category
                     </button>
                     <NodeActions node={activeDepartment} onEdit={() => openEdit(activeDepartment)} onToggle={() => toggleActive(activeDepartment)} onDelete={() => remove(activeDepartment)} />
                   </div>
                 </div>
                 <div className="space-y-4">
-                  {activeGroups.map(renderGroup)}
-                  {directCategories.length ? renderDirectCategories() : null}
-                  {!activeGroups.length && !directCategories.length ? (
-                    <div className="rounded-xl border border-dashed border-neutral-300 bg-white px-6 py-12 text-center" data-testid="catalog-empty-state">
-                      <Folder className="mx-auto h-8 w-8 text-neutral-300" aria-hidden="true" />
-                      <h3 className="mt-3 text-sm font-semibold text-neutral-800">Belum ada group atau category</h3>
-                      <p className="mx-auto mt-1 max-w-sm text-sm text-neutral-400">Mulai dengan membuat group atau category untuk department ini.</p>
-                      <div className="mt-4 flex justify-center gap-2">
-                        <button type="button" onClick={() => openNew("group")} className="h-9 rounded-md bg-[#145A46] px-3 text-xs font-semibold text-white">Add group</button>
-                        <button type="button" onClick={() => openNew("category", activeDepartment)} className="h-9 rounded-md border border-neutral-300 px-3 text-xs font-semibold text-neutral-700">Add category</button>
-                      </div>
-                    </div>
-                  ) : null}
+                  {renderDirectCategories()}
                 </div>
               </>
             ) : (

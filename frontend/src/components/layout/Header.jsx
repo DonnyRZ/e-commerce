@@ -64,17 +64,9 @@ export default function Header() {
                       data-testid={`nav-menu-${dept.slug}`}
                     >
                       <div className="grid gap-5 sm:grid-cols-2">
-                        {taxonomySections(dept).map(({ group, items }) => (
-                          <div key={group?.id || `${dept.id}-direct`}>
-                            {group ? (
-                              <Link
-                                to={`/shop?category=${group.slug}`}
-                                className="text-xs font-semibold uppercase tracking-[0.16em] text-primary hover:underline"
-                              >
-                                {taxonomyLabel(group, locale, pickLocalized)}
-                              </Link>
-                            ) : null}
-                            <div className="mt-2 flex flex-col gap-1">
+                        {taxonomySections(dept).map(({ items }) => (
+                          <div key={`${dept.id}-categories`}>
+                            <div className="flex flex-col gap-1">
                               {items.map((category) => (
                                 <Link
                                   key={category.id}

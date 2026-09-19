@@ -34,6 +34,7 @@ DEPARTMENTS = [
     # data is entered, so customers can discover the new departments now.
     ("batik", 4, {"en": "Batik", "id": "Batik", "uz": "Batik", "ru": "Батик"}, None, True),
     ("parfum", 5, {"en": "Perfume", "id": "Parfum", "uz": "Atirlar", "ru": "Парфюмерия"}, None, True),
+    ("shoe", 6, {"en": "Shoe", "id": "Sepatu", "uz": "Poyabzal", "ru": "Обувь"}, None, True),
 ]
 
 BATIK_WOMEN_CATEGORIES = [
@@ -52,9 +53,13 @@ PARFUM_WOMEN_CATEGORIES = [
     ("parfum-semprot-bebas-alkohol", 4, {"en": "Alcohol-Free Spray Perfume", "id": "Parfum Semprot Bebas Alkohol (Alcohol-Free Spray)", "uz": "Spirtsiz purkaladigan atir", "ru": "Спрей-парфюм без спирта"}),
 ]
 
-NEW_TAXONOMY_GROUPS = [
-    ("batik", "batik-wanita-muslimah", 1, {"en": "Batik Women Muslimah", "id": "Batik Wanita Muslimah", "uz": "Muslima ayollar batigi", "ru": "Батик для мусульманок"}, BATIK_WOMEN_CATEGORIES),
-    ("parfum", "parfum-wanita-muslimah", 1, {"en": "Women Muslimah Perfume", "id": "Parfum Wanita Muslimah", "uz": "Muslima ayollar atirlari", "ru": "Парфюмерия для мусульманок"}, PARFUM_WOMEN_CATEGORIES),
+SHOE_CATEGORIES = [
+    ("skechers", 1, {"en": "Skechers", "id": "Skechers", "uz": "Skechers", "ru": "Skechers"}, None),
+]
+
+NEW_TAXONOMY_CATEGORIES = [
+    ("batik", BATIK_WOMEN_CATEGORIES),
+    ("parfum", PARFUM_WOMEN_CATEGORIES),
 ]
 
 # Legacy nodes removed after the store scope was clarified. The deployment
@@ -964,13 +969,15 @@ async def seed():
             )
 
         cat_ids = {}
-        groups = [
+        category_sets = [
             ("women-muslimah", MUSLIMAH_CATEGORIES),
             ("uniqlo-products", UNIQLO_CATEGORIES),
             ("tropical-halal-skincare", SKINCARE_CATEGORIES),
+            ("shoe", SHOE_CATEGORIES),
         ]
-        for dept_slug, cats in groups:
-            for slug, order, names, image_url in cats:
+        for dept_slug, cats in category_sets:
+            for entry in cats:
+                slug, order, names, *image = entry
                 cat_ids[slug] = await upsert_category(
                     session,
                     slug=slug,
@@ -979,21 +986,11 @@ async def seed():
                     names=names,
                     sort_order=order,
                     parent_id=dept_ids[dept_slug],
-                    image_url=image_url,
+                    image_url=image[0] if image else None,
                 )
 
-        for root_slug, group_slug, group_order, group_names, leaf_specs in NEW_TAXONOMY_GROUPS:
-            group_id = await upsert_category(
-                session,
-                slug=group_slug,
-                kind="group",
-                department=root_slug,
-                names=group_names,
-                sort_order=group_order,
-                parent_id=dept_ids[root_slug],
-                is_active=True,
-            )
-            for leaf_slug, leaf_order, leaf_names in leaf_specs:
+        for root_slug, category_specs in NEW_TAXONOMY_CATEGORIES:
+            for leaf_slug, leaf_order, leaf_names in category_specs:
                 cat_ids[leaf_slug] = await upsert_category(
                     session,
                     slug=leaf_slug,
@@ -1001,7 +998,7 @@ async def seed():
                     department=root_slug,
                     names=leaf_names,
                     sort_order=leaf_order,
-                    parent_id=group_id,
+                    parent_id=dept_ids[root_slug],
                     is_active=True,
                 )
 
@@ -1016,9 +1013,6 @@ async def seed():
             ),
             "categories": await session.scalar(
                 select(func.count()).select_from(Category).where(Category.kind == "category")
-            ),
-            "groups": await session.scalar(
-                select(func.count()).select_from(Category).where(Category.kind == "group")
             ),
             "store_owners": await session.scalar(
                 select(func.count()).select_from(User).where(User.id == owner.id)

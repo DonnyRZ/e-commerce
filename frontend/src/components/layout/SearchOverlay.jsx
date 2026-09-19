@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Search, X } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { getCatalogTree } from "@/lib/api";
 import { pickLocalized, toCardCategory } from "@/lib/localize";
-import { taxonomyLabel, taxonomySections } from "@/lib/taxonomy";
+import { taxonomySections } from "@/lib/taxonomy";
 import CategoryCard from "@/components/common/CategoryCard";
 import BrandLogo from "@/components/brand/BrandLogo";
 
@@ -153,17 +153,8 @@ export default function SearchOverlay({ open, initialDept, onClose }) {
             {t("search.browseCategories")}
           </p>
           <div className="mt-4 space-y-8">
-            {sections.map(({ group, items }) => (
-              <section key={group?.id || items[0]?.id}>
-                {group ? (
-                  <Link
-                    to={`/shop?category=${group.slug}`}
-                    onClick={onClose}
-                    className="text-xs font-semibold uppercase tracking-[0.16em] text-primary hover:underline"
-                  >
-                    {taxonomyLabel(group, locale, pickLocalized)}
-                  </Link>
-                ) : null}
+            {sections.map(({ items }) => (
+              <section key={items[0]?.id}>
                 <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-6 sm:grid-cols-3 lg:grid-cols-6">
                   {items.map((category) => {
                     const card = toCardCategory(category, locale);

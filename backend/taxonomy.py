@@ -1,8 +1,7 @@
 """Shared taxonomy helpers for the single-store catalog.
 
-The original catalog used a flat department -> category relationship.  The
-same self-referencing table can safely represent deeper navigation trees as
-long as product assignments remain limited to leaf ``category`` nodes.
+The catalog intentionally uses one simple relationship:
+``department -> category``. Products are assigned directly to categories.
 """
 
 from typing import Optional
@@ -12,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import Category
 
-TAXONOMY_KINDS = {"department", "group", "category"}
+TAXONOMY_KINDS = {"department", "category"}
 PRODUCT_CATEGORY_KIND = "category"
 
 
@@ -44,15 +43,9 @@ def descendant_ids_select(category_id: str, *, active_only: bool = False):
         )
         .join(tree, Category.parent_id == tree.c.id)
         .where(
-            Category.kind.in_(("group", "category")),
+            Category.kind == "category",
             Category.department == tree.c.department,
-            (
-                ((Category.kind == "group") & (tree.c.kind == "department"))
-                | (
-                    (Category.kind == "category")
-                    & tree.c.kind.in_(("department", "group"))
-                )
-            ),
+            tree.c.kind == "department",
         )
     )
     if active_only:
@@ -88,15 +81,9 @@ def active_taxonomy_ids_select():
         .join(tree, Category.parent_id == tree.c.id)
         .where(
             Category.is_active.is_(True),
-            Category.kind.in_(("group", "category")),
+            Category.kind == "category",
             Category.department == tree.c.department,
-            (
-                ((Category.kind == "group") & (tree.c.kind == "department"))
-                | (
-                    (Category.kind == "category")
-                    & tree.c.kind.in_(("department", "group"))
-                )
-            ),
+            tree.c.kind == "department",
         )
     )
     return select(tree.c.id)
@@ -131,12 +118,7 @@ async def active_taxonomy_chain(
             return False
         if current.department != parent.department:
             return False
-        if current.kind == "group" and parent.kind != "department":
-            return False
-        if current.kind == "category" and parent.kind not in (
-            "department",
-            "group",
-        ):
+        if current.kind == "category" and parent.kind != "department":
             return False
         if current.kind == "department":
             return False

@@ -8,13 +8,11 @@ const tree = [
     children: [
       {
         id: "batik-women",
-        kind: "group",
-        slug: "batik-wanita-muslimah",
-        children: [
-          { id: "gamis", kind: "category", slug: "gamis-batik", children: [] },
-          { id: "tunik", kind: "category", slug: "tunik-batik", children: [] },
-        ],
+        kind: "category",
+        slug: "gamis-batik",
+        children: [],
       },
+      { id: "tunik", kind: "category", slug: "tunik-batik", children: [] },
       { id: "hijab", kind: "category", slug: "hijab-pashmina-batik", children: [] },
     ],
   },
@@ -24,7 +22,6 @@ describe("taxonomy helpers", () => {
   test("flattens nodes and keeps only selectable leaf categories", () => {
     expect(flattenTaxonomy(tree).map((node) => node.slug)).toEqual([
       "batik",
-      "batik-wanita-muslimah",
       "gamis-batik",
       "tunik-batik",
       "hijab-pashmina-batik",
@@ -36,14 +33,10 @@ describe("taxonomy helpers", () => {
     ]);
   });
 
-  test("finds nested nodes and groups direct children separately", () => {
+  test("finds direct product categories", () => {
     expect(findTaxonomyNode(tree, "tunik-batik").id).toBe("tunik");
     expect(taxonomySections(tree[0])).toEqual([
-      { group: null, items: [tree[0].children[1]] },
-      {
-        group: tree[0].children[0],
-        items: tree[0].children[0].children,
-      },
+      { items: tree[0].children },
     ]);
   });
 });

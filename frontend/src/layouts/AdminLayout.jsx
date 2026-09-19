@@ -6,6 +6,7 @@ import {
   FolderTree,
   Image,
   LayoutDashboard,
+  LogOut,
   Menu,
   Package,
   Settings,
@@ -14,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
+import { useI18n } from "@/i18n";
 import BrandLogo from "@/components/brand/BrandLogo";
 
 function NavItem({ to, icon: Icon, label, end, onClick, testId }) {
@@ -46,8 +48,19 @@ function NavGroup({ label }) {
 }
 
 export default function AdminLayout() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
+  const { t } = useI18n();
   const [drawer, setDrawer] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    try {
+      await logout();
+    } finally {
+      setLoggingOut(false);
+    }
+  };
 
   const nav = (onClick) => (
     <nav className="flex flex-col py-4">
@@ -89,6 +102,16 @@ export default function AdminLayout() {
           <span className="hidden text-xs text-neutral-400 sm:block" data-testid="admin-user-email">
             {user.email}
           </span>
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={loggingOut}
+            data-testid="admin-logout"
+            className="inline-flex h-8 items-center gap-1.5 border border-neutral-200 px-2.5 text-xs font-medium text-neutral-600 transition-colors hover:border-neutral-900 hover:text-neutral-900 disabled:cursor-wait disabled:opacity-50"
+          >
+            <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+            {loggingOut ? t("common.loading") : t("auth.logout")}
+          </button>
         </div>
       </header>
 

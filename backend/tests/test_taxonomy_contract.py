@@ -2,25 +2,25 @@
 
 from sqlalchemy.dialects import postgresql
 
-from seed_catalog import DEPARTMENTS, NEW_TAXONOMY_GROUPS, REMOVED_CATALOG_SLUGS
+from seed_catalog import DEPARTMENTS, NEW_TAXONOMY_CATEGORIES, REMOVED_CATALOG_SLUGS
 from taxonomy import TAXONOMY_KINDS, descendant_ids_select
 
 
 def test_taxonomy_kinds_are_explicit_and_product_safe():
-    assert TAXONOMY_KINDS == {"department", "group", "category"}
+    assert TAXONOMY_KINDS == {"department", "category"}
 
 
 def test_approved_batik_and_parfum_taxonomy_is_storefront_visible():
     departments = {slug: is_active for slug, _order, _names, _image, is_active in DEPARTMENTS}
     assert departments["batik"] is True
     assert departments["parfum"] is True
-    assert {slug for _department, slug, *_ in NEW_TAXONOMY_GROUPS} == {
-        "batik-wanita-muslimah",
-        "parfum-wanita-muslimah",
+    assert {department for department, _categories in NEW_TAXONOMY_CATEGORIES} == {
+        "batik",
+        "parfum",
     }
     assert all(
-        group_names and leaf_specs
-        for _department, _slug, _order, group_names, leaf_specs in NEW_TAXONOMY_GROUPS
+        categories
+        for _department, categories in NEW_TAXONOMY_CATEGORIES
     )
 
 
