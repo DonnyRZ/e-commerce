@@ -400,10 +400,6 @@ export default function AdminCategoriesPage() {
                     <p className="mt-1 text-xs text-neutral-400">Kelola category untuk department ini.</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button type="button" onClick={() => openNew("category", activeDepartment)} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#145A46] px-3 text-xs font-semibold text-white hover:bg-[#0f4938]" data-testid="catalog-add-category">
-                      <Plus className="h-4 w-4" aria-hidden="true" />
-                      Add category
-                    </button>
                     <NodeActions node={activeDepartment} onEdit={() => openEdit(activeDepartment)} onToggle={() => toggleActive(activeDepartment)} onDelete={() => remove(activeDepartment)} />
                   </div>
                 </div>
