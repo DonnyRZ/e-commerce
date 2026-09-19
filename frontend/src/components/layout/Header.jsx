@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { getCatalogTree } from "@/lib/api";
 import { useShop } from "@/lib/ShopContext";
+import { useAuth } from "@/lib/AuthContext";
 import { pickLocalized } from "@/lib/localize";
 import { taxonomyLabel, taxonomySections } from "@/lib/taxonomy";
 import LanguageSelector from "./LanguageSelector";
@@ -22,6 +23,7 @@ const UTILITY_LINKS = [
 export default function Header() {
   const { locale, t } = useI18n();
   const { cartCount, wishlistCount } = useShop();
+  const { user } = useAuth();
   const [overlay, setOverlay] = useState({ open: false, dept: null });
   const { data: catalogTree = [] } = useQuery({
     queryKey: ["catalog-tree"],
@@ -29,6 +31,11 @@ export default function Header() {
     staleTime: 5 * 60 * 1000,
   });
   const counts = { "cart-entry": cartCount, "wishlist-entry": wishlistCount };
+  const utilityLinks = UTILITY_LINKS.map((item) =>
+    item.testId === "account-entry"
+      ? { ...item, to: user?.role === "customer" ? "/account" : "/login" }
+      : item
+  );
 
   return (
     <>
@@ -97,7 +104,7 @@ export default function Header() {
               >
                 <Search className="h-5 w-5" aria-hidden="true" />
               </button>
-              {UTILITY_LINKS.map(({ key, to, icon: Icon, testId }) => (
+              {utilityLinks.map(({ key, to, icon: Icon, testId }) => (
                 <Link
                   key={testId}
                   to={to}

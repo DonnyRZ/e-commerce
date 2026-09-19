@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import BrandLogo from "@/components/brand/BrandLogo";
+import { useAuth } from "@/lib/AuthContext";
 
 const QUICK_LINKS = [
   { key: "nav.newArrivals", to: "/shop?badge=new" },
@@ -30,11 +31,17 @@ const ACCOUNT_LINKS = [
 
 export default function MobileNavigation() {
   const { locale, setLocale, t } = useI18n();
+  const { user } = useAuth();
   const { data: catalogTree = [] } = useQuery({
     queryKey: ["catalog-tree"],
     queryFn: getCatalogTree,
     staleTime: 5 * 60 * 1000,
   });
+  const accountLinks = ACCOUNT_LINKS.map((item) =>
+    item.key === "header.account"
+      ? { ...item, to: user?.role === "customer" ? "/account" : "/login" }
+      : item
+  );
 
   return (
     <Sheet>
@@ -129,7 +136,7 @@ export default function MobileNavigation() {
           ))}
         </nav>
         <nav className="flex flex-col px-4 py-2" aria-label="Account">
-          {ACCOUNT_LINKS.map((item) => (
+          {accountLinks.map((item) => (
             <SheetClose asChild key={item.key}>
               <Link
                 to={item.to}
