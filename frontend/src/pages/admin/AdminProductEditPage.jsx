@@ -66,6 +66,20 @@ const ATTRIBUTE_FIELDS = {
   ],
 };
 
+// Product family is an internal compatibility field. The operator chooses a
+// leaf category; the editor derives the family from that category instead of
+// exposing a second, confusing taxonomy selector.
+const PRODUCT_TYPE_BY_DEPARTMENT = {
+  batik: "batik",
+  parfum: "parfum",
+  skincare: "skincare",
+  "tropical-halal-skincare": "skincare",
+  hijab: "hijab",
+};
+
+const productTypeForCategory = (category, fallback = "apparel") =>
+  PRODUCT_TYPE_BY_DEPARTMENT[category?.department] || fallback;
+
 const normalizeMedia = (items) =>
   (Array.isArray(items) ? items : [])
     .map((item, index) => {
@@ -266,6 +280,16 @@ export default function AdminProductEditPage() {
       .join(" / ");
   };
 
+  const setCategory = (e) => {
+    const categoryId = e.target.value;
+    const category = categoryById.get(categoryId);
+    setForm((current) => ({
+      ...current,
+      category_id: categoryId,
+      product_type: productTypeForCategory(category, isNew ? "apparel" : current.product_type),
+    }));
+  };
+
   const save = async (e) => {
     e.preventDefault();
     if (saving) return;
@@ -398,7 +422,7 @@ export default function AdminProductEditPage() {
           <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-neutral-500">Category</label>
-              <select value={form.category_id} onChange={setF("category_id")} required className={inputClass} data-testid="editor-category">
+              <select value={form.category_id} onChange={setCategory} required className={inputClass} data-testid="editor-category">
                 <option value="" disabled>—</option>
                 {catItems.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -406,17 +430,7 @@ export default function AdminProductEditPage() {
                   </option>
                 ))}
               </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-500">Type</label>
-              <select value={form.product_type} onChange={setF("product_type")} className={inputClass} data-testid="editor-type">
-                <option value="general">general</option>
-                <option value="apparel">apparel</option>
-                <option value="hijab">hijab</option>
-                <option value="batik">batik</option>
-                <option value="parfum">parfum</option>
-                <option value="skincare">skincare</option>
-              </select>
+              <p className="mt-1 text-[11px] text-neutral-400">Product details follow the selected category automatically.</p>
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-neutral-500">Brand</label>
