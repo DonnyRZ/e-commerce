@@ -238,6 +238,10 @@ export const getAdminOrder = (orderNumber) =>
   api.get(`/v1/admin/orders/${orderNumber}`).then((r) => r.data);
 export const getAdminTelegramInquiries = (params) =>
   api.get("/v1/admin/telegram-inquiries", { params }).then((r) => r.data);
+export const getAdminTelegramInquiry = (reference) =>
+  api.get(`/v1/admin/telegram-inquiries/${reference}`).then((r) => r.data);
+export const getAdminOrderWorkflow = (params) =>
+  api.get("/v1/admin/order-workflow", { params }).then((r) => r.data);
 export const createAdminOrderFromInquiry = (reference, data, idempotencyKey) =>
   api.post(`/v1/admin/telegram-inquiries/${reference}/orders`, data, {
     headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,

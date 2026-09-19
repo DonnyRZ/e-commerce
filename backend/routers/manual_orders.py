@@ -17,7 +17,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import csrf_protect, require_roles
@@ -33,6 +33,7 @@ from config import (
 from db.models import (
     InventoryReservation,
     ManualPaymentEvidence,
+    CmsAuditLog,
     Order,
     OrderFulfillmentStage,
     OrderItem,
@@ -57,6 +58,26 @@ ORDER_STAGES = {
     "received_by_admin": {"from": "supplier_shipping", "to": "received_by_admin"},
     "customer_shipping": {"from": "received_by_admin", "to": "customer_shipping"},
     "delivered": {"from": "customer_shipping", "to": "delivered"},
+}
+WORKFLOW_STAGES = (
+    "inquiry",
+    "pending_payment",
+    "payment_review",
+    "paid",
+    "supplier_shipping",
+    "received_by_admin",
+    "customer_shipping",
+    "delivered",
+)
+ACTIONABLE_ORDER_STATUSES = {
+    "pending_payment",
+    "payment_review",
+    "paid",
+    "supplier_shipping",
+    "received_by_admin",
+    "customer_shipping",
+    "processing",
+    "shipped",
 }
 ALLOWED_EVIDENCE = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
 PUBLIC_ORDER_STAGES = {
@@ -107,6 +128,32 @@ def _evidence_content_matches(data: bytes, mime: str) -> bool:
 
 def _order_public_status(order: Order) -> str:
     return PUBLIC_ORDER_STAGES.get(order.status, order.status)
+
+
+def _workflow_next_action(stage: str) -> str:
+    return {
+        "inquiry": "review_inquiry",
+        "pending_payment": "wait_payment",
+        "payment_review": "verify_payment",
+        "paid": "supplier_ship",
+        "supplier_shipping": "receive_admin",
+        "received_by_admin": "ship_customer",
+        "customer_shipping": "mark_delivered",
+        "delivered": "view_order",
+    }.get(stage, "view_order")
+
+
+def _customer_name(user: Optional[User], address: dict) -> str:
+    recipient = str(address.get("recipient_name") or "").strip()
+    if recipient:
+        return recipient
+    if user:
+        name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+        if name:
+            return name
+        if user.email:
+            return user.email
+    return "Guest Telegram"
 
 
 def _parse_time(value: Any):
@@ -242,6 +289,168 @@ async def list_telegram_inquiries(
             }
             for row in rows
         ]
+    }
+
+
+@router.get("/admin/telegram-inquiries/{reference}")
+async def get_telegram_inquiry(
+    reference: str,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    inquiry = await session.scalar(
+        select(TelegramCartInquiry).where(TelegramCartInquiry.reference == reference)
+    )
+    if not inquiry:
+        raise _error(404, "inquiry_not_found")
+    order_number = None
+    if inquiry.order_id:
+        order_number = await session.scalar(
+            select(Order.order_number).where(Order.id == inquiry.order_id)
+        )
+    linked_user = await session.get(User, inquiry.user_id) if inquiry.user_id else None
+    snapshot = inquiry.snapshot or {}
+    items = snapshot.get("items") or []
+    return {
+        "reference": inquiry.reference,
+        "status": inquiry.status,
+        "created_at": inquiry.created_at,
+        "expires_at": inquiry.expires_at,
+        "order_id": inquiry.order_id,
+        "order_number": order_number,
+        "customer": {
+            "name": _customer_name(linked_user, {}),
+            "email": linked_user.email if linked_user else None,
+        },
+        "item_count": len(items),
+        "subtotal": snapshot.get("subtotal", 0),
+        "currency": snapshot.get("currency", "UZS"),
+        "snapshot": snapshot,
+    }
+
+
+@router.get("/admin/order-workflow")
+async def list_order_workflow(
+    scope: str = Query(default="actionable"),
+    stage: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None, max_length=120),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    if scope not in {"all", "actionable"}:
+        raise _error(422, "invalid_workflow_scope")
+    if stage and stage not in WORKFLOW_STAGES:
+        raise _error(422, "invalid_workflow_stage")
+
+    entries: list[dict] = []
+    inquiry_query = select(TelegramCartInquiry).where(
+        TelegramCartInquiry.order_id.is_(None),
+        TelegramCartInquiry.status.in_(["pending", "sending", "sent"]),
+    )
+    if q:
+        inquiry_query = inquiry_query.where(
+            TelegramCartInquiry.reference.ilike(f"%{q}%")
+        )
+    inquiries = (
+        (await session.execute(inquiry_query.order_by(TelegramCartInquiry.created_at.desc())))
+        .scalars()
+        .all()
+    )
+    for inquiry in inquiries:
+        if inquiry.expires_at <= utcnow():
+            continue
+        snapshot = inquiry.snapshot or {}
+        snapshot_items = snapshot.get("items") or []
+        if not snapshot_items:
+            continue
+        if stage and stage != "inquiry":
+            continue
+        linked_user = await session.get(User, inquiry.user_id) if inquiry.user_id else None
+        entries.append(
+            {
+                "kind": "inquiry",
+                "reference": inquiry.reference,
+                "stage": "inquiry",
+                "status": inquiry.status,
+                "created_at": inquiry.created_at,
+                "customer": {
+                    "name": _customer_name(linked_user, {}),
+                    "email": linked_user.email if linked_user else None,
+                    "city": None,
+                },
+                "item_count": len(snapshot_items),
+                "subtotal": snapshot.get("subtotal", 0),
+                "grand_total": snapshot.get("subtotal", 0),
+                "currency": snapshot.get("currency", "UZS"),
+                "next_action": _workflow_next_action("inquiry"),
+            }
+        )
+
+    order_query = select(Order)
+    if q:
+        like = f"%{q}%"
+        order_query = order_query.where(
+            or_(
+                Order.order_number.ilike(like),
+                Order.guest_email.ilike(like),
+            )
+        )
+    if scope == "actionable":
+        order_query = order_query.where(Order.status.in_(ACTIONABLE_ORDER_STATUSES))
+    if stage:
+        if stage == "inquiry":
+            order_query = order_query.where(Order.id == "__no_order__")
+        else:
+            order_query = order_query.where(Order.status == stage)
+    orders = (
+        (await session.execute(order_query.order_by(Order.created_at.desc())))
+        .scalars()
+        .all()
+    )
+    for order in orders:
+        items_count = await session.scalar(
+            select(func.count(OrderItem.id)).where(OrderItem.order_id == order.id)
+        )
+        address = order.shipping_address or {}
+        linked_user = await session.get(User, order.user_id) if order.user_id else None
+        normalized_stage = order.status if order.status in WORKFLOW_STAGES else order.status
+        entries.append(
+            {
+                "kind": "order",
+                "order_number": order.order_number,
+                "order_source": order.order_source,
+                "stage": normalized_stage,
+                "status": order.status,
+                "payment_state": order.payment_state,
+                "created_at": order.created_at,
+                "customer": {
+                    "name": _customer_name(linked_user, address),
+                    "email": order.guest_email or (linked_user.email if linked_user else None),
+                    "city": address.get("city"),
+                },
+                "item_count": int(items_count or 0),
+                "subtotal": order.subtotal,
+                "grand_total": order.grand_total,
+                "currency": order.currency,
+                "next_action": _workflow_next_action(normalized_stage),
+            }
+        )
+
+    entries.sort(key=lambda item: item["created_at"], reverse=True)
+    counts = {key: 0 for key in WORKFLOW_STAGES}
+    for entry in entries:
+        if entry["stage"] in counts:
+            counts[entry["stage"]] += 1
+    total = len(entries)
+    start = (page - 1) * page_size
+    return {
+        "items": entries[start:start + page_size],
+        "counts": counts,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
     }
 
 
@@ -776,6 +985,21 @@ async def _admin_order_payload(session: AsyncSession, order: Order) -> dict:
         .scalars()
         .all()
     )
+    activity_target_ids = [order.order_number]
+    if payment:
+        activity_target_ids.append(payment.id)
+    activity = (
+        (
+            await session.execute(
+                select(CmsAuditLog)
+                .where(CmsAuditLog.target_id.in_(activity_target_ids))
+                .order_by(CmsAuditLog.created_at.desc())
+                .limit(50)
+            )
+        )
+        .scalars()
+        .all()
+    )
     return {
         "order_number": order.order_number,
         "created_at": order.created_at,
@@ -818,6 +1042,15 @@ async def _admin_order_payload(session: AsyncSession, order: Order) -> dict:
             else None
         ),
         "fulfillment": [_stage_payload(stage) for stage in stages],
+        "activity": [
+            {
+                "action": row.action,
+                "target_type": row.target_type,
+                "created_at": row.created_at,
+                "metadata": row.safe_metadata or {},
+            }
+            for row in activity
+        ],
     }
 
 

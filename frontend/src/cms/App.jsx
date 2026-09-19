@@ -10,9 +10,8 @@ import AdminProductEditPage from "@/pages/admin/AdminProductEditPage";
 import AdminCategoriesPage from "@/pages/admin/AdminCategoriesPage";
 import AdminOrdersPage from "@/pages/admin/AdminOrdersPage";
 import AdminOrderDetailPage from "@/pages/admin/AdminOrderDetailPage";
-import AdminTelegramInquiriesPage from "@/pages/admin/AdminTelegramInquiriesPage";
+import AdminInquiryDetailPage from "@/pages/admin/AdminInquiryDetailPage";
 import AdminCustomersPage from "@/pages/admin/AdminCustomersPage";
-import AdminPaymentsPage from "@/pages/admin/AdminPaymentsPage";
 import CmsContentPage from "@/pages/admin/CmsContentPage";
 import CmsContentEditPage from "@/pages/admin/CmsContentEditPage";
 import CmsMediaPage from "@/pages/admin/CmsMediaPage";
@@ -82,10 +81,11 @@ function CmsRoutes() {
         <Route path="products/:productId" element={<AdminProductEditPage />} />
         <Route path="categories" element={<AdminCategoriesPage />} />
         <Route path="orders" element={<AdminOrdersPage />} />
-        <Route path="telegram-inquiries" element={<AdminTelegramInquiriesPage />} />
+        <Route path="orders/inquiry/:reference" element={<AdminInquiryDetailPage />} />
         <Route path="orders/:orderNumber" element={<AdminOrderDetailPage />} />
+        <Route path="telegram-inquiries" element={<Navigate to="/orders?stage=inquiry" replace />} />
+        <Route path="payments" element={<Navigate to="/orders?stage=payment_review" replace />} />
         <Route path="customers" element={<AdminCustomersPage />} />
-        <Route path="payments" element={<AdminPaymentsPage />} />
         <Route path="cms" element={<CmsContentPage />} />
         <Route path="cms/new" element={<CmsContentEditPage />} />
         <Route path="cms/:entryId" element={<CmsContentEditPage />} />
