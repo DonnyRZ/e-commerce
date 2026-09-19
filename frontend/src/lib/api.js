@@ -236,6 +236,27 @@ export const getAdminOrders = (params) =>
   api.get("/v1/admin/orders", { params }).then((r) => r.data);
 export const getAdminOrder = (orderNumber) =>
   api.get(`/v1/admin/orders/${orderNumber}`).then((r) => r.data);
+export const getAdminTelegramInquiries = (params) =>
+  api.get("/v1/admin/telegram-inquiries", { params }).then((r) => r.data);
+export const createAdminOrderFromInquiry = (reference, data, idempotencyKey) =>
+  api.post(`/v1/admin/telegram-inquiries/${reference}/orders`, data, {
+    headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+  }).then((r) => r.data);
+export const uploadAdminPaymentEvidence = (orderNumber, file) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api.post(`/v1/admin/orders/${orderNumber}/payment-evidence`, fd, {
+    headers: { "Content-Type": undefined },
+  }).then((r) => r.data);
+};
+export const getAdminPaymentEvidence = (orderNumber) =>
+  api.get(`/v1/admin/orders/${orderNumber}/payment-evidence`).then((r) => r.data);
+export const confirmAdminPayment = (orderNumber) =>
+  api.post(`/v1/admin/orders/${orderNumber}/payment/confirm`).then((r) => r.data);
+export const rejectAdminPayment = (orderNumber, reason) =>
+  api.post(`/v1/admin/orders/${orderNumber}/payment/reject`, { reason }).then((r) => r.data);
+export const updateAdminFulfillment = (orderNumber, data) =>
+  api.post(`/v1/admin/orders/${orderNumber}/fulfillment`, data).then((r) => r.data);
 export const updateAdminOrderStatus = (orderNumber, status) =>
   api.patch(`/v1/admin/orders/${orderNumber}/status`, { status }).then((r) => r.data);
 export const getAdminCustomers = (params) =>

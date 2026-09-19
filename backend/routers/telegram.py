@@ -76,7 +76,7 @@ async def _expire_old_snapshots(session: AsyncSession) -> None:
         update(TelegramCartInquiry)
         .where(
             TelegramCartInquiry.expires_at <= now,
-            TelegramCartInquiry.status.in_(["pending", "sending"]),
+            TelegramCartInquiry.status.in_(["pending", "sending", "sent"]),
         )
         .values(status="expired", snapshot=None)
     )
@@ -368,6 +368,10 @@ async def _handle_business_message(session: AsyncSession, message: dict) -> None
     if inquiry.status != "pending" or not isinstance(inquiry.snapshot, dict):
         return
 
+    # Keep the Business chat mapping so admin order updates can notify the
+    # same customer later. The chat id is never exposed to the storefront.
+    inquiry.telegram_connection_id = connection_id
+    inquiry.telegram_chat_id = chat_id
     snapshot = inquiry.snapshot
     inquiry.status = "sending"
     await session.commit()
@@ -384,7 +388,6 @@ async def _handle_business_message(session: AsyncSession, message: dict) -> None
         await session.commit()
         raise
     inquiry.status = "sent"
-    inquiry.snapshot = None
     inquiry.delivered_at = utcnow()
     await session.commit()
 

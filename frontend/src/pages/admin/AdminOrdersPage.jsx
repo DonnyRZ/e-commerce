@@ -6,8 +6,8 @@ import { getAdminOrders } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill, fmtDate, fmtMoney, inputClass } from "./adminUtils";
 
-const ORDER_STATUSES = ["pending_payment", "payment_review", "paid", "processing", "shipped", "delivered", "cancelled", "refunded"];
-const PAYMENT_STATES = ["pending", "paid", "failed", "cancelled", "expired", "reconciliation_required", "refunded"];
+const ORDER_STATUSES = ["pending_payment", "payment_review", "paid", "supplier_shipping", "received_by_admin", "customer_shipping", "delivered", "processing", "shipped", "cancelled", "refunded"];
+const PAYMENT_STATES = ["unpaid", "review", "pending", "pending_review", "paid", "rejected", "failed", "cancelled", "expired", "reconciliation_required", "refunded"];
 
 export default function AdminOrdersPage() {
   const [params, setParams] = useSearchParams();

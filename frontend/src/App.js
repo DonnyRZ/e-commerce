@@ -25,6 +25,7 @@ import PaymentPendingPage from "@/pages/PaymentPendingPage";
 import OrderConfirmationPage from "@/pages/OrderConfirmationPage";
 import OrdersPage from "@/pages/OrdersPage";
 import OrderDetailPage from "@/pages/OrderDetailPage";
+import GuestOrderPage from "@/pages/GuestOrderPage";
 
 function App() {
   return (
@@ -50,6 +51,7 @@ function App() {
               <Route path="/wishlist" element={<WishlistPage />} />
               <Route path="/orders" element={<OrdersPage />} />
               <Route path="/orders/:orderNumber" element={<OrderDetailPage />} />
+              <Route path="/orders/track" element={<GuestOrderPage />} />
               <Route path="/checkout" element={<CheckoutPage />} />
               <Route path="/payment-pending" element={<PaymentPendingPage />} />
               <Route path="/order-confirmation" element={<OrderConfirmationPage />} />

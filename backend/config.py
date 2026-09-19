@@ -61,6 +61,15 @@ RATE_LIMIT_BACKEND = os.environ.get("RATE_LIMIT_BACKEND", "memory").strip().lowe
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 MEDIA_STORAGE = os.environ.get("MEDIA_STORAGE", "local").strip().lower()
 MEDIA_ROOT = os.environ.get("MEDIA_ROOT", "/app/backend/uploads")
+PAYMENT_EVIDENCE_ROOT = os.environ.get(
+    "PAYMENT_EVIDENCE_ROOT", "/var/lib/marketplace/payment-evidence"
+)
+PAYMENT_EVIDENCE_MAX_BYTES = int(
+    os.environ.get("PAYMENT_EVIDENCE_MAX_BYTES", str(8 * 1024 * 1024))
+)
+SUPPLIER_TO_ADMIN_TRANSIT_DAYS = int(
+    os.environ.get("SUPPLIER_TO_ADMIN_TRANSIT_DAYS", "14")
+)
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
 S3_REGION = os.environ.get("S3_REGION", "")
 S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", "")

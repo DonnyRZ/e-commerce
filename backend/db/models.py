@@ -259,6 +259,15 @@ class TelegramCartInquiry(Base):
     locale: Mapped[str] = mapped_column(String(5), default="en")
     snapshot: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    order_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("orders.id", ondelete="SET NULL"), nullable=True, unique=True, index=True
+    )
+    telegram_connection_id: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, index=True
+    )
+    telegram_chat_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -328,6 +337,7 @@ class Order(TimestampMixin, Base):
     )
     # cart that produced this order — exactly-once cart clearing on payment
     cart_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    order_source: Mapped[str] = mapped_column(String(30), default="checkout")
 
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
@@ -431,6 +441,52 @@ class Payment(TimestampMixin, Base):
 
 
 PaymentEvent.payment = relationship("Payment", back_populates="events")
+
+
+class ManualPaymentEvidence(TimestampMixin, Base):
+    """Private, admin-only transfer proof; intentionally separate from CMS media."""
+
+    __tablename__ = "manual_payment_evidence"
+    __table_args__ = (
+        Index("ix_manual_payment_evidence_payment_created", "payment_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    payment_id: Mapped[str] = mapped_column(
+        ForeignKey("payments.id", ondelete="CASCADE"), index=True
+    )
+    storage_key: Mapped[str] = mapped_column(String(180), unique=True)
+    original_filename: Mapped[str] = mapped_column(String(255), default="")
+    mime_type: Mapped[str] = mapped_column(String(80), default="")
+    file_size: Mapped[int] = mapped_column(Integer, default=0)
+    checksum: Mapped[str] = mapped_column(String(64), default="")
+    uploaded_by: Mapped[str] = mapped_column(String(32), index=True)
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class OrderFulfillmentStage(TimestampMixin, Base):
+    """Auditable two-leg fulfillment timeline for the single store operator."""
+
+    __tablename__ = "order_fulfillment_stages"
+    __table_args__ = (
+        UniqueConstraint("order_id", "stage", name="uq_order_fulfillment_stage"),
+        Index("ix_order_fulfillment_order_stage", "order_id", "stage"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    order_id: Mapped[str] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"), index=True
+    )
+    # supplier_shipping | received_by_admin | customer_shipping | delivered
+    stage: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    carrier: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    tracking_number: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    shipped_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    received_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    acted_by: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
 
 class InventoryReservation(Base):

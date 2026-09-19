@@ -10,6 +10,7 @@ import AdminProductEditPage from "@/pages/admin/AdminProductEditPage";
 import AdminCategoriesPage from "@/pages/admin/AdminCategoriesPage";
 import AdminOrdersPage from "@/pages/admin/AdminOrdersPage";
 import AdminOrderDetailPage from "@/pages/admin/AdminOrderDetailPage";
+import AdminTelegramInquiriesPage from "@/pages/admin/AdminTelegramInquiriesPage";
 import AdminCustomersPage from "@/pages/admin/AdminCustomersPage";
 import AdminPaymentsPage from "@/pages/admin/AdminPaymentsPage";
 import CmsContentPage from "@/pages/admin/CmsContentPage";
@@ -81,6 +82,7 @@ function CmsRoutes() {
         <Route path="products/:productId" element={<AdminProductEditPage />} />
         <Route path="categories" element={<AdminCategoriesPage />} />
         <Route path="orders" element={<AdminOrdersPage />} />
+        <Route path="telegram-inquiries" element={<AdminTelegramInquiriesPage />} />
         <Route path="orders/:orderNumber" element={<AdminOrderDetailPage />} />
         <Route path="customers" element={<AdminCustomersPage />} />
         <Route path="payments" element={<AdminPaymentsPage />} />

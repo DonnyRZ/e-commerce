@@ -11,6 +11,7 @@ import {
   Package,
   Settings,
   ShieldAlert,
+  MessageCircle,
   Users,
   X,
 } from "lucide-react";
@@ -70,6 +71,7 @@ export default function AdminLayout() {
       <NavItem to="/categories" icon={FolderTree} label="Categories" onClick={onClick} testId="admin-nav-categories" />
       <NavGroup label="Sales" />
       <NavItem to="/orders" icon={ClipboardList} label="Orders" onClick={onClick} testId="admin-nav-orders" />
+      <NavItem to="/telegram-inquiries" icon={MessageCircle} label="Telegram Inquiries" onClick={onClick} testId="admin-nav-telegram-inquiries" />
       <NavItem to="/payments" icon={ShieldAlert} label="Payment Review" onClick={onClick} testId="admin-nav-payments" />
       <NavItem to="/customers" icon={Users} label="Customers" onClick={onClick} testId="admin-nav-customers" />
       <NavGroup label="CMS" />

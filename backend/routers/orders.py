@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import require_roles
-from db.models import Order, OrderItem, User
+from db.models import Order, OrderFulfillmentStage, OrderItem, User
 from db.session import get_session
 
 router = APIRouter(prefix="/api/v1", tags=["orders"])
@@ -58,12 +58,65 @@ def _detail(order: Order, items) -> dict:
     }
 
 
+async def _timeline(session: AsyncSession, order: Order) -> list[dict]:
+    stages = (
+        (
+            await session.execute(
+                select(OrderFulfillmentStage)
+                .where(OrderFulfillmentStage.order_id == order.id)
+                .order_by(OrderFulfillmentStage.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    result = [
+        {
+            "stage": "pending_payment",
+            "status": "completed" if order.status != "pending_payment" else "current",
+        }
+    ]
+    if order.status in {
+        "payment_review",
+        "paid",
+        "supplier_shipping",
+        "received_by_admin",
+        "customer_shipping",
+        "delivered",
+    }:
+        result.append(
+            {
+                "stage": "payment_review",
+                "status": "completed" if order.payment_state == "paid" else "current",
+            }
+        )
+    for stage in stages:
+        result.append(
+            {
+                "stage": stage.stage,
+                "status": stage.status,
+                "carrier": stage.carrier,
+                "tracking_number": stage.tracking_number,
+                "shipped_at": stage.shipped_at,
+                "received_at": stage.received_at,
+                "expected_at": stage.expected_at,
+            }
+        )
+    return result
+
+
 async def _items(session: AsyncSession, order_id: str):
     return (
-        await session.execute(
-            select(OrderItem).where(OrderItem.order_id == order_id).order_by(OrderItem.id)
+        (
+            await session.execute(
+                select(OrderItem)
+                .where(OrderItem.order_id == order_id)
+                .order_by(OrderItem.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
 
 @router.get("/account/orders")
@@ -72,12 +125,16 @@ async def list_my_orders(
     session: AsyncSession = Depends(get_session),
 ):
     orders = (
-        await session.execute(
-            select(Order)
-            .where(Order.user_id == user.id)
-            .order_by(Order.created_at.desc())
+        (
+            await session.execute(
+                select(Order)
+                .where(Order.user_id == user.id)
+                .order_by(Order.created_at.desc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     result = []
     for order in orders:
         count = await session.scalar(
@@ -100,7 +157,9 @@ async def get_my_order(
     )
     if not order:
         raise HTTPException(status_code=404, detail="order_not_found")
-    return _detail(order, await _items(session, order.id))
+    payload = _detail(order, await _items(session, order.id))
+    payload["timeline"] = await _timeline(session, order)
+    return payload
 
 
 @router.get("/orders/track")
@@ -120,4 +179,26 @@ async def track_guest_order(
     )
     if not ok:
         raise HTTPException(status_code=404, detail="order_not_found")
-    return _detail(order, await _items(session, order.id))
+    payload = _detail(order, await _items(session, order.id))
+    payload["timeline"] = await _timeline(session, order)
+    return payload
+
+
+@router.get("/orders/{order_number}/timeline")
+async def get_order_timeline(
+    order_number: str,
+    user: User = Depends(require_customer),
+    session: AsyncSession = Depends(get_session),
+):
+    order = await session.scalar(
+        select(Order).where(
+            Order.order_number == order_number, Order.user_id == user.id
+        )
+    )
+    if not order:
+        raise HTTPException(status_code=404, detail="order_not_found")
+    return {
+        "order_number": order.order_number,
+        "status": order.status,
+        "timeline": await _timeline(session, order),
+    }

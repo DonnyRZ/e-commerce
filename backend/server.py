@@ -35,6 +35,7 @@ from routers.shop import router as shop_router
 from routers.checkout import router as checkout_router
 from routers.orders import router as orders_router
 from routers.admin import router as admin_router
+from routers.manual_orders import router as manual_orders_router
 from routers.cms_admin import router as cms_admin_router
 from routers.cms_public import router as cms_public_router
 from routers.telegram import router as telegram_router
@@ -190,6 +191,10 @@ app.include_router(orders_router)
 # The application is single-owner. The old multi-seller router remains in the
 # repository only as a migration/reference dependency for Admin Core, but is
 # intentionally not mounted as a public API.
+# Manual-order routes are mounted first so the enriched order detail is the
+# canonical admin representation while legacy status/review endpoints remain
+# available for historical orders.
+app.include_router(manual_orders_router)
 app.include_router(admin_router)
 app.include_router(cms_admin_router)
 app.include_router(cms_public_router)

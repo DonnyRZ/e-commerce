@@ -45,10 +45,13 @@ services:
       NOTIFICATION_PROVIDER: mock
       MEDIA_STORAGE: local
       MEDIA_ROOT: /app/uploads
+      PAYMENT_EVIDENCE_ROOT: /app/payment-evidence
+      SUPPLIER_TO_ADMIN_TRANSIT_DAYS: "14"
     ports:
       - "8000:8000"
     volumes:
       - media_data:/app/uploads
+      - payment_evidence_data:/app/payment-evidence
     depends_on:
       db:
         condition: service_healthy
@@ -95,3 +98,4 @@ services:
 volumes:
   postgres_data:
   media_data:
+  payment_evidence_data:

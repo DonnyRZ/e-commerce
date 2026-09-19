@@ -28,6 +28,7 @@ services:
       - "host.docker.internal:172.30.0.1"
     volumes:
       - /var/lib/marketplace/media:/app/uploads
+      - /var/lib/marketplace/payment-evidence:/var/lib/marketplace/payment-evidence
     depends_on:
       redis:
         condition: service_healthy
@@ -63,6 +64,7 @@ services:
       - "host.docker.internal:172.30.0.1"
     volumes:
       - /var/lib/marketplace/media:/app/uploads
+      - /var/lib/marketplace/payment-evidence:/var/lib/marketplace/payment-evidence
     depends_on:
       redis:
         condition: service_healthy

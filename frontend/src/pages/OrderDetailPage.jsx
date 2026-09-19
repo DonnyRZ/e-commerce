@@ -100,6 +100,24 @@ export default function OrderDetailPage() {
         · {order.email}
       </p>
 
+      {order.timeline?.length ? (
+        <section className="mt-6 border border-border bg-secondary/30 p-5" data-testid="customer-order-timeline">
+          <h2 className="text-sm font-semibold">{t("orders.timeline")}</h2>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {order.timeline.map((event) => (
+              <div key={event.stage} className={`flex items-start gap-2 text-xs ${event.status === "completed" || event.status === "current" ? "text-primary" : "text-muted-foreground"}`}>
+                <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${event.status === "completed" ? "bg-primary" : event.status === "current" ? "border-2 border-primary bg-background" : "bg-border"}`} />
+                <div>
+                  <p className="font-medium">{t(`orders.state.${event.stage}`)}</p>
+                  {event.expected_at ? <p className="mt-1 text-muted-foreground">{t("orders.expectedBy")} {new Intl.DateTimeFormat(tag, { dateStyle: "medium" }).format(new Date(event.expected_at))}</p> : null}
+                  {event.tracking_number ? <p className="mt-1 text-muted-foreground">{event.tracking_number}</p> : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <div className="mt-8 grid gap-10 lg:grid-cols-[1fr_320px]">
         <ul className="divide-y divide-border border-y border-border">
           {order.items.map((item) => (

@@ -36,22 +36,12 @@ const optionsToText = (obj) =>
 
 const MAX_PRODUCT_IMAGES = 8;
 
+const OPTIONAL_MATERIAL_FIELD = ["material", "Material (optional)"];
+
 const ATTRIBUTE_FIELDS = {
-  apparel: [
-    ["material", "Material"],
-    ["fit", "Fit"],
-    ["care", "Care instructions"],
-  ],
-  hijab: [
-    ["material", "Material"],
-    ["care", "Care instructions"],
-  ],
-  batik: [
-    ["material", "Material"],
-    ["motif", "Motif"],
-    ["fit", "Fit"],
-    ["care", "Care instructions"],
-  ],
+  apparel: [OPTIONAL_MATERIAL_FIELD],
+  hijab: [OPTIONAL_MATERIAL_FIELD],
+  batik: [OPTIONAL_MATERIAL_FIELD],
   skincare: [
     ["skin_type", "Skin type"],
     ["ingredients", "Ingredients"],
@@ -99,6 +89,71 @@ const uploadErrorMessage = (err) => {
     return "Only valid JPEG, PNG, or WebP images are supported.";
   }
   return "Image upload failed.";
+};
+
+const generatedSku = (name) => {
+  const stem = String(name || "product")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 38) || "PRODUCT";
+  return `${stem}-${Date.now().toString(36).toUpperCase()}`.slice(0, 80);
+};
+
+const validationDetails = (detail) => {
+  if (!Array.isArray(detail)) return "";
+  return detail
+    .map((item) => {
+      const location = Array.isArray(item?.loc)
+        ? item.loc.filter((part) => part !== "body").join(".")
+        : "";
+      const message = item?.msg || "Invalid value";
+      return location ? `${location}: ${message}` : message;
+    })
+    .filter(Boolean)
+    .join("; ");
+};
+
+const productSaveErrorMessage = (err) => {
+  const detail = err?.response?.data?.detail;
+  const pydanticMessage = validationDetails(detail);
+  if (pydanticMessage) return `Please fix: ${pydanticMessage}.`;
+
+  const code = typeof detail === "string" ? detail : detail?.error;
+  const messages = {
+    translation_en_required: "Enter the English product name before saving.",
+    translation_name_required: `Enter a product name for ${detail?.locale || "the selected language"}.`,
+    invalid_translation: "One of the product name or description fields is invalid.",
+    invalid_locale: "One of the translation languages is not supported.",
+    unsafe_text: "Product text cannot contain HTML or angle brackets.",
+    invalid_category: "Select an active leaf category before saving.",
+    category_not_leaf: "Select the most specific category; products cannot use a parent category.",
+    invalid_product_type: "The selected category has an invalid product configuration.",
+    invalid_status: "Select Draft, Active, or Inactive as the product status.",
+    invalid_sku: "SKU must be at least 2 characters and cannot contain spaces or control characters.",
+    sku_exists: "That SKU is already used by another variant. Use a different SKU.",
+    sku_duplicate_in_payload: "Two variants in this product use the same SKU.",
+    invalid_option_values: "Variant options must use the format color=Black, size=M.",
+    invalid_variant: "One of the selected variants is no longer valid. Refresh and try again.",
+    compare_price_below_base: "Compare-at price must be equal to or higher than the base price.",
+    sale_price_not_below_regular: "Sale price must be lower than the regular price.",
+    active_product_requires_variant: "An active product needs at least one active variant.",
+    invalid_media: "One of the selected images is no longer available. Remove it and upload it again.",
+    invalid_media_url: "One of the selected image links is invalid.",
+    too_many_media: "A product can have up to 8 images.",
+  };
+
+  if (code === "below_active_reservations") {
+    return `Stock cannot go below ${detail.active_reservations} active reservations.`;
+  }
+  if (code === "product_type_category_mismatch") {
+    return "Batik and Parfum products must use a matching active category.";
+  }
+  if (code && messages[code]) return messages[code];
+  if (code) return `Save failed (${code}). Please review the product fields.`;
+  if (err?.response?.status === 401) return "Your admin session expired. Sign in again and retry.";
+  if (err?.response?.status === 403) return "You do not have permission to save products.";
+  return "Save failed. Please review the product fields and try again.";
 };
 
 export default function AdminProductEditPage() {
@@ -294,6 +349,12 @@ export default function AdminProductEditPage() {
     e.preventDefault();
     if (saving) return;
 
+    const englishName = tr.en?.name?.trim() || "";
+    if (!englishName) {
+      setActiveLocale("en");
+      toast.error("Enter the English product name before saving.");
+      return;
+    }
     const basePrice = Number(form.base_price);
     const compareAtPrice = form.compare_at_price === "" ? null : Number(form.compare_at_price);
     if (!Number.isInteger(basePrice) || basePrice < 0) {
@@ -304,12 +365,25 @@ export default function AdminProductEditPage() {
       toast.error("Enter a valid compare-at price.");
       return;
     }
-    const candidateVariants = variants.filter((v) => v.id || v.sku.trim());
-    if (!candidateVariants.length) {
+    // A SKU is operational metadata, not something that should block an
+    // otherwise complete product draft. Generate one for the first variant
+    // when the operator leaves it blank; the backend still validates the
+    // generated value and uniqueness.
+    const enteredVariants = variants.filter(
+      (v) => v.id || v.sku.trim() || v.optionsText.trim() || Number(v.stock || 0) > 0
+    );
+    const candidateVariants = enteredVariants.length
+      ? enteredVariants
+      : [variants[0] || { ...EMPTY_VARIANT }];
+    const preparedVariants = candidateVariants.map((variant, index) => ({
+      ...variant,
+      sku: variant.sku.trim() || (index === 0 ? generatedSku(englishName) : ""),
+    })).filter((variant) => variant.id || variant.sku);
+    if (!preparedVariants.length) {
       toast.error("Add at least one variant with a SKU.");
       return;
     }
-    for (const variant of candidateVariants) {
+    for (const variant of preparedVariants) {
       const numericValues = [
         variant.stock === "" ? 0 : Number(variant.stock),
         variant.price_override === "" ? null : Number(variant.price_override),
@@ -327,7 +401,12 @@ export default function AdminProductEditPage() {
     setSaving(true);
     try {
       const translations = Object.fromEntries(
-        Object.entries(tr).filter(([, v]) => v && v.name && v.name.trim())
+        Object.entries(tr)
+          .filter(([, v]) => v && v.name && v.name.trim())
+          .map(([locale, value]) => [locale, {
+            ...value,
+            name: value.name.trim(),
+          }])
       );
       const media = form.media.map((item, index) => ({ ...item, sort_order: index }));
       const primaryMediaId = media[0]?.media_id || null;
@@ -345,7 +424,7 @@ export default function AdminProductEditPage() {
         media,
         translations,
       };
-      const editorVariants = candidateVariants
+      const editorVariants = preparedVariants
         .map((v) => {
           const stockQuantity = v.stock === "" ? 0 : Number(v.stock);
           const priceOverride = v.price_override === "" ? null : Number(v.price_override);
@@ -382,19 +461,7 @@ export default function AdminProductEditPage() {
       queryClient.invalidateQueries({ queryKey: ["admin-products"] });
       queryClient.invalidateQueries({ queryKey: ["products"] });
     } catch (err) {
-      const d = err?.response?.data?.detail;
-      const code = typeof d === "string" ? d : d?.error;
-      if (code === "sku_exists" || code === "sku_duplicate_in_payload") {
-        toast.error("A variant SKU already exists.");
-      } else if (code === "below_active_reservations") {
-        toast.error(`Stock cannot go below ${d.active_reservations} active reservations.`);
-      } else if (code === "product_type_category_mismatch") {
-        toast.error("Batik and Parfum products must use a matching active category.");
-      } else if (code === "invalid_category") {
-        toast.error("Select an active leaf category before saving.");
-      } else {
-        toast.error("Save failed. Check required fields.");
-      }
+      toast.error(productSaveErrorMessage(err));
     } finally {
       setSaving(false);
     }
@@ -629,8 +696,8 @@ export default function AdminProductEditPage() {
             {variants.map((v, idx) => (
               <div key={idx} className="grid items-end gap-3 border border-neutral-100 p-3 sm:grid-cols-2 xl:grid-cols-[1fr_1.4fr_0.6fr_0.7fr_0.7fr_auto_auto]" data-testid={`editor-variant-${idx}`}>
                 <div>
-                  <label className="mb-1 block text-[11px] font-medium text-neutral-500">SKU</label>
-                  <input value={v.sku} onChange={(e) => setV(idx, "sku", e.target.value)} required className={inputClass} data-testid={`variant-sku-${idx}`} maxLength={80} />
+                  <label className="mb-1 block text-[11px] font-medium text-neutral-500">SKU <span className="font-normal text-neutral-400">(optional)</span></label>
+                  <input value={v.sku} onChange={(e) => setV(idx, "sku", e.target.value)} className={inputClass} data-testid={`variant-sku-${idx}`} maxLength={80} placeholder="Generated if blank" />
                 </div>
                 <div>
                   <label className="mb-1 block text-[11px] font-medium text-neutral-500">Options</label>
