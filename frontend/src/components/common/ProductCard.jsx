@@ -94,7 +94,7 @@ export default function ProductCard({ product }) {
       <p data-testid={`preorder-label-${product.slug || product.id}`} className="mt-1.5 text-[11px] leading-relaxed text-primary">
         {t("preorder.label")}
       </p>
-      <p data-testid={`preorder-size-note-${product.slug || product.id}`} className="truncate text-[10px] leading-relaxed text-muted-foreground" title={t("preorder.sizeAvailability")}>
+      <p data-testid={`preorder-size-note-${product.slug || product.id}`} className="break-words text-[10px] leading-relaxed text-muted-foreground">
         {t("preorder.sizeAvailabilityShort")}
       </p>
       <h3 className="mt-0.5 text-sm font-medium leading-snug">
