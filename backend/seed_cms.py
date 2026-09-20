@@ -243,6 +243,10 @@ async def seed():
                 for item in FAQ_ITEMS
                 if item["slug"] == "shipping-time"
             }
+            canonical_promos = {
+                slug: {loc: {"title": "", "body": ""} for loc in LOCALES}
+                for slug in ("top-bar", "footer-promo")
+            }
             for entry in entries:
                 payload = dict(entry.payload or {})
                 image_url = payload.get("image_url")
@@ -250,7 +254,11 @@ async def seed():
                     payload.pop("image_url", None)
                     entry.payload = payload
                     changed = True
-                desired = canonical_pages.get(entry.slug) or canonical_faqs.get(entry.slug)
+                desired = (
+                    canonical_pages.get(entry.slug)
+                    or canonical_faqs.get(entry.slug)
+                    or canonical_promos.get(entry.slug)
+                )
                 if desired:
                     translations = (
                         await session.execute(

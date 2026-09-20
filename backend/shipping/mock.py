@@ -7,7 +7,7 @@ Frontend-supplied shipping costs are never accepted; rates are defined here.
 from config import BASE_CURRENCY
 from shipping.base import ShippingProvider
 
-# Matches the storefront promise: free standard shipping over UZS 550,000.
+# Internal standard-shipping threshold retained for compatibility.
 FREE_STANDARD_THRESHOLD = 550_000
 
 _METHODS = (
