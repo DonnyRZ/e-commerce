@@ -164,7 +164,7 @@ def test_kids_set_size_only(s):
 
 
 # ---------- Stock states ----------
-def test_stock_state_out_of_stock(s):
+def test_public_stock_state_is_pre_order(s):
     # tropical-moist-cream-50ml - listed in requirements as out_of_stock at product level
     # Find via products list first
     r = s.get(f"{API}/products", params={"limit": 50})
@@ -172,7 +172,7 @@ def test_stock_state_out_of_stock(s):
     products = r.json().get("items", r.json() if isinstance(r.json(), list) else [])
     match = [p for p in products if p["slug"] == "tropical-moist-cream-50ml"]
     assert match, "product tropical-moist-cream-50ml not found in list"
-    assert match[0].get("stock_state") == "out_of_stock", match[0].get("stock_state")
+    assert match[0].get("stock_state") == "pre_order", match[0].get("stock_state")
 
 
 # ---------- Badges ----------

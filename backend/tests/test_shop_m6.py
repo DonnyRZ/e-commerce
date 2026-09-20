@@ -110,7 +110,7 @@ def test_guest_add_sets_httponly_token_and_prices(hoodie):
     assert item["line_total"] == 2 * hoodie["base_price"]
     assert j["subtotal"] == 2 * hoodie["base_price"] and isinstance(j["subtotal"], int)
     assert item["sku"] == hoodie["normal"]["sku"]
-    assert item["availability"] == "in_stock"
+    assert item["availability"] == "pre_order"
     assert {"en", "id", "uz", "ru"} <= set(item["translations"].keys())
 
 
@@ -125,13 +125,12 @@ def test_guest_token_not_client_controllable(hoodie):
     assert r.json()["item_count"] == 1
 
 
-def test_add_out_of_stock_rejected(hoodie):
+def test_add_zero_stock_variant_is_allowed_for_preorder(hoodie):
     s = requests.Session()
     r = _add(s, hoodie["id"], hoodie["oos"]["id"], 1)
-    assert r.status_code == 400
-    assert r.json()["detail"]["error"] == "insufficient_stock"
-    assert r.json()["detail"]["available"] == 0
-    assert s.get(f"{API}/cart").json()["item_count"] == 0
+    assert r.status_code == 201, r.text
+    assert r.json()["items"][0]["availability"] == "pre_order"
+    assert s.get(f"{API}/cart").json()["item_count"] == 1
 
 
 def test_add_variant_from_other_product_rejected(hoodie, abaya):
@@ -147,7 +146,7 @@ def test_add_unknown_product_404(hoodie):
     assert r.status_code == 404
 
 
-def test_add_merges_same_variant_and_caps_stock(hoodie):
+def test_add_merges_same_variant_without_stock_cap(hoodie):
     s = requests.Session()
     low = hoodie["low"]  # stock 2
     r1 = _add(s, hoodie["id"], low["id"], 1)
@@ -158,22 +157,17 @@ def test_add_merges_same_variant_and_caps_stock(hoodie):
     assert len(j["items"]) == 1, "same variant must merge into one line"
     assert j["items"][0]["quantity"] == 2
     r3 = _add(s, hoodie["id"], low["id"], 1)
-    assert r3.status_code == 400
-    d = r3.json()["detail"]
-    assert d["error"] == "insufficient_stock" and d["available"] == 2 and d["in_cart"] == 2
-    assert s.get(f"{API}/cart").json()["items"][0]["quantity"] == 2, "rejected add must not mutate cart"
+    assert r3.status_code == 201, r3.text
+    assert r3.json()["items"][0]["quantity"] == 3
 
 
-def test_update_quantity_enforces_stock(hoodie):
+def test_update_quantity_ignores_stock(hoodie):
     s = requests.Session()
     low = hoodie["low"]
     item = _add(s, hoodie["id"], low["id"], 1).json()["items"][0]
-    r_bad = s.patch(f"{API}/cart/items/{item['id']}", json={"quantity": 3})
-    assert r_bad.status_code == 400
-    assert r_bad.json()["detail"]["error"] == "insufficient_stock"
-    r_ok = s.patch(f"{API}/cart/items/{item['id']}", json={"quantity": 2})
+    r_ok = s.patch(f"{API}/cart/items/{item['id']}", json={"quantity": 3})
     assert r_ok.status_code == 200
-    assert r_ok.json()["items"][0]["quantity"] == 2
+    assert r_ok.json()["items"][0]["quantity"] == 3
     r_zero = s.patch(f"{API}/cart/items/{item['id']}", json={"quantity": 0})
     assert r_zero.status_code == 422, "quantity must be >= 1"
 
@@ -347,7 +341,7 @@ def test_wishlist_add_idempotent_remove(hoodie):
     item = j["items"][0]
     assert item["slug"] == HOODIE_SLUG
     assert item["base_price"] == 499000 and isinstance(item["base_price"], int)
-    assert item["stock_state"] in ("in_stock", "low_stock", "out_of_stock")
+    assert item["stock_state"] == "pre_order"
     assert {"en", "id", "uz", "ru"} <= set(item["translations"].keys())
     # idempotent re-add
     r2 = s.post(f"{API}/wishlist/items", json={"product_id": hoodie["id"]})

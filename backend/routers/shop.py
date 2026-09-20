@@ -5,8 +5,8 @@ Ownership model:
 - guest: cart bound to a server-issued 32-byte opaque token in an
   HttpOnly cookie (guest_cart_token) — never accepted from the client
   as a parameter, never guessable.
-Cart is intent, not inventory reservation: stock is validated on
-mutations but never decremented here.
+Cart is intent, not inventory reservation. All storefront items are
+pre-order items; internal stock is never used to block cart mutations.
 """
 
 import secrets
@@ -18,6 +18,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import COOKIE_SAMESITE, COOKIE_SECURE, csrf_protect, decode_token, require_roles
+from config import PREORDER_ESTIMATE_DAYS
 from db.models import (
     Cart,
     CartItem,
@@ -36,7 +37,7 @@ from taxonomy import active_taxonomy_chain
 router = APIRouter(prefix="/api/v1", tags=["shop"])
 
 GUEST_COOKIE = "guest_cart_token"
-DEMO_CART_MAX_QUANTITY = 10
+PREORDER_MAX_QUANTITY = 99
 
 
 def _positive_quantity(value) -> int:
@@ -174,15 +175,6 @@ async def _cart_payload(session: AsyncSession, cart: Optional[Cart]) -> dict:
         category_is_public = bool(
             category and await active_taxonomy_chain(session, category)
         )
-        is_demo = bool(
-            product
-            and product.is_demo
-            and variant
-            and variant.product_id == product.id
-            and variant.is_active
-            and product.status == "active"
-            and category_is_public
-        )
         if (
             not quantity_is_valid
             or
@@ -220,20 +212,7 @@ async def _cart_payload(session: AsyncSession, cart: Optional[Cart]) -> dict:
             sku = variant.sku
             options = variant.option_values or {}
             image = variant.image_url or media_item_url((product.media or [None])[0])
-            if not variant.is_active or product.status != "active" or not category:
-                availability = "unavailable"
-            elif product.is_demo:
-                # Demo catalog entries are intentionally not stock-backed. They
-                # are still useful for cart and UI QA while checkout is closed.
-                availability = "demo"
-            elif stock <= 0:
-                availability = "out_of_stock"
-            elif quantity > stock:
-                availability = "exceeds_stock"
-            elif stock <= 5:
-                availability = "low_stock"
-            else:
-                availability = "in_stock"
+            availability = "pre_order"
         subtotal += unit_price * quantity
         items.append(
             {
@@ -252,8 +231,12 @@ async def _cart_payload(session: AsyncSession, cart: Optional[Cart]) -> dict:
                 "line_total": unit_price * quantity,
                 "stock_quantity": stock,
                 "availability": availability,
-                "is_demo": is_demo,
-                "cart_max_quantity": DEMO_CART_MAX_QUANTITY if is_demo else stock,
+                "ordering_mode": "pre_order",
+                "preorder_estimate_days": PREORDER_ESTIMATE_DAYS,
+                # Kept for legacy API clients; never use this to gate or
+                # describe customer ordering availability.
+                "is_demo": False,
+                "cart_max_quantity": PREORDER_MAX_QUANTITY,
             }
         )
     return {
@@ -385,12 +368,6 @@ async def add_cart_item(
         raise HTTPException(status_code=404, detail="product_not_found")
     if not variant or not variant.is_active:
         raise HTTPException(status_code=400, detail="invalid_variant")
-    available_stock = max(int(variant.stock_quantity or 0), 0)
-    if available_stock <= 0 and not product.is_demo:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "insufficient_stock", "available": 0},
-        )
     existing = await session.scalar(
         select(CartItem).where(
             CartItem.cart_id == cart.id, CartItem.variant_id == variant.id
@@ -400,20 +377,10 @@ async def add_cart_item(
         raise HTTPException(status_code=409, detail="cart_item_conflict")
     current = _positive_quantity(existing.quantity) if existing else 0
     new_qty = current + payload.quantity
-    max_quantity = DEMO_CART_MAX_QUANTITY if product.is_demo else available_stock
-    if new_qty > max_quantity:
-        if product.is_demo:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "demo_quantity_limit",
-                    "available": DEMO_CART_MAX_QUANTITY,
-                    "in_cart": current,
-                },
-            )
+    if new_qty > PREORDER_MAX_QUANTITY:
         raise HTTPException(
             status_code=400,
-            detail={"error": "insufficient_stock", "available": available_stock, "in_cart": current},
+            detail={"error": "quantity_limit", "maximum": PREORDER_MAX_QUANTITY, "in_cart": current},
         )
     if existing:
         existing.quantity = new_qty
@@ -476,17 +443,10 @@ async def update_cart_item(
         or not variant.is_active
     ):
         raise HTTPException(status_code=404, detail="item_not_found")
-    available_stock = max(int(variant.stock_quantity or 0), 0)
-    max_quantity = DEMO_CART_MAX_QUANTITY if product.is_demo else available_stock
-    if payload.quantity > max_quantity:
-        if product.is_demo:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": "demo_quantity_limit", "available": DEMO_CART_MAX_QUANTITY},
-            )
+    if payload.quantity > PREORDER_MAX_QUANTITY:
         raise HTTPException(
             status_code=400,
-            detail={"error": "insufficient_stock", "available": available_stock},
+            detail={"error": "quantity_limit", "maximum": PREORDER_MAX_QUANTITY},
         )
     item.quantity = payload.quantity
     await session.commit()
@@ -607,7 +567,6 @@ async def merge_guest_cart(
             or category.kind != "category"
             or not category.is_active
             or not await active_taxonomy_chain(session, category, lock=True)
-            or (not product.is_demo and max(int(variant.stock_quantity or 0), 0) <= 0)
         ):
             adjustments.append(
                 {"variant_id": g.variant_id, "requested": guest_quantity, "applied": 0}
@@ -620,11 +579,9 @@ async def merge_guest_cart(
         )
         existing_quantity = _positive_quantity(existing.quantity) if existing else 0
         merged = existing_quantity + guest_quantity
-        available_stock = max(int(variant.stock_quantity or 0), 0)
-        max_quantity = DEMO_CART_MAX_QUANTITY if product.is_demo else available_stock
-        applied = min(merged, max_quantity)
+        applied = min(merged, PREORDER_MAX_QUANTITY)
         if applied != merged:
-            adjustments.append({"variant_id": g.variant_id, "requested": merged, "applied": applied})
+            adjustments.append({"variant_id": g.variant_id, "requested": merged, "applied": applied, "reason": "quantity_limit"})
         if existing:
             if existing.product_id != product.id:
                 existing.product_id = product.id
@@ -701,15 +658,6 @@ async def _wishlist_payload(session: AsyncSession, user: User) -> dict:
                 )
             )
         ).scalars().all()
-        total_stock = (
-            await session.execute(
-                select(ProductVariant.stock_quantity).where(
-                    ProductVariant.product_id == product.id,
-                    ProductVariant.is_active.is_(True),
-                )
-            )
-        ).scalars().all()
-        total = sum(max(int(stock or 0), 0) for stock in total_stock)
         items.append(
             {
                 "product_id": product.id,
@@ -719,7 +667,7 @@ async def _wishlist_payload(session: AsyncSession, user: User) -> dict:
                 "base_price": product.base_price,
                 "compare_at_price": product.compare_at_price,
                 "image_url": media_item_url((product.media or [None])[0]),
-                "stock_state": "out_of_stock" if total <= 0 else ("low_stock" if total <= 5 else "in_stock"),
+                "stock_state": "pre_order",
             }
         )
     return {"items": items, "count": len(items)}

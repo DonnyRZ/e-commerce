@@ -70,6 +70,10 @@ PAYMENT_EVIDENCE_MAX_BYTES = int(
 SUPPLIER_TO_ADMIN_TRANSIT_DAYS = int(
     os.environ.get("SUPPLIER_TO_ADMIN_TRANSIT_DAYS", "14")
 )
+ADMIN_TO_CUSTOMER_TRANSIT_DAYS = int(
+    os.environ.get("ADMIN_TO_CUSTOMER_TRANSIT_DAYS", "7")
+)
+PREORDER_ESTIMATE_DAYS = int(os.environ.get("PREORDER_ESTIMATE_DAYS", "21"))
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
 S3_REGION = os.environ.get("S3_REGION", "")
 S3_ENDPOINT_URL = os.environ.get("S3_ENDPOINT_URL", "")

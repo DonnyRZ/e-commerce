@@ -76,6 +76,11 @@ export default function OrdersPage() {
       <h1 className="text-2xl font-semibold tracking-tight lg:text-3xl">
         {t("orders.title")}
       </h1>
+      {orders.length > 0 ? (
+        <p data-testid="orders-preorder-label" className="mt-3 text-sm font-medium text-primary">
+          {t("preorder.label")}
+        </p>
+      ) : null}
       {ordersQuery.isLoading ? (
         <Skeleton className="mt-8 h-40 w-full" />
       ) : orders.length === 0 ? (

@@ -173,8 +173,8 @@ export default function CheckoutPage() {
     } catch (err) {
       const d = err?.response?.data?.detail;
       const code = typeof d === "string" ? d : d?.error;
-      if (code === "insufficient_stock" || code === "unavailable_item") {
-        toast.error(t("checkout.stockError"));
+      if (code === "unavailable_item") {
+        toast.error(t("checkout.failed"));
         queryClient.invalidateQueries({ queryKey: ["cart"] });
         queryClient.invalidateQueries({ queryKey: ["checkout-quote"] });
       } else if (code === "empty_cart") {

@@ -47,14 +47,12 @@ export default function ProductCard({ product }) {
           />
         </Link>
         <div className="absolute left-2 top-2 flex flex-wrap gap-1">
-          {product.isDemo ? (
-            <span
-              data-testid={`badge-preview-${product.slug || product.id}`}
-              className="bg-[#FDF7E9] px-2 py-0.5 text-[11px] font-semibold tracking-wide text-[#02422C] shadow-sm"
-            >
-              {t("product.catalog")}
-            </span>
-          ) : null}
+          <span
+            data-testid={`badge-preorder-${product.slug || product.id}`}
+            className="bg-[#FDF7E9] px-2 py-0.5 text-[11px] font-semibold tracking-wide text-[#02422C] shadow-sm"
+          >
+            {t("preorder.label")}
+          </span>
           {product.badge ? (
             <span
               data-testid={`badge-${product.badge}-${product.slug || product.id}`}
@@ -99,11 +97,9 @@ export default function ProductCard({ product }) {
       <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
         {product.meta}
       </p>
-      {product.isDemo ? (
-        <p data-testid={`preview-label-${product.slug || product.id}`} className="mt-0.5 text-[11px] text-primary">
-          {t("product.catalogLabel")}
-        </p>
-      ) : null}
+      <p data-testid={`preorder-label-${product.slug || product.id}`} className="mt-0.5 text-[11px] text-primary">
+        {t("preorder.label")}
+      </p>
       <h3 className="mt-0.5 text-sm font-medium leading-snug">
         <Link to={href} className="hover:underline">
           {product.name}
@@ -114,21 +110,6 @@ export default function ProductCard({ product }) {
         compareAt={product.compareAt}
         className="mt-1"
       />
-      {product.stockState === "out_of_stock" && !product.isDemo ? (
-        <p
-          data-testid={`stock-out-${product.slug || product.id}`}
-          className="mt-1 text-xs font-medium text-destructive"
-        >
-          {t("product.outOfStock")}
-        </p>
-      ) : product.stockState === "low_stock" ? (
-        <p
-          data-testid={`stock-low-${product.slug || product.id}`}
-          className="mt-1 text-xs font-medium text-primary"
-        >
-          {t("product.lowStock")}
-        </p>
-      ) : null}
     </article>
   );
 }

@@ -95,12 +95,10 @@ export default function ProductPage() {
 
   useEffect(() => {
     if (!variants.length || Object.keys(selected).length) return;
-    const first = product?.is_demo
-      ? variants[0]
-      : variants.find((v) => v.stock_quantity > 0) || variants[0];
+    const first = variants[0];
     setSelected({ ...first.option_values });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [product?.is_demo, variants]);
+  }, [variants]);
 
   useEffect(() => {
     if (product) {
@@ -108,11 +106,10 @@ export default function ProductPage() {
     }
   }, [product, locale]);
 
-  const isValueInStock = (dimKey, value) =>
+  const isValueAvailable = (dimKey, value) =>
     variants.some(
       (v) =>
         v.option_values[dimKey] === value &&
-        (product?.is_demo || v.stock_quantity > 0) &&
         dimensions.every(
           (d) => d.key === dimKey || !selected[d.key] || v.option_values[d.key] === selected[d.key]
         )
@@ -191,17 +188,13 @@ export default function ProductPage() {
     ? selectedVariant.price_override ?? product.base_price
     : product.compare_at_price;
 
-  const stockQty = selectedVariant?.stock_quantity ?? null;
-  const isDemo = Boolean(product.is_demo);
-  const outOfStock = selectedVariant ? !isDemo && stockQty <= 0 : false;
-  const lowStock = selectedVariant ? !isDemo && stockQty > 0 && stockQty <= 5 : false;
-  const maxQty = isDemo ? 10 : stockQty ? Math.min(stockQty, 10) : 10;
+  const maxQty = 99;
   const category = product.category;
   const department = category?.department;
   const ancestors = category?.ancestors || (department ? [department] : []);
 
   const addToCart = async () => {
-    if (!selectedVariant || outOfStock) return;
+    if (!selectedVariant) return;
     try {
       await addCartItem({
         product_id: product.id,
@@ -213,10 +206,8 @@ export default function ProductPage() {
       });
     } catch (e) {
       const d = e?.response?.data?.detail;
-      if (d?.error === "demo_quantity_limit") {
-        toast.error(t("cart.demoQuantityLimit", { count: d.available }));
-      } else if (d?.error === "insufficient_stock") {
-        toast.error(t("cart.exceedsStock", { count: d.available }));
+      if (d?.error === "quantity_limit") {
+        toast.error(t("cart.quantityLimit", { count: d.maximum }));
       } else {
         toast.error(t("errors.generic"));
       }
@@ -372,11 +363,9 @@ export default function ProductPage() {
 
         <div data-testid="pdp-panel" className="lg:sticky lg:top-28 lg:self-start">
           <div className="flex items-center gap-2">
-            {product.is_demo ? (
-              <span data-testid="pdp-badge-preview" className="bg-[#FDF7E9] px-2 py-0.5 text-[11px] font-semibold tracking-wide text-[#02422C]">
-                {t("product.catalog")}
-              </span>
-            ) : null}
+            <span data-testid="pdp-badge-preorder" className="bg-[#FDF7E9] px-2 py-0.5 text-[11px] font-semibold tracking-wide text-[#02422C]">
+              {t("preorder.label")}
+            </span>
             {product.new_arrival ? (
               <span data-testid="pdp-badge-new" className="bg-foreground px-2 py-0.5 text-[11px] font-semibold tracking-wide text-background">
                 {t("product.new")}
@@ -399,11 +388,9 @@ export default function ProductPage() {
           <h1 data-testid="pdp-title" className="mt-1 text-2xl font-semibold tracking-tight lg:text-3xl">
             {name}
           </h1>
-          {product.is_demo ? (
-            <p data-testid="pdp-preview-notice" className="mt-2 text-sm leading-relaxed text-primary">
-              {t("pdp.catalogNotice")}
-            </p>
-          ) : null}
+          <p data-testid="pdp-preorder-notice" className="mt-2 text-sm leading-relaxed text-primary">
+            {t("preorder.label")}
+          </p>
           <p data-testid="pdp-sku" className="mt-1 text-xs text-muted-foreground">
             {t("pdp.sku")}: {selectedVariant?.sku || "-"}
           </p>
@@ -427,7 +414,7 @@ export default function ProductPage() {
               <div className="flex flex-wrap gap-2">
                 {dim.values.map((value) => {
                   const exists = variants.some((v) => v.option_values[dim.key] === value);
-                  const comboInStock = isValueInStock(dim.key, value);
+                  const comboAvailable = isValueAvailable(dim.key, value);
                   const isActive = selected[dim.key] === value;
                   return dim.key === "color" ? (
                     <button
@@ -444,7 +431,7 @@ export default function ProductPage() {
                           : exists
                             ? "border-border hover:border-foreground"
                             : "border-border opacity-30"
-                      } ${exists && !comboInStock ? "opacity-50" : ""}`}
+                        } ${exists && !comboAvailable ? "opacity-50" : ""}`}
                       style={{ backgroundColor: colorHex(value) }}
                     />
                   ) : (
@@ -461,7 +448,7 @@ export default function ProductPage() {
                           : exists
                             ? "border-border hover:border-foreground"
                             : "border-border text-muted-foreground opacity-40 line-through"
-                      } ${exists && !comboInStock && !isActive ? "opacity-50" : ""}`}
+                      } ${exists && !comboAvailable && !isActive ? "opacity-50" : ""}`}
                     >
                       {value}
                     </button>
@@ -470,26 +457,6 @@ export default function ProductPage() {
               </div>
             </div>
           ))}
-
-          <div className="mt-5" data-testid="pdp-stock">
-            {isDemo ? (
-              <p data-testid="pdp-stock-demo" className="text-sm font-medium text-primary">
-                {t("pdp.catalogNotice")}
-              </p>
-            ) : outOfStock ? (
-              <p data-testid="pdp-stock-out" className="text-sm font-medium text-destructive">
-                {t("product.outOfStock")}
-              </p>
-            ) : lowStock ? (
-              <p data-testid="pdp-stock-low" className="text-sm font-medium text-primary">
-                {t("pdp.onlyLeft", { count: stockQty })}
-              </p>
-            ) : selectedVariant ? (
-              <p data-testid="pdp-stock-in" className="text-sm text-muted-foreground">
-                {t("product.inStock")}
-              </p>
-            ) : null}
-          </div>
 
           <div className="mt-5 flex items-center gap-4">
             <div className="flex items-center border border-border" data-testid="pdp-quantity">
@@ -524,12 +491,12 @@ export default function ProductPage() {
             <button
               type="button"
               data-testid="pdp-add-to-cart"
-              disabled={!selectedVariant || outOfStock || cartMutationsBlocked}
+              disabled={!selectedVariant || cartMutationsBlocked}
               onClick={addToCart}
               className="flex h-12 flex-1 items-center justify-center gap-2 bg-foreground text-sm font-semibold text-background transition-colors hover:bg-primary disabled:cursor-not-allowed disabled:opacity-40"
             >
               <ShoppingBag className="h-4 w-4" aria-hidden="true" />
-              {outOfStock ? t("product.outOfStock") : t("pdp.addToCart")}
+              {t("pdp.addToCart")}
             </button>
             <button
               type="button"

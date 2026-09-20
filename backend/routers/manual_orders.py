@@ -21,17 +21,17 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import csrf_protect, require_roles
-from checkout.service import _reserved_quantities, expire_due_reservations
 from cms.service import audit
 from config import (
     APP_ENV,
+    ADMIN_TO_CUSTOMER_TRANSIT_DAYS,
     FRONTEND_URL,
     PAYMENT_EVIDENCE_MAX_BYTES,
+    PREORDER_ESTIMATE_DAYS,
     SUPPLIER_TO_ADMIN_TRANSIT_DAYS,
     TELEGRAM_BOT_TOKEN,
 )
 from db.models import (
-    InventoryReservation,
     ManualPaymentEvidence,
     CmsAuditLog,
     Order,
@@ -550,6 +550,8 @@ async def create_manual_order(
         status="pending_payment",
         idempotency_key=idempotency_key,
         order_source="telegram_manual",
+        fulfillment_mode="pre_order",
+        preorder_estimate_days=PREORDER_ESTIMATE_DAYS,
     )
     session.add(order)
     await session.flush()
@@ -743,73 +745,12 @@ async def confirm_manual_payment(
         return await _admin_order_payload(session, order)
     if payment.status != "pending_review":
         raise _error(409, "payment_evidence_required")
-    items = (
-        (
-            await session.execute(
-                select(OrderItem)
-                .where(OrderItem.order_id == order.id)
-                .order_by(OrderItem.variant_id)
-                .with_for_update()
-            )
-        )
-        .scalars()
-        .all()
-    )
-    variant_ids = sorted({item.variant_id for item in items if item.variant_id})
-    variants = {}
-    for variant_id in variant_ids:
-        variants[variant_id] = await session.scalar(
-            select(ProductVariant)
-            .where(ProductVariant.id == variant_id)
-            .with_for_update()
-        )
-    await expire_due_reservations(session)
-    reserved = await _reserved_quantities(session, variant_ids)
-    committed = (
-        (
-            await session.execute(
-                select(InventoryReservation).where(
-                    InventoryReservation.order_id == order.id,
-                    InventoryReservation.status == "committed",
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if committed:
-        raise _error(409, "inventory_already_committed")
-    for item in items:
-        variant = variants.get(item.variant_id)
-        if not variant:
-            raise _error(409, "catalog_item_missing", sku=item.sku)
-        active_other = reserved.get(variant.id, 0)
-        if variant.stock_quantity - active_other < item.quantity:
-            raise _error(
-                409,
-                "insufficient_stock",
-                sku=item.sku,
-                available=max(0, variant.stock_quantity - active_other),
-            )
     now = utcnow()
-    for item in items:
-        variant = variants[item.variant_id]
-        variant.stock_quantity -= item.quantity
-        session.add(
-            InventoryReservation(
-                order_id=order.id,
-                product_variant_id=variant.id,
-                quantity=item.quantity,
-                status="committed",
-                expires_at=now,
-                committed_at=now,
-            )
-        )
     payment.status = "paid"
     payment.paid_at = now
     payment.reviewed_by = user.id
     payment.reviewed_at = now
-    payment.review_note = "Manual transfer verified by admin"
+    payment.review_note = "Manual transfer verified by admin; pre-order procurement started"
     order.payment_state = "paid"
     order.status = "paid"
     await audit(
@@ -924,6 +865,10 @@ async def update_manual_fulfillment(
         stage.expected_at = stage.shipped_at + timedelta(
             days=SUPPLIER_TO_ADMIN_TRANSIT_DAYS
         )
+    elif payload.stage == "customer_shipping":
+        stage.expected_at = stage.shipped_at + timedelta(
+            days=ADMIN_TO_CUSTOMER_TRANSIT_DAYS
+        )
     order.status = transition["to"]
     await audit(
         session,
@@ -1006,6 +951,8 @@ async def _admin_order_payload(session: AsyncSession, order: Order) -> dict:
         "status": order.status,
         "payment_state": order.payment_state,
         "order_source": order.order_source,
+        "fulfillment_mode": order.fulfillment_mode,
+        "preorder_estimate_days": order.preorder_estimate_days,
         "grand_total": order.grand_total,
         "currency": order.currency,
         "subtotal": order.subtotal,

@@ -47,6 +47,8 @@ services:
       MEDIA_ROOT: /app/uploads
       PAYMENT_EVIDENCE_ROOT: /app/payment-evidence
       SUPPLIER_TO_ADMIN_TRANSIT_DAYS: "14"
+      ADMIN_TO_CUSTOMER_TRANSIT_DAYS: "7"
+      PREORDER_ESTIMATE_DAYS: "21"
     ports:
       - "8000:8000"
     volumes:

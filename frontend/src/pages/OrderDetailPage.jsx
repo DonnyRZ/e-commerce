@@ -99,6 +99,9 @@ export default function OrderDetailPage() {
         )}{" "}
         · {order.email}
       </p>
+      <p data-testid="order-preorder-label" className="mt-3 text-sm font-medium text-primary">
+        {t("preorder.label")}
+      </p>
 
       {order.timeline?.length ? (
         <section className="mt-6 border border-border bg-secondary/30 p-5" data-testid="customer-order-timeline">

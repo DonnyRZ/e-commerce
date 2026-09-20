@@ -26,11 +26,11 @@ COPY = {
         "price": "Harga satuan",
         "line_total": "Total item",
         "subtotal": "Subtotal sementara",
-        "request_note": "Ini adalah permintaan konfirmasi, bukan pesanan final. Admin akan mengonfirmasi stok, harga akhir, dan ongkir di chat ini.",
+        "request_note": "Ini adalah permintaan konfirmasi pre-order, bukan pesanan final. Estimasi proses hingga 3 minggu; admin akan mengonfirmasi harga akhir dan ongkir di chat ini.",
         "expired": "Referensi keranjang ini sudah kedaluwarsa. Silakan kembali ke toko dan kirim permintaan baru.",
         "prefill": "Halo, saya ingin mengonfirmasi keranjang. Referensi: {reference}",
-        "status": "Status stok",
-        "unavailable": "Perlu dikonfirmasi",
+        "status": "Mode pemesanan",
+        "unavailable": "Pre-order · estimasi hingga 3 minggu",
     },
     "en": {
         "title": "Cart confirmation request",
@@ -42,11 +42,11 @@ COPY = {
         "price": "Unit price",
         "line_total": "Line total",
         "subtotal": "Current subtotal",
-        "request_note": "This is an inquiry, not a final order. Our admin will confirm stock, final prices, and shipping in this chat.",
+        "request_note": "This is a pre-order inquiry, not a final order. Allow up to 3 weeks; our admin will confirm the final price and shipping in this chat.",
         "expired": "This cart reference has expired. Please return to the store and send a new request.",
         "prefill": "Hello, I would like to confirm my cart. Reference: {reference}",
-        "status": "Stock status",
-        "unavailable": "To be confirmed",
+        "status": "Ordering mode",
+        "unavailable": "Pre-order · estimated up to 3 weeks",
     },
     "uz": {
         "title": "Savatni tasdiqlash so‘rovi",
@@ -58,11 +58,11 @@ COPY = {
         "price": "Birlik narxi",
         "line_total": "Mahsulot jami",
         "subtotal": "Joriy oraliq jami",
-        "request_note": "Bu yakuniy buyurtma emas, tasdiqlash so‘rovi. Adminimiz ushbu chatda mavjudlik, yakuniy narx va yetkazib berishni tasdiqlaydi.",
+        "request_note": "Bu yakuniy buyurtma emas, pre-order so‘rovi. Jarayon 3 haftagacha davom etishi mumkin; adminimiz yakuniy narx va yetkazib berishni tasdiqlaydi.",
         "expired": "Savat havolasining muddati tugagan. Do‘konga qaytib, yangi so‘rov yuboring.",
         "prefill": "Salom, savatimni tasdiqlamoqchiman. Havola: {reference}",
-        "status": "Zaxira holati",
-        "unavailable": "Tasdiqlanishi kerak",
+        "status": "Buyurtma rejimi",
+        "unavailable": "Pre-order · 3 haftagacha taxminiy muddat",
     },
     "ru": {
         "title": "Запрос на подтверждение корзины",
@@ -74,11 +74,11 @@ COPY = {
         "price": "Цена за единицу",
         "line_total": "Сумма по товару",
         "subtotal": "Текущая сумма",
-        "request_note": "Это запрос, а не окончательный заказ. Администратор подтвердит наличие, итоговые цены и доставку в этом чате.",
+        "request_note": "Это запрос на предзаказ, а не окончательный заказ. Процесс может занять до 3 недель; администратор подтвердит итоговую цену и доставку в этом чате.",
         "expired": "Срок действия ссылки на корзину истёк. Вернитесь в магазин и отправьте новый запрос.",
         "prefill": "Здравствуйте, хочу подтвердить корзину. Ссылка: {reference}",
-        "status": "Наличие",
-        "unavailable": "Требует подтверждения",
+        "status": "Режим заказа",
+        "unavailable": "Предзаказ · ориентировочно до 3 недель",
     },
 }
 
@@ -155,8 +155,7 @@ def _item_caption(item: dict, locale: str) -> str:
             f"{labels['line_total']}: {_price(item['line_total'])} UZS",
         )
     )
-    if item.get("availability") not in {"in_stock", "low_stock"}:
-        rows.append(f"{labels['status']}: {labels['unavailable']}")
+    rows.append(f"{labels['status']}: {labels['unavailable']}")
     return "\n".join(rows)
 
 

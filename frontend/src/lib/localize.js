@@ -41,7 +41,7 @@ export function toCardProduct(p, locale) {
     compareAt: p.compare_at_price,
     colors: (Array.isArray(p.colors) ? p.colors : []).map(colorHex),
     meta: (p.brand || "").toUpperCase(),
-    isDemo: Boolean(p.is_demo),
+    isDemo: false,
     badge: p.compare_at_price ? "sale" : p.new_arrival ? "new" : null,
     stockState: p.stock_state,
     href: `/product/${p.slug}`,

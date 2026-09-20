@@ -9,7 +9,7 @@ export default function FilterPanel({ meta, params, setParam, clearAll }) {
 
   const hasActive =
     params.min_price || params.max_price || params.color || params.size ||
-    params.volume || params.motif || params.format || params.availability;
+    params.volume || params.motif || params.format;
 
   return (
     <div data-testid="filter-panel" className="space-y-7">
@@ -151,23 +151,6 @@ export default function FilterPanel({ meta, params, setParam, clearAll }) {
         ) : null
       )}
 
-      <div>
-        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {t("plp.availability")}
-        </p>
-        <label className="flex cursor-pointer items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            data-testid="filter-in-stock"
-            checked={params.availability === "in_stock"}
-            onChange={(e) =>
-              setParam("availability", e.target.checked ? "in_stock" : "")
-            }
-            className="h-4 w-4 accent-primary"
-          />
-          {t("plp.inStock")}
-        </label>
-      </div>
     </div>
   );
 }

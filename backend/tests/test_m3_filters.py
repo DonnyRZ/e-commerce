@@ -58,7 +58,7 @@ def test_filter_by_size_xxl_returns_hoodie(s):
 
 
 # ---------- Availability ----------
-def test_availability_out_of_stock(s):
+def test_legacy_availability_filter_does_not_hide_preorders(s):
     r = s.get(f"{API}/products", params={"availability": "out_of_stock"})
     assert r.status_code == 200
     items = r.json().get("items", [])
@@ -66,12 +66,12 @@ def test_availability_out_of_stock(s):
     assert "tropical-moist-cream-50ml" in slugs
 
 
-def test_availability_in_stock_excludes_oos(s):
+def test_legacy_in_stock_filter_still_returns_preorders(s):
     r = s.get(f"{API}/products", params={"availability": "in_stock", "limit": 50})
     assert r.status_code == 200
     items = r.json().get("items", [])
     slugs = [p["slug"] for p in items]
-    assert "tropical-moist-cream-50ml" not in slugs
+    assert "tropical-moist-cream-50ml" in slugs
 
 
 # ---------- Price range ----------

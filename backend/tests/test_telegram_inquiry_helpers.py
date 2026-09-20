@@ -31,7 +31,7 @@ def _cart():
                 "quantity": 2,
                 "unit_price": 189000,
                 "line_total": 378000,
-                "availability": "in_stock",
+                "availability": "pre_order",
                 "image_url": "https://cdn.example.test/musk.jpg",
             },
             {
@@ -42,7 +42,7 @@ def _cart():
                 "quantity": 1,
                 "unit_price": 0,
                 "line_total": 0,
-                "availability": "out_of_stock",
+                "availability": "pre_order",
                 "image_url": None,
             },
         ],
@@ -74,7 +74,7 @@ def test_long_fallback_summary_keeps_every_item_under_telegram_text_limit():
             "unit_price": 1000,
             "sku": f"SKU-{index}",
             "option_values": {},
-            "availability": "in_stock",
+            "availability": "pre_order",
             "image_url": None,
         }
         for index in range(90)
@@ -95,7 +95,7 @@ def test_rich_message_has_a_slide_for_each_item_and_escapes_content(monkeypatch)
     assert rich_html.count("<figure>") == 2
     assert "<img src=\"https://cdn.example.test/musk.jpg\"/>" in rich_html
     assert "Musk &lt;Tharah&gt;" in rich_html
-    assert "out of stock" not in rich_html
+    assert "pre-order" in rich_html.lower()
     assert "bukan pesanan final" in rich_html.lower()
 
 

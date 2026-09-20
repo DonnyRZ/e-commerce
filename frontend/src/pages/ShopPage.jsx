@@ -62,7 +62,7 @@ export default function ShopPage() {
   };
   const clearFilters = () => {
     const next = new URLSearchParams(searchParams);
-    ["min_price", "max_price", "color", "size", "volume", "motif", "format", "availability", "page"].forEach((k) =>
+    ["min_price", "max_price", "color", "size", "volume", "motif", "format", "page"].forEach((k) =>
       next.delete(k)
     );
     setSearchParams(next);
@@ -100,7 +100,6 @@ export default function ShopPage() {
         volume: params.volume,
         motif: params.motif,
         format: params.format,
-        availability: params.availability,
       }),
     placeholderData: (prev) => prev,
   });
@@ -134,7 +133,7 @@ export default function ShopPage() {
   const data = productsQuery.data;
   const products = (data?.items || []).map((p) => toCardProduct(p, locale));
   const hasActiveFilters = [
-    "q", "badge", "min_price", "max_price", "color", "size", "volume", "motif", "format", "availability",
+    "q", "badge", "min_price", "max_price", "color", "size", "volume", "motif", "format",
   ].some((key) => params[key]);
 
   return (

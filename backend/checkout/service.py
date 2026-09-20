@@ -1,13 +1,9 @@
-"""Checkout domain service — server-authoritative totals, order creation,
-inventory reservation lifecycle.
+"""Checkout domain service — server-authoritative totals and order creation.
 
-Reservation strategy (single consistent model):
-- physical stock is NOT reduced at reservation time
-- availability = stock_quantity - SUM(active reservations)
-- on payment success: lock reservation + variant rows, decrement stock once,
-  mark reservation committed
-- on payment failure/cancel/expiry: active reservations -> released
-- TTL expiry: lazy sweep marks overdue active reservations expired
+Public checkout is currently disabled. Storefront cart and manual Telegram
+orders use the pre-order model: stock is informational compatibility data and
+never gates ordering, is not reserved, and is not decremented for new orders.
+Legacy reservation helpers remain only for historical/admin compatibility.
 """
 
 import secrets
@@ -19,7 +15,12 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import BASE_CURRENCY, CHECKOUT_ENABLED, INVENTORY_RESERVATION_TTL_MINUTES
+from config import (
+    BASE_CURRENCY,
+    CHECKOUT_ENABLED,
+    INVENTORY_RESERVATION_TTL_MINUTES,
+    PREORDER_ESTIMATE_DAYS,
+)
 from db.models import (
     Cart,
     CartItem,
@@ -111,7 +112,6 @@ async def compute_cart_totals(
         if not locked_cart:
             raise CheckoutError("cart_not_found", 404)
         cart = locked_cart
-    await expire_due_reservations(session)
     item_query = select(CartItem).where(CartItem.cart_id == cart.id).order_by(CartItem.id)
     if lock:
         item_query = item_query.with_for_update()
@@ -158,7 +158,6 @@ async def compute_cart_totals(
         variant.id: variant
         for variant in (await session.execute(variant_query)).scalars().all()
     }
-    reserved = await _reserved_quantities(session, variant_ids)
     items = []
     subtotal = 0
     for row in rows:
@@ -186,22 +185,10 @@ async def compute_cart_totals(
             or not product
             or variant.product_id != product.id
             or product.status != "active"
-            or product.is_demo
             or not category
             or category.kind != "category"
         ):
             raise CheckoutError("unavailable_item", 409, {"variant_id": row.variant_id})
-        available = variant.stock_quantity - reserved.get(variant.id, 0)
-        if row.quantity > available:
-            raise CheckoutError(
-                "insufficient_stock",
-                409,
-                {
-                    "variant_id": variant.id,
-                    "sku": variant.sku,
-                    "available": max(available, 0),
-                },
-            )
         unit_price = (
             variant.sale_price_override
             if variant.sale_price_override is not None
@@ -294,6 +281,8 @@ async def create_order(
         payment_state="unpaid",
         status="pending_payment",
         idempotency_key=idempotency_key,
+        fulfillment_mode="pre_order",
+        preorder_estimate_days=PREORDER_ESTIMATE_DAYS,
     )
     session.add(order)
     try:
@@ -314,7 +303,6 @@ async def create_order(
             )
             return existing, False
         raise
-    expires_at = now + timedelta(minutes=INVENTORY_RESERVATION_TTL_MINUTES)
     for item in totals["items"]:
         product, variant, row = item["product"], item["variant"], item["row"]
         session.add(
@@ -332,15 +320,6 @@ async def create_order(
                 line_total=item["line_total"],
             )
         )
-        session.add(
-            InventoryReservation(
-                order_id=order.id,
-                product_variant_id=variant.id,
-                quantity=row.quantity,
-                status="active",
-                expires_at=expires_at,
-            )
-        )
     # one seller-scoped fulfillment row per participating seller
     for seller_id in sorted({item["product"].seller_id for item in totals["items"]}):
         session.add(SellerOrderFulfillment(order_id=order.id, seller_id=seller_id))
@@ -354,80 +333,13 @@ ORDER_PAYMENT_STATE_REVIEW = "review"
 
 
 async def reconcile_paid_effects(session: AsyncSession, order: Order) -> bool:
-    """Commit inventory for a successfully Completed payment — atomically.
+    """Keep the legacy hook harmless under the pre-order fulfillment model.
 
-    HARD RULE: only reservations still `active` commit directly.
-    Expired/released reservations are NEVER reactivated or committed;
-    instead stock is reacquired under row locks and an auditable
-    replacement reservation (reacquired_from -> original row) is created.
-    If any quantity cannot be reacquired, NOTHING is applied and False is
-    returned so the caller can route payment/order into explicit
-    reconciliation states instead of overselling.
+    Older payment integrations used this hook to commit inventory. New
+    pre-order payments do not reserve or decrement stock, and the hook is
+    retained only so archived integrations cannot mutate inventory if called.
     """
-    now = _now()
-    reservations = (
-        await session.execute(
-            select(InventoryReservation)
-            .where(InventoryReservation.order_id == order.id)
-            .order_by(InventoryReservation.product_variant_id)
-            .with_for_update()
-        )
-    ).scalars().all()
-    to_commit = [r for r in reservations if r.status == "active"]
-    to_reacquire = [r for r in reservations if r.status in ("expired", "released")]
-
-    variant_ids = sorted({r.product_variant_id for r in to_commit + to_reacquire})
-    variants = {}
-    for vid in variant_ids:  # deterministic lock order
-        variants[vid] = await session.scalar(
-            select(ProductVariant)
-            .where(ProductVariant.id == vid)
-            .with_for_update()
-        )
-
-    # Phase 1: feasibility check only — nothing mutates before this passes.
-    planned_reacq: dict = {}
-    for r in to_reacquire:
-        variant = variants.get(r.product_variant_id)
-        if not variant:
-            return False
-        active_reserved = await _reserved_quantities(session, [r.product_variant_id])
-        # active_reserved already includes this order's own active rows, which
-        # will also decrement stock — so only prior reacquisitions are extra.
-        available = (
-            variant.stock_quantity
-            - active_reserved.get(r.product_variant_id, 0)
-            - planned_reacq.get(r.product_variant_id, 0)
-        )
-        if r.quantity > available:
-            return False
-        planned_reacq[r.product_variant_id] = (
-            planned_reacq.get(r.product_variant_id, 0) + r.quantity
-        )
-
-    # Phase 2: apply. Committed rows are excluded from both lists on any
-    # retry, so repeated calls can never double-decrement.
-    for r in to_commit:
-        variant = variants.get(r.product_variant_id)
-        if variant:
-            variant.stock_quantity -= r.quantity
-        r.status = "committed"
-        r.committed_at = now
-    for r in to_reacquire:
-        variant = variants[r.product_variant_id]
-        variant.stock_quantity -= r.quantity
-        # historical expired/released row stays untouched — auditable trail
-        session.add(
-            InventoryReservation(
-                order_id=order.id,
-                product_variant_id=r.product_variant_id,
-                quantity=r.quantity,
-                status="committed",
-                expires_at=now,
-                committed_at=now,
-                reacquired_from=r.id,
-            )
-        )
+    _ = (session, order)
     return True
 
 

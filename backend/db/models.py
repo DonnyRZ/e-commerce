@@ -338,6 +338,8 @@ class Order(TimestampMixin, Base):
     # cart that produced this order — exactly-once cart clearing on payment
     cart_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     order_source: Mapped[str] = mapped_column(String(30), default="checkout")
+    fulfillment_mode: Mapped[str] = mapped_column(String(20), default="pre_order")
+    preorder_estimate_days: Mapped[int] = mapped_column(Integer, default=21)
 
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"

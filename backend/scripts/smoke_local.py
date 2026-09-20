@@ -63,7 +63,8 @@ def main() -> int:
     )
     product = products["items"][0]
     detail = check(public.get(f"{BASE}/api/v1/catalog/products/{product['slug']}", timeout=TIMEOUT))
-    variant = next(v for v in detail["variants"] if v["is_active"] and v["stock_quantity"] > 0)
+    # Pre-order availability is based on active catalog state, not stock.
+    variant = next(v for v in detail["variants"] if v["is_active"])
     cart = check(
         public.post(
             f"{BASE}/api/v1/cart/items",

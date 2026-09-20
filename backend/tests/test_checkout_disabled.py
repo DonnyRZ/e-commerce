@@ -9,21 +9,21 @@ BASE = os.environ.get("REACT_APP_BACKEND_URL", "http://127.0.0.1:8000").rstrip("
 API = f"{BASE}/api/v1"
 
 
-def _in_stock_product():
+def _preorder_product():
     response = requests.get(
         f"{API}/catalog/products",
-        params={"limit": 60, "availability": "in_stock"},
+        params={"limit": 60},
         timeout=10,
     )
     assert response.status_code == 200, response.text
     product = next(
-        item for item in response.json()["items"] if item["is_demo"]
+        item for item in response.json()["items"]
     )
     detail = requests.get(f"{API}/catalog/products/{product['slug']}", timeout=10)
     assert detail.status_code == 200, detail.text
     variant = next(
         item for item in detail.json()["variants"]
-        if item["is_active"] and item["stock_quantity"] > 0
+        if item["is_active"]
     )
     return product, variant
 
@@ -69,7 +69,7 @@ def test_checkout_mutations_fail_closed():
 
 
 def test_cart_remains_available_while_checkout_is_disabled():
-    product, variant = _in_stock_product()
+    product, variant = _preorder_product()
     session = requests.Session()
     added = session.post(
         f"{API}/cart/items",

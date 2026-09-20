@@ -40,6 +40,8 @@ def _summary(order: Order, item_count: int) -> dict:
         "created_at": order.created_at,
         "status": order.status,
         "payment_state": order.payment_state,
+        "fulfillment_mode": order.fulfillment_mode,
+        "preorder_estimate_days": order.preorder_estimate_days,
         "grand_total": order.grand_total,
         "currency": order.currency,
         "item_count": item_count,
@@ -54,6 +56,8 @@ def _detail(order: Order, items) -> dict:
         "shipping_amount": order.shipping_amount,
         "shipping_method": order.shipping_method,
         "shipping_address": order.shipping_address or {},
+        "fulfillment_mode": order.fulfillment_mode,
+        "preorder_estimate_days": order.preorder_estimate_days,
         "items": [_item_out(i) for i in items],
     }
 

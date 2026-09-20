@@ -140,16 +140,16 @@ PAGES = {
         "ru": ("Свяжитесь с нами", "Напишите нам: contact@shanicantik.com. Мы отвечаем в течение одного рабочего дня."),
     },
     "shipping": {
-        "en": ("Shipping", "We ship across Uzbekistan. Standard delivery (3-5 business days) is 30,000 UZS and free for orders over 550,000 UZS. Express delivery (1-2 business days) is 65,000 UZS."),
-        "id": ("Pengiriman", "Kami mengirim ke seluruh Uzbekistan. Pengiriman standar (3-5 hari kerja) 30.000 UZS, gratis untuk pesanan di atas 550.000 UZS. Ekspres (1-2 hari kerja) 65.000 UZS."),
-        "uz": ("Yetkazib berish", "Butun O'zbekiston bo'ylab yetkazamiz. Standart (3-5 ish kuni) — 30 000 so'm, 550 000 so'mdan yuqori buyurtmalarga bepul. Ekspress (1-2 ish kuni) — 65 000 so'm."),
-        "ru": ("Доставка", "Доставляем по всему Узбекистану. Стандартная (3-5 рабочих дней) — 30 000 сум, бесплатно при заказе от 550 000 сум. Экспресс (1-2 рабочих дня) — 65 000 сум."),
+        "en": ("Shipping", "All products are pre-order. Please allow up to 3 weeks: approximately 2 weeks from Indonesia to our admin and 1 week for delivery to you. Final shipping details are confirmed by our team."),
+        "id": ("Pengiriman", "Semua produk adalah pre-order. Mohon menunggu hingga 3 minggu: sekitar 2 minggu dari Indonesia ke admin kami dan 1 minggu untuk pengiriman ke Anda. Detail pengiriman dikonfirmasi oleh tim kami."),
+        "uz": ("Yetkazib berish", "Barcha mahsulotlar pre-order asosida. 3 haftagacha kuting: Indoneziyadan adminimizgacha taxminan 2 hafta va sizgacha yetkazish uchun 1 hafta. Yakuniy yetkazish tafsilotlarini jamoamiz tasdiqlaydi."),
+        "ru": ("Доставка", "Все товары доступны по предзаказу. Ориентировочный срок — до 3 недель: около 2 недель из Индонезии до нашего администратора и 1 неделя до вас. Окончательные детали доставки подтверждает наша команда."),
     },
     "returns": {
-        "en": ("Returns", "Unused items in original packaging can be returned within 14 days of delivery. Contact us to start a return."),
-        "id": ("Pengembalian", "Produk yang belum dipakai dalam kemasan asli dapat dikembalikan dalam 14 hari setelah diterima. Hubungi kami untuk memulai pengembalian."),
-        "uz": ("Qaytarish", "Ishlatilmagan, original qadoqdagi mahsulotlarni yetkazilgandan keyin 14 kun ichida qaytarish mumkin. Qaytarish uchun bizga yozing."),
-        "ru": ("Возврат", "Неиспользованные товары в оригинальной упаковке можно вернуть в течение 14 дней после доставки. Свяжитесь с нами для оформления возврата."),
+        "en": ("Returns", "For return or exchange questions, contact our team after your pre-order is delivered. Eligibility is reviewed case by case."),
+        "id": ("Pengembalian", "Untuk pertanyaan pengembalian atau penukaran, hubungi tim kami setelah pre-order diterima. Kelayakan ditinjau berdasarkan kasus."),
+        "uz": ("Qaytarish", "Qaytarish yoki almashtirish bo'yicha savollar uchun pre-order qabul qilingandan so'ng jamoamizga murojaat qiling. Har bir holat alohida ko'rib chiqiladi."),
+        "ru": ("Возврат", "По вопросам возврата или обмена свяжитесь с нашей командой после получения предзаказа. Каждый случай рассматривается отдельно."),
     },
     "privacy": {
         "en": ("Privacy Policy", "We store only the data required to process your orders, including contact and delivery details. Payment details are not collected while online checkout is unavailable."),
@@ -190,10 +190,10 @@ FAQ_ITEMS = [
             "ru": "Сколько занимает доставка?",
         },
         "a": {
-            "en": "Standard delivery takes 3-5 business days; express takes 1-2 business days within Uzbekistan.",
-            "id": "Pengiriman standar 3-5 hari kerja; ekspres 1-2 hari kerja di seluruh Uzbekistan.",
-            "uz": "Standart yetkazish 3-5 ish kuni; ekspress 1-2 ish kuni O'zbekiston bo'ylab.",
-            "ru": "Стандартная доставка — 3-5 рабочих дней; экспресс — 1-2 рабочих дня по Узбекистану.",
+            "en": "All products are pre-order and delivery may take up to 3 weeks: about 2 weeks from Indonesia to our admin and 1 week to you.",
+            "id": "Semua produk adalah pre-order dan pengiriman dapat memerlukan hingga 3 minggu: sekitar 2 minggu dari Indonesia ke admin kami dan 1 minggu ke Anda.",
+            "uz": "Barcha mahsulotlar pre-order asosida va yetkazish 3 haftagacha davom etishi mumkin: Indoneziyadan adminimizgacha taxminan 2 hafta va sizgacha 1 hafta.",
+            "ru": "Все товары доступны по предзаказу, а доставка может занять до 3 недель: около 2 недель из Индонезии до нашего администратора и 1 недели до вас.",
         },
     },
 ]
@@ -230,6 +230,19 @@ async def seed():
             # remains authoritative and is never overwritten by a seed rerun.
             entries = (await session.execute(select(CmsContentEntry))).scalars().all()
             changed = False
+            canonical_pages = {
+                slug: {loc: {"title": value[0], "body": value[1]} for loc, value in content.items()}
+                for slug, content in PAGES.items()
+                if slug in {"shipping", "returns"}
+            }
+            canonical_faqs = {
+                item["slug"]: {
+                    loc: {"title": item["q"][loc], "body": item["a"][loc]}
+                    for loc in LOCALES
+                }
+                for item in FAQ_ITEMS
+                if item["slug"] == "shipping-time"
+            }
             for entry in entries:
                 payload = dict(entry.payload or {})
                 image_url = payload.get("image_url")
@@ -237,6 +250,24 @@ async def seed():
                     payload.pop("image_url", None)
                     entry.payload = payload
                     changed = True
+                desired = canonical_pages.get(entry.slug) or canonical_faqs.get(entry.slug)
+                if desired:
+                    translations = (
+                        await session.execute(
+                            select(CmsContentTranslation).where(
+                                CmsContentTranslation.entry_id == entry.id
+                            )
+                        )
+                    ).scalars().all()
+                    by_locale = {translation.locale: translation for translation in translations}
+                    for locale, fields in desired.items():
+                        translation = by_locale.get(locale)
+                        if not translation:
+                            continue
+                        if translation.title != fields["title"] or translation.body != fields["body"]:
+                            translation.title = fields["title"]
+                            translation.body = fields["body"]
+                            changed = True
             if changed:
                 await session.commit()
             print("cms seed: entries already exist, skipping (idempotent)")

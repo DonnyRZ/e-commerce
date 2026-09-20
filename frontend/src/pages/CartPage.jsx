@@ -113,10 +113,8 @@ export default function CartPage() {
       await updateItem(item.id, next);
     } catch (e) {
       const d = e?.response?.data?.detail;
-      if (d?.error === "demo_quantity_limit") {
-        toast.error(t("cart.demoQuantityLimit", { count: d.available }));
-      } else if (d?.error === "insufficient_stock") {
-        toast.error(t("cart.exceedsStock", { count: d.available }));
+      if (d?.error === "quantity_limit") {
+        toast.error(t("cart.quantityLimit", { count: d.maximum }));
       } else {
         toast.error(t("errors.generic"));
       }
@@ -183,23 +181,9 @@ export default function CartPage() {
                           {options ? " · " : ""}
                           {item.sku}
                         </p>
-                        {item.availability === "demo" || item.is_demo ? (
-                          <p data-testid={`cart-demo-${item.id}`} className="mt-1 text-xs font-medium text-primary">
-                            {t("pdp.catalogNotice")}
-                          </p>
-                        ) : item.availability === "out_of_stock" || item.availability === "unavailable" || item.availability === "invalid" ? (
-                          <p data-testid={`cart-oos-${item.id}`} className="mt-1 text-xs font-medium text-destructive">
-                            {t("product.outOfStock")}
-                          </p>
-                        ) : item.availability === "exceeds_stock" ? (
-                          <p data-testid={`cart-exceeds-${item.id}`} className="mt-1 text-xs font-medium text-destructive">
-                            {t("cart.exceedsStock", { count: item.stock_quantity })}
-                          </p>
-                        ) : item.availability === "low_stock" ? (
-                          <p className="mt-1 text-xs font-medium text-primary">
-                            {t("pdp.onlyLeft", { count: item.stock_quantity })}
-                          </p>
-                        ) : null}
+                        <p data-testid={`cart-preorder-${item.id}`} className="mt-1 text-xs font-medium text-primary">
+                          {t("preorder.label")}
+                        </p>
                       </div>
                       <button
                         type="button"
@@ -231,7 +215,7 @@ export default function CartPage() {
                           type="button"
                           data-testid={`cart-qty-plus-${item.id}`}
                           aria-label="Increase quantity"
-                          disabled={item.quantity >= (item.cart_max_quantity ?? item.stock_quantity) || cartMutationsBlocked}
+                          disabled={item.quantity >= 99 || cartMutationsBlocked}
                           onClick={() => handleQty(item, item.quantity + 1)}
                           className="inline-flex h-9 w-9 items-center justify-center disabled:opacity-30"
                         >
@@ -254,6 +238,9 @@ export default function CartPage() {
             })}
           </ul>
           <aside data-testid="cart-summary" className="h-fit border border-border p-5 lg:sticky lg:top-28">
+            <p data-testid="cart-preorder-label" className="mb-3 text-sm font-medium text-primary">
+              {t("preorder.label")}
+            </p>
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">{t("cart.subtotal")}</span>
               <PriceDisplay

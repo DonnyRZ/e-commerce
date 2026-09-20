@@ -12,6 +12,7 @@ from db.models import (
     ProductVariant,
 )
 from db.session import get_session
+from config import PREORDER_ESTIMATE_DAYS
 from taxonomy import (
     active_taxonomy_chain,
     active_taxonomy_ids_select,
@@ -21,8 +22,6 @@ from taxonomy import (
 )
 
 router = APIRouter(prefix="/api/v1/catalog", tags=["catalog"])
-
-LOW_STOCK_THRESHOLD = 5
 
 SORTS = {
     # Every public list has a unique final key. This keeps page boundaries
@@ -36,11 +35,9 @@ SORTS = {
 
 
 def _stock_state(total_stock: int) -> str:
-    if total_stock <= 0:
-        return "out_of_stock"
-    if total_stock <= LOW_STOCK_THRESHOLD:
-        return "low_stock"
-    return "in_stock"
+    # Kept as a compatibility field for older clients. Public availability
+    # is always pre-order and never reflects internal inventory.
+    return "pre_order"
 
 
 def _translations(obj) -> dict:
@@ -85,7 +82,9 @@ def _product_out(p: Product) -> dict:
         "tags": p.tags or [],
         "media": p.media or [],
         "status": p.status,
-        "is_demo": p.is_demo,
+        "is_demo": False,
+        "ordering_mode": "pre_order",
+        "preorder_estimate_days": PREORDER_ESTIMATE_DAYS,
         "featured": p.featured,
         "bestseller": p.bestseller,
         "new_arrival": p.new_arrival,
@@ -164,7 +163,7 @@ async def _variant_stats(session: AsyncSession, product_ids: list) -> dict:
 _EMPTY_STATS = {
     "variant_count": 0,
     "total_stock": 0,
-    "stock_state": "out_of_stock",
+    "stock_state": "pre_order",
     "colors": [],
 }
 
@@ -514,14 +513,8 @@ async def list_products(
                     **{option_key: ProductVariant.option_values[option_key].astext == option_value}
                 )
             )
-    if availability == "in_stock":
-        filters.append(
-            _variant_exists_clause(stock=ProductVariant.stock_quantity > 0)
-        )
-    elif availability == "out_of_stock":
-        filters.append(
-            ~_variant_exists_clause(stock=ProductVariant.stock_quantity > 0)
-        )
+    # Availability is retained as a deprecated query parameter for old
+    # clients, but inventory never filters pre-order catalog results.
     if q:
         like = f"%{q}%"
         filters.append(
