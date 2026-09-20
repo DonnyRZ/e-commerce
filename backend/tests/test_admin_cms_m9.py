@@ -78,9 +78,14 @@ def test_dashboard_shape(admin):
     d = r.json()
     for key in (
         "total_products", "active_products", "orders_by_status",
+        "workflow_counts", "open_inquiries", "preorders_in_progress",
         "sales_total", "recent_orders", "payment_review_count",
     ):
         assert key in d, key
+    assert set(d["workflow_counts"]) >= {
+        "inquiry", "pending_payment", "payment_review", "paid",
+        "supplier_shipping", "received_by_admin", "customer_shipping", "delivered",
+    }
 
 
 def test_settings_single_vendor(admin):

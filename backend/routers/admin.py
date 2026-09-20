@@ -39,6 +39,7 @@ from db.models import (
     ProductTranslation,
     ProductVariant,
     SellerOrderFulfillment,
+    TelegramCartInquiry,
     User,
     WishlistItem,
 )
@@ -68,6 +69,7 @@ from routers.seller import (
 )
 from checkout.service import _reserved_quantities
 from taxonomy import TAXONOMY_KINDS, descendant_ids_select, get_root_category
+from routers.manual_orders import ACTIONABLE_ORDER_STATUSES, WORKFLOW_STAGES
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -210,8 +212,19 @@ async def admin_dashboard(
         await session.execute(select(Order.status, func.count()).group_by(Order.status))
     ).all()
     orders_by_status = {status: count for status, count in order_counts}
-    review_payments = await session.scalar(
-        select(func.count(Payment.id)).where(Payment.status == "reconciliation_required")
+    inquiry_rows = (
+        await session.execute(
+            select(TelegramCartInquiry)
+            .where(
+                TelegramCartInquiry.order_id.is_(None),
+                TelegramCartInquiry.status.in_(["pending", "sending", "sent"]),
+                TelegramCartInquiry.expires_at > _now(),
+            )
+            .order_by(TelegramCartInquiry.created_at.desc())
+        )
+    ).scalars().all()
+    open_inquiries = sum(
+        1 for inquiry in inquiry_rows if (inquiry.snapshot or {}).get("items")
     )
     sales = await session.scalar(
         select(func.coalesce(func.sum(Order.grand_total), 0)).where(Order.payment_state == "paid")
@@ -235,14 +248,28 @@ async def admin_dashboard(
                 "item_count": int(count or 0),
             }
         )
+    workflow_counts = {
+        stage: int(orders_by_status.get(stage, 0)) for stage in WORKFLOW_STAGES
+    }
+    workflow_counts["inquiry"] = open_inquiries
+    orders_needing_action = open_inquiries + sum(
+        int(orders_by_status.get(status, 0)) for status in ACTIONABLE_ORDER_STATUSES
+    )
+    preorders_in_progress = sum(
+        int(orders_by_status.get(status, 0))
+        for status in ("paid", "supplier_shipping", "received_by_admin", "customer_shipping")
+    )
     return {
         "total_products": int(total_products or 0),
         "active_products": int(active_products or 0),
         "low_stock_variants": low_stock,
         "out_of_stock_variants": out_of_stock,
         "orders_by_status": orders_by_status,
-        "orders_needing_action": orders_by_status.get("paid", 0) + orders_by_status.get("processing", 0),
-        "payment_review_count": orders_by_status.get("payment_review", 0) + int(review_payments or 0),
+        "workflow_counts": workflow_counts,
+        "open_inquiries": open_inquiries,
+        "orders_needing_action": orders_needing_action,
+        "preorders_in_progress": preorders_in_progress,
+        "payment_review_count": int(orders_by_status.get("payment_review", 0)),
         "sales_total": int(sales or 0),
         "currency": BASE_CURRENCY,
         "recent_orders": recent_orders,
