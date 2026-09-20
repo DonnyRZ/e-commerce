@@ -391,6 +391,9 @@ export default function ProductPage() {
           <p data-testid="pdp-preorder-notice" className="mt-2 text-sm leading-relaxed text-primary">
             {t("preorder.label")}
           </p>
+          <p data-testid="pdp-size-availability" className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            {t("preorder.sizeAvailability")}
+          </p>
           <p data-testid="pdp-sku" className="mt-1 text-xs text-muted-foreground">
             {t("pdp.sku")}: {selectedVariant?.sku || "-"}
           </p>
