@@ -140,10 +140,10 @@ PAGES = {
         "ru": ("Свяжитесь с нами", "Напишите нам: contact@shanicantik.com. Мы отвечаем в течение одного рабочего дня."),
     },
     "shipping": {
-        "en": ("Shipping", "All products are pre-order. Please allow up to 3 weeks: approximately 2 weeks from Indonesia to our admin and 1 week for delivery to you. Final shipping details are confirmed by our team."),
-        "id": ("Pengiriman", "Semua produk adalah pre-order. Mohon menunggu hingga 3 minggu: sekitar 2 minggu dari Indonesia ke admin kami dan 1 minggu untuk pengiriman ke Anda. Detail pengiriman dikonfirmasi oleh tim kami."),
-        "uz": ("Yetkazib berish", "Barcha mahsulotlar pre-order asosida. 3 haftagacha kuting: Indoneziyadan adminimizgacha taxminan 2 hafta va sizgacha yetkazish uchun 1 hafta. Yakuniy yetkazish tafsilotlarini jamoamiz tasdiqlaydi."),
-        "ru": ("Доставка", "Все товары доступны по предзаказу. Ориентировочный срок — до 3 недель: около 2 недель из Индонезии до нашего администратора и 1 неделя до вас. Окончательные детали доставки подтверждает наша команда."),
+        "en": ("Shipping", "All products are pre-order. Estimated delivery is 2–3 weeks. Final shipping details are confirmed by our team."),
+        "id": ("Pengiriman", "Semua produk adalah pre-order. Estimasi pengiriman 2–3 minggu. Detail pengiriman dikonfirmasi oleh tim kami."),
+        "uz": ("Yetkazib berish", "Barcha mahsulotlar pre-order asosida. Yetkazib berish muddati taxminan 2–3 hafta. Yakuniy yetkazish tafsilotlarini jamoamiz tasdiqlaydi."),
+        "ru": ("Доставка", "Все товары доступны по предзаказу. Ориентировочный срок доставки — 2–3 недели. Окончательные детали доставки подтверждает наша команда."),
     },
     "returns": {
         "en": ("Returns", "For return or exchange questions, contact our team after your pre-order is delivered. Eligibility is reviewed case by case."),
@@ -190,10 +190,10 @@ FAQ_ITEMS = [
             "ru": "Сколько занимает доставка?",
         },
         "a": {
-            "en": "All products are pre-order and delivery may take up to 3 weeks: about 2 weeks from Indonesia to our admin and 1 week to you.",
-            "id": "Semua produk adalah pre-order dan pengiriman dapat memerlukan hingga 3 minggu: sekitar 2 minggu dari Indonesia ke admin kami dan 1 minggu ke Anda.",
-            "uz": "Barcha mahsulotlar pre-order asosida va yetkazish 3 haftagacha davom etishi mumkin: Indoneziyadan adminimizgacha taxminan 2 hafta va sizgacha 1 hafta.",
-            "ru": "Все товары доступны по предзаказу, а доставка может занять до 3 недель: около 2 недель из Индонезии до нашего администратора и 1 недели до вас.",
+            "en": "All products are pre-order with an estimated delivery time of 2–3 weeks.",
+            "id": "Semua produk adalah pre-order dengan estimasi pengiriman 2–3 minggu.",
+            "uz": "Barcha mahsulotlar pre-order asosida bo‘lib, yetkazib berish muddati taxminan 2–3 hafta.",
+            "ru": "Все товары доступны по предзаказу, ориентировочный срок доставки — 2–3 недели.",
         },
     },
 ]
