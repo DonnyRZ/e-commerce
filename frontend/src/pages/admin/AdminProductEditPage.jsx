@@ -18,21 +18,21 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { adminDeleteError, inputClass } from "./adminUtils";
 
 const LOCALES = ["en", "id", "uz", "ru"];
-const EMPTY_VARIANT = { sku: "", optionsText: "", stock: 0, price_override: "", sale_price_override: "", media_id: null, image_url: "", is_active: true };
+const EMPTY_VARIANT = { sku: "", size: "", preservedOptions: {}, stock: 0, price_override: "", sale_price_override: "", media_id: null, image_url: "", is_active: true };
 
-function parseOptions(text) {
-  const out = {};
-  for (const pair of String(text).split(",")) {
-    const [k, ...rest] = pair.split("=");
-    const key = k.trim();
-    const value = rest.join("=").trim();
-    if (key && value) out[key] = value;
-  }
-  return out;
-}
+const sizeFromOptions = (obj) =>
+  typeof obj?.size === "string" || typeof obj?.size === "number" ? String(obj.size) : "";
 
-const optionsToText = (obj) =>
-  Object.entries(obj || {}).map(([k, v]) => `${k}=${v}`).join(", ");
+// The editor now exposes only the size field. Keep any existing option keys
+// (for example color, volume, or format) hidden and intact when an old product
+// is edited, so simplifying the form does not silently rewrite catalog data.
+const preservedOptionsFrom = (obj) =>
+  Object.fromEntries(Object.entries(obj || {}).filter(([key]) => key !== "size"));
+
+const optionsFromSize = (size, preservedOptions = {}) => {
+  const value = String(size || "").trim();
+  return value ? { ...preservedOptions, size: value } : { ...preservedOptions };
+};
 
 const MAX_PRODUCT_IMAGES = 8;
 
@@ -133,7 +133,7 @@ const productSaveErrorMessage = (err) => {
     invalid_sku: "SKU must be at least 2 characters and cannot contain spaces or control characters.",
     sku_exists: "That SKU is already used by another variant. Use a different SKU.",
     sku_duplicate_in_payload: "Two variants in this product use the same SKU.",
-    invalid_option_values: "Variant options must use the format color=Black, size=M.",
+    invalid_option_values: "Variant size must be a simple value such as S, M, or L.",
     invalid_variant: "One of the selected variants is no longer valid. Refresh and try again.",
     compare_price_below_base: "Compare-at price must be equal to or higher than the base price.",
     sale_price_not_below_regular: "Sale price must be lower than the regular price.",
@@ -195,7 +195,7 @@ export default function AdminProductEditPage() {
     setTr(p.translations || { en: { name: "" } });
     setVariants(
       (p.variants || []).map((v) => ({
-        id: v.id, sku: v.sku, optionsText: optionsToText(v.option_values),
+        id: v.id, sku: v.sku, size: sizeFromOptions(v.option_values), preservedOptions: preservedOptionsFrom(v.option_values),
         stock: v.stock_quantity, active_reserved: v.active_reserved,
         price_override: v.price_override != null ? String(v.price_override) : "",
         sale_price_override: v.sale_price_override != null ? String(v.sale_price_override) : "",
@@ -370,7 +370,7 @@ export default function AdminProductEditPage() {
     // when the operator leaves it blank; the backend still validates the
     // generated value and uniqueness.
     const enteredVariants = variants.filter(
-      (v) => v.id || v.sku.trim() || v.optionsText.trim() || Number(v.stock || 0) > 0
+      (v) => v.id || v.sku.trim() || v.size.trim() || Number(v.stock || 0) > 0
     );
     const candidateVariants = enteredVariants.length
       ? enteredVariants
@@ -436,7 +436,7 @@ export default function AdminProductEditPage() {
           return {
             ...(v.id ? { id: v.id } : {}),
             sku: v.sku.trim(),
-            option_values: parseOptions(v.optionsText),
+            option_values: optionsFromSize(v.size, v.preservedOptions),
             stock_quantity: stockQuantity,
             price_override: priceOverride,
             sale_price_override: salePriceOverride,
@@ -691,7 +691,7 @@ export default function AdminProductEditPage() {
               Add variant
             </button>
           </div>
-          <p className="mt-1 text-[11px] text-neutral-400">Options format: color=Black, size=M</p>
+          <p className="mt-1 text-[11px] text-neutral-400">Enter the size for this variant, for example S, M, or L.</p>
           <div className="mt-3 space-y-3">
             {variants.map((v, idx) => (
               <div key={idx} className="grid items-end gap-3 border border-neutral-100 p-3 sm:grid-cols-2 xl:grid-cols-[1fr_1.4fr_0.6fr_0.7fr_0.7fr_auto_auto]" data-testid={`editor-variant-${idx}`}>
@@ -700,8 +700,8 @@ export default function AdminProductEditPage() {
                   <input value={v.sku} onChange={(e) => setV(idx, "sku", e.target.value)} className={inputClass} data-testid={`variant-sku-${idx}`} maxLength={80} placeholder="Generated if blank" />
                 </div>
                 <div>
-                  <label className="mb-1 block text-[11px] font-medium text-neutral-500">Options</label>
-                  <input value={v.optionsText} onChange={(e) => setV(idx, "optionsText", e.target.value)} className={inputClass} data-testid={`variant-options-${idx}`} placeholder="color=Black, size=M" />
+                  <label className="mb-1 block text-[11px] font-medium text-neutral-500">Size</label>
+                  <input value={v.size} onChange={(e) => setV(idx, "size", e.target.value)} className={inputClass} data-testid={`variant-size-${idx}`} placeholder="e.g. S, M, L" />
                 </div>
                 <div>
                   <label className="mb-1 block text-[11px] font-medium text-neutral-500">
