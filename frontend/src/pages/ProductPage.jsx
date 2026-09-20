@@ -4,7 +4,7 @@ import { Heart, Minus, Plus, ShoppingBag } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
-import { getCheckoutOptions, getProduct } from "@/lib/api";
+import { getProduct } from "@/lib/api";
 import { useShop } from "@/lib/ShopContext";
 import { colorHex, pickLocalized } from "@/lib/localize";
 import EmptyState from "@/components/common/EmptyState";
@@ -43,7 +43,6 @@ export default function ProductPage() {
   const {
     addToCart: addCartItem,
     cartMutationsBlocked,
-    guestCartMode,
     toggleWishlist,
     wishlistIds,
   } = useShop();
@@ -57,13 +56,6 @@ export default function ProductPage() {
     retry: false,
   });
   const product = query.data;
-  const checkoutOptionsQuery = useQuery({
-    queryKey: ["checkout-options", guestCartMode ? "guest" : "customer"],
-    queryFn: () => getCheckoutOptions({ guest: guestCartMode }),
-    staleTime: 60 * 1000,
-    retry: false,
-  });
-
   const variants = useMemo(
     () =>
       (product?.variants || [])
@@ -204,11 +196,6 @@ export default function ProductPage() {
   const outOfStock = selectedVariant ? !isDemo && stockQty <= 0 : false;
   const lowStock = selectedVariant ? !isDemo && stockQty > 0 && stockQty <= 5 : false;
   const maxQty = isDemo ? 10 : stockQty ? Math.min(stockQty, 10) : 10;
-  const checkoutUnavailable =
-    checkoutOptionsQuery.isError ||
-    (checkoutOptionsQuery.isSuccess &&
-      checkoutOptionsQuery.data?.checkout_enabled === false);
-
   const category = product.category;
   const department = category?.department;
   const ancestors = category?.ancestors || (department ? [department] : []);
@@ -313,8 +300,6 @@ export default function ProductPage() {
         isSkincare && attrs.halal_certified && t("pdp.halalCertified"),
       ].filter(Boolean),
     },
-    { key: "delivery", title: t("pdp.delivery"), body: t("pdp.deliveryText") },
-    { key: "returns", title: t("pdp.returns"), body: t("pdp.returnsText") },
   ].filter(Boolean);
 
   return (
@@ -558,19 +543,6 @@ export default function ProductPage() {
             >
               <Heart className="h-5 w-5" fill={wished ? "currentColor" : "none"} aria-hidden="true" />
             </button>
-          </div>
-          {checkoutUnavailable ? (
-            <p
-              data-testid="pdp-checkout-unavailable"
-              className="mt-3 text-xs leading-relaxed text-muted-foreground"
-            >
-              {t("pdp.checkoutUnavailableBody")}
-            </p>
-          ) : null}
-
-          <div className="mt-6 border-t border-border pt-4 text-xs text-muted-foreground">
-            <p>{t("pdp.deliveryText")}</p>
-            <p className="mt-1">{t("pdp.returnsText")}</p>
           </div>
         </div>
       </div>
