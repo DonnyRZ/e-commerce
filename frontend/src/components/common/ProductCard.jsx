@@ -46,14 +46,8 @@ export default function ProductCard({ product }) {
             className="aspect-[3/4] w-full object-cover"
           />
         </Link>
-        <div className="absolute left-2 top-2 flex flex-wrap gap-1">
-          <span
-            data-testid={`badge-preorder-${product.slug || product.id}`}
-            className="bg-[#FDF7E9] px-2 py-0.5 text-[11px] font-semibold tracking-wide text-[#02422C] shadow-sm"
-          >
-            {t("preorder.label")}
-          </span>
-          {product.badge ? (
+        {product.badge ? (
+          <div className="absolute left-2 top-2 flex flex-wrap gap-1">
             <span
               data-testid={`badge-${product.badge}-${product.slug || product.id}`}
               className={`px-2 py-0.5 text-[11px] font-semibold tracking-wide ${
@@ -64,10 +58,10 @@ export default function ProductCard({ product }) {
             >
               {t(`product.${product.badge}`)}
             </span>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
       </div>
-      <div className="mt-2 flex items-center justify-between">
+      <div className="mt-3 flex items-center justify-between">
         <div className="flex items-center gap-1.5" data-testid={`swatches-${product.slug || product.id}`}>
           {colors.map((color) => (
             <span
@@ -97,7 +91,7 @@ export default function ProductCard({ product }) {
       <p className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">
         {product.meta}
       </p>
-      <p data-testid={`preorder-label-${product.slug || product.id}`} className="mt-0.5 text-[11px] text-primary">
+      <p data-testid={`preorder-label-${product.slug || product.id}`} className="mt-1.5 text-[11px] leading-relaxed text-primary">
         {t("preorder.label")}
       </p>
       <h3 className="mt-0.5 text-sm font-medium leading-snug">
