@@ -8,7 +8,7 @@ compose=(docker compose --env-file "$env_file" -f "$release_dir/deploy/productio
 echo "Running production migrations before starting application containers..."
 "${compose[@]}" --profile migration run --rm migrate
 
-current="$("${compose[@]}" --profile migration run --rm migrate alembic current 2>/dev/null | tail -n 1 | tr -d '\r')"
+current="$("${compose[@]}" --profile migration run --rm migrate alembic current 2>/dev/null | tail -n 1 | awk '{print $1}' | tr -d '\r')"
 head="$("${compose[@]}" --profile migration run --rm migrate alembic heads 2>/dev/null | tail -n 1 | awk '{print $1}' | tr -d '\r')"
 if [[ -z "$current" || -z "$head" || "$current" != "$head" ]]; then
   echo "Migration verification failed: current=$current head=$head" >&2
