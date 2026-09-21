@@ -15,6 +15,8 @@ const getCookie = (name) => {
   return row ? decodeURIComponent(row.split("=").slice(1).join("=")) : null;
 };
 
+export const MAX_CMS_UPLOAD_BYTES = 15 * 1024 * 1024;
+
 api.interceptors.request.use((config) => {
   if (["post", "put", "patch", "delete"].includes(config.method)) {
     const csrf = getCookie("csrf_token");
@@ -298,6 +300,11 @@ export const restoreCmsRevision = (id, revisionId) =>
 export const getCmsMedia = (params) =>
   api.get("/v1/admin/cms/media", { params }).then((r) => r.data);
 export const uploadCmsMedia = async (file) => {
+  if (file?.size > MAX_CMS_UPLOAD_BYTES) {
+    const error = new Error("Media upload failed");
+    error.response = { status: 413, data: { detail: { error: "file_too_large" } } };
+    throw error;
+  }
   const send = () => {
     const fd = new FormData();
     fd.append("file", file, file.name);
