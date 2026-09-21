@@ -301,7 +301,10 @@ export const uploadCmsMedia = (file) => {
   const fd = new FormData();
   fd.append("file", file);
   return api
-    .post("/v1/admin/cms/media", fd, { headers: { "Content-Type": undefined } })
+    // Let the browser/axios set multipart/form-data including its boundary.
+    // Keeping the JSON default here can make some browsers send the upload
+    // with an invalid content type and the server then rejects the file.
+    .post("/v1/admin/cms/media", fd)
     .then((r) => r.data);
 };
 export const updateCmsMedia = (id, data) =>

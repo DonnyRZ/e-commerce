@@ -694,11 +694,19 @@ async def upload_media(
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail={"error": "file_too_large", "max_bytes": MAX_UPLOAD_BYTES})
     declared = (file.content_type or "").lower()
-    if declared not in ALLOWED_MIME:
-        raise HTTPException(status_code=415, detail={"error": "unsupported_media_type"})
+    # Browsers normally report JPEG as image/jpeg, but some local file
+    # providers report image/jpg or omit the type. The file signature remains
+    # authoritative; normalize the declaration before validating it.
+    if declared == "image/jpg":
+        declared = "image/jpeg"
     sniffed = _sniff(data)
-    if sniffed != declared:
+    if sniffed is None:
+        raise HTTPException(status_code=415, detail={"error": "unsupported_media_type"})
+    if declared and declared not in ALLOWED_MIME:
+        raise HTTPException(status_code=415, detail={"error": "unsupported_media_type"})
+    if declared and sniffed != declared:
         raise HTTPException(status_code=415, detail={"error": "content_mismatch"})
+    declared = sniffed
     width = height = None
     try:
         import io
