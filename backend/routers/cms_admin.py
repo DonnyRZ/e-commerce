@@ -44,9 +44,9 @@ ALLOWED_MIME = {
     "image/webp": ".webp",
 }
 # Keep the application limit aligned with the production reverse proxy. 4K
-# product photography can legitimately exceed 5 MiB, while the proxy already
-# accepts uploads up to 15 MiB.
-MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+# product photography can legitimately exceed 15 MiB. This limit applies only
+# to the authenticated CMS media endpoint.
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
 class CmsTranslationIn(BaseModel):

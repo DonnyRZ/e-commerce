@@ -84,7 +84,7 @@ const normalizeMedia = (items) =>
 const uploadErrorMessage = (err) => {
   const detail = err?.response?.data?.detail;
   const code = typeof detail === "object" ? detail?.error : detail;
-  if (code === "file_too_large" || err?.response?.status === 413) return "Image too large (maximum 15 MB).";
+  if (code === "file_too_large" || err?.response?.status === 413) return "Image too large (maximum 25 MB).";
   if (["unsupported_media_type", "content_mismatch", "invalid_image"].includes(code)) {
     return "Only valid JPEG, PNG, or WebP images are supported.";
   }
@@ -677,7 +677,7 @@ export default function AdminProductEditPage() {
               />
             </label>
           </div>
-          <p className="mt-2 text-[11px] text-neutral-400">JPEG, PNG, or WebP up to 15 MB each. Images are stored on the VPS.</p>
+          <p className="mt-2 text-[11px] text-neutral-400">JPEG, PNG, or WebP up to 25 MB each. Images are stored on the VPS.</p>
         </section>
 
         <section className="border border-neutral-200 bg-white p-5" data-testid="editor-translations">

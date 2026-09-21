@@ -15,7 +15,7 @@ const getCookie = (name) => {
   return row ? decodeURIComponent(row.split("=").slice(1).join("=")) : null;
 };
 
-export const MAX_CMS_UPLOAD_BYTES = 15 * 1024 * 1024;
+export const MAX_CMS_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 api.interceptors.request.use((config) => {
   if (["post", "put", "patch", "delete"].includes(config.method)) {
