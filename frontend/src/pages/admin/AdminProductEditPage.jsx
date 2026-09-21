@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, ImagePlus, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, ImagePlus, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   createAdminProduct,
@@ -172,6 +172,7 @@ export default function AdminProductEditPage() {
   const [variants, setVariants] = useState([{ ...EMPTY_VARIANT }]);
   const [saving, setSaving] = useState(false);
   const [imageUploading, setImageUploading] = useState(false);
+  const [replacingImageIndex, setReplacingImageIndex] = useState(null);
   const [deletingVariantId, setDeletingVariantId] = useState(null);
   const [deletingProduct, setDeletingProduct] = useState(false);
 
@@ -251,6 +252,34 @@ export default function AdminProductEditPage() {
       }
     } finally {
       setImageUploading(false);
+    }
+  };
+
+  const replaceProductImage = async (index, e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || imageUploading || replacingImageIndex !== null) return;
+
+    setReplacingImageIndex(index);
+    try {
+      const asset = await uploadCmsMedia(file);
+      setForm((current) => {
+        const media = [...current.media];
+        media[index] = {
+          ...media[index],
+          url: mediaUrl(asset.url),
+          media_id: asset.id,
+          original_filename: asset.original_filename,
+          sort_order: index,
+        };
+        return { ...current, media };
+      });
+      queryClient.invalidateQueries({ queryKey: ["cms-media"] });
+      toast.success(`Image ${index + 1} replaced. Click Save to apply.`);
+    } catch (err) {
+      toast.error(uploadErrorMessage(err));
+    } finally {
+      setReplacingImageIndex(null);
     }
   };
 
@@ -572,7 +601,25 @@ export default function AdminProductEditPage() {
                   <div className="absolute left-2 top-2 bg-white/95 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#145A46]">
                     {index === 0 ? "Primary" : index + 1}
                   </div>
-                  <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-black/65 px-1.5 py-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
+                  <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-1 bg-black/70 px-1.5 py-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
+                    <label
+                      htmlFor={`editor-image-replace-input-${index}`}
+                      className={`inline-flex h-7 flex-1 cursor-pointer items-center justify-center gap-1 rounded-sm px-1 text-[10px] font-semibold text-white hover:bg-white/15 ${replacingImageIndex === index ? "pointer-events-none opacity-60" : ""}`}
+                      title="Replace image"
+                      data-testid={`editor-image-replace-${index}`}
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${replacingImageIndex === index ? "animate-spin" : ""}`} aria-hidden="true" />
+                      {replacingImageIndex === index ? "Uploading…" : "Replace"}
+                      <input
+                        id={`editor-image-replace-input-${index}`}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        className="hidden"
+                        onChange={(e) => replaceProductImage(index, e)}
+                        disabled={imageUploading || replacingImageIndex !== null}
+                        data-testid={`editor-image-replace-input-${index}`}
+                      />
+                    </label>
                     <button
                       type="button"
                       onClick={() => moveProductImage(index, -1)}
