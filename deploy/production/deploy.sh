@@ -15,6 +15,16 @@ if [[ -z "$current" || -z "$head" || "$current" != "$head" ]]; then
   exit 1
 fi
 
+# The public host Nginx and the storefront gateway both receive browser
+# uploads. Install the versioned host config before traffic is switched so
+# their CMS media limits stay aligned across releases.
+nginx_source="$release_dir/deploy/production/nginx/shanicantik.com.https.conf"
+if [[ -f "$nginx_source" && -d /etc/nginx/sites-available ]]; then
+  install -m 0644 "$nginx_source" /etc/nginx/sites-available/shanicantik.com
+  nginx -t
+  systemctl reload nginx
+fi
+
 echo "Migration verified at $current. Starting application containers..."
 "${compose[@]}" up -d --build
 "${compose[@]}" ps
