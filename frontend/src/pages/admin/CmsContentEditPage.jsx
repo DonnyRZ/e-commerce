@@ -110,7 +110,7 @@ function MediaPicker({ onSelect, onClose }) {
     } catch (error) {
       const detail = error?.response?.data?.detail;
       const code = typeof detail === "object" ? detail?.error : detail;
-      toast.error(code === "file_too_large" ? "Ukuran gambar maksimal 5 MB." : code === "unsupported_media_type" ? "Gunakan gambar JPEG, PNG, atau WebP." : "Gambar gagal diunggah.");
+      toast.error(code === "file_too_large" ? "Ukuran gambar maksimal 15 MB." : code === "unsupported_media_type" ? "Gunakan gambar JPEG, PNG, atau WebP." : "Gambar gagal diunggah.");
     } finally {
       setUploading(false);
     }

@@ -43,7 +43,10 @@ ALLOWED_MIME = {
     "image/png": ".png",
     "image/webp": ".webp",
 }
-MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+# Keep the application limit aligned with the production reverse proxy. 4K
+# product photography can legitimately exceed 5 MiB, while the proxy already
+# accepts uploads up to 15 MiB.
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 
 
 class CmsTranslationIn(BaseModel):

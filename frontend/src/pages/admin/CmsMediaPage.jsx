@@ -136,7 +136,7 @@ export default function CmsMediaPage() {
     } catch (err) {
       const d = err?.response?.data?.detail;
       const code = typeof d === "object" ? d?.error : d;
-      toast.error(code === "file_too_large" ? "Ukuran gambar maksimal 5 MB." : code === "unsupported_media_type" ? "Gunakan gambar JPEG, PNG, atau WebP." : "Gambar gagal diunggah.");
+      toast.error(code === "file_too_large" ? "Ukuran gambar maksimal 15 MB." : code === "unsupported_media_type" ? "Gunakan gambar JPEG, PNG, atau WebP." : "Gambar gagal diunggah.");
     } finally {
       setUploading(false);
     }

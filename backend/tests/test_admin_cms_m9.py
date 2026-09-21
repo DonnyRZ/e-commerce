@@ -768,7 +768,7 @@ def test_media_upload_validation_and_serving(admin):
 
     r = admin.post(
         f"{API}/admin/cms/media",
-        files={"file": ("oversize.png", b"x" * (5 * 1024 * 1024 + 1), "image/png")},
+        files={"file": ("oversize.png", b"x" * (15 * 1024 * 1024 + 1), "image/png")},
     )
     assert r.status_code == 413
     assert r.json()["detail"]["error"] == "file_too_large"
