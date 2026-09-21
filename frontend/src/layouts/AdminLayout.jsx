@@ -4,7 +4,6 @@ import {
   ClipboardList,
   FileText,
   FolderTree,
-  Image,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -33,6 +32,26 @@ function NavItem({ to, icon: Icon, label, end, onClick, testId }) {
       }
     >
       <Icon className="h-4 w-4" aria-hidden="true" />
+      {label}
+    </NavLink>
+  );
+}
+
+function CmsSubNavItem({ to, label, onClick, testId }) {
+  return (
+    <NavLink
+      to={to}
+      end
+      onClick={onClick}
+      data-testid={testId}
+      className={({ isActive }) =>
+        `ml-8 flex items-center border-l px-4 py-2 text-xs transition-colors ${
+          isActive
+            ? "border-[#145A46] font-semibold text-[#145A46]"
+            : "border-neutral-200 text-neutral-500 hover:border-neutral-400 hover:text-neutral-900"
+        }`
+      }
+    >
       {label}
     </NavLink>
   );
@@ -72,7 +91,11 @@ export default function AdminLayout() {
       <NavItem to="/customers" icon={Users} label="Customers" onClick={onClick} testId="admin-nav-customers" />
       <NavGroup label="CMS" />
       <NavItem to="/cms" icon={FileText} label="Konten" onClick={onClick} testId="admin-nav-cms" />
-      <NavItem to="/media" icon={Image} label="Pustaka Media" onClick={onClick} testId="admin-nav-media" />
+      <CmsSubNavItem to="/cms/homepage" label="Homepage" onClick={onClick} testId="admin-nav-cms-homepage" />
+      <CmsSubNavItem to="/cms/stories" label="Stories & Editorial" onClick={onClick} testId="admin-nav-cms-stories" />
+      <CmsSubNavItem to="/cms/help" label="FAQ & Halaman informasi" onClick={onClick} testId="admin-nav-cms-help" />
+      <CmsSubNavItem to="/cms/navigation" label="Navigasi & Footer" onClick={onClick} testId="admin-nav-cms-navigation" />
+      <CmsSubNavItem to="/media" label="Pustaka Media" onClick={onClick} testId="admin-nav-media" />
       <NavGroup label="System" />
       <NavItem to="/settings" icon={Settings} label="Settings" onClick={onClick} testId="admin-nav-settings" />
     </nav>

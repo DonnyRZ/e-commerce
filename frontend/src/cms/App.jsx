@@ -14,6 +14,7 @@ import AdminInquiryDetailPage from "@/pages/admin/AdminInquiryDetailPage";
 import AdminCustomersPage from "@/pages/admin/AdminCustomersPage";
 import CmsContentPage from "@/pages/admin/CmsContentPage";
 import CmsContentEditPage from "@/pages/admin/CmsContentEditPage";
+import { CmsHelpWorkspace, CmsHomepageWorkspace, CmsNavigationWorkspace, CmsStoriesWorkspace } from "@/pages/admin/CmsContentWorkspacePages";
 import CmsMediaPage from "@/pages/admin/CmsMediaPage";
 import AdminSettingsPage from "@/pages/admin/AdminSettingsPage";
 import ForgotPasswordPage from "@/pages/ForgotPasswordPage";
@@ -87,6 +88,10 @@ function CmsRoutes() {
         <Route path="payments" element={<Navigate to="/orders?stage=payment_review" replace />} />
         <Route path="customers" element={<AdminCustomersPage />} />
         <Route path="cms" element={<CmsContentPage />} />
+        <Route path="cms/homepage" element={<CmsHomepageWorkspace />} />
+        <Route path="cms/stories" element={<CmsStoriesWorkspace />} />
+        <Route path="cms/help" element={<CmsHelpWorkspace />} />
+        <Route path="cms/navigation" element={<CmsNavigationWorkspace />} />
         <Route path="cms/new" element={<CmsContentEditPage />} />
         <Route path="cms/:entryId" element={<CmsContentEditPage />} />
         <Route path="media" element={<CmsMediaPage />} />
