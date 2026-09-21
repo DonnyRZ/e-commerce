@@ -297,17 +297,36 @@ export const restoreCmsRevision = (id, revisionId) =>
   api.post(`/v1/admin/cms/content/${id}/restore/${revisionId}`).then((r) => r.data);
 export const getCmsMedia = (params) =>
   api.get("/v1/admin/cms/media", { params }).then((r) => r.data);
-export const uploadCmsMedia = (file) => {
-  const fd = new FormData();
-  fd.append("file", file);
-  return api
-    // Override the instance JSON default. Axios adds the multipart boundary
-    // for FormData in the browser; without this override FastAPI receives no
-    // `file` field and responds with a 422 validation error.
-    .post("/v1/admin/cms/media", fd, {
-      headers: { "Content-Type": "multipart/form-data" },
-    })
-    .then((r) => r.data);
+export const uploadCmsMedia = async (file) => {
+  const send = () => {
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    const csrf = getCookie("csrf_token");
+    return fetch(`${backendOrigin}/api/v1/admin/cms/media`, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+      headers: csrf ? { "X-CSRF-Token": csrf } : {},
+    });
+  };
+
+  let response = await send();
+  if (response.status === 401) {
+    await api.post("/v1/auth/refresh");
+    response = await send();
+  }
+  if (!response.ok) {
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      // Preserve a useful status for the existing upload error handling.
+    }
+    const error = new Error("Media upload failed");
+    error.response = { status: response.status, data };
+    throw error;
+  }
+  return response.json();
 };
 export const updateCmsMedia = (id, data) =>
   api.patch(`/v1/admin/cms/media/${id}`, data).then((r) => r.data);
