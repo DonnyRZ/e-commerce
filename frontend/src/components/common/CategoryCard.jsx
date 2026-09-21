@@ -1,12 +1,12 @@
 import { Link } from "react-router-dom";
 import ImageWithFallback from "./ImageWithFallback";
 
-export default function CategoryCard({ category, name, onNavigate }) {
+export default function CategoryCard({ category, name, onNavigate, href, testIdPrefix = "category-card" }) {
   return (
     <Link
-      to={`/shop?category=${category.slug}`}
+      to={href || `/shop?category=${category.slug}`}
       onClick={onNavigate}
-      data-testid={`category-card-${category.slug}`}
+      data-testid={`${testIdPrefix}-${category.slug}`}
       className="group block"
     >
       <div className="overflow-hidden bg-secondary">
