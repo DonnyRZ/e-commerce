@@ -6,7 +6,6 @@ import { getCatalogTree, getCmsBundle, getProducts } from "@/lib/api";
 import { mediaUrl, pickCmsLocalized, pickLocalized, toCardProduct } from "@/lib/localize";
 import { DEPARTMENT_VISUALS } from "@/lib/catalogVisuals";
 import CategoryStrip from "@/components/common/CategoryStrip";
-import EditorialSection from "@/components/common/EditorialSection";
 import CmsBannerStrip from "@/components/common/CmsBannerStrip";
 import ProductRail from "@/components/common/ProductRail";
 import ErrorState from "@/components/common/ErrorState";
@@ -41,7 +40,6 @@ const HOMEPAGE_RENDER_ORDER = [
   "new_arrivals",
   "skincare",
   "daily_style",
-  "stories",
 ];
 
 function canonicalSectionKey(key) {
@@ -124,11 +122,11 @@ export default function HomePage() {
   const heroSecondary = { label: pickCmsLocalized(hero?.translations, locale, "secondary_cta_label") || (cmsFailed ? t("home.allDepartments") : ""), to: hero?.secondary_cta_url || "/shop" };
   const sectionOrder = useMemo(() => {
     const available = new Set(sections.map((section) => canonicalSectionKey(section.key)));
-    return HOMEPAGE_RENDER_ORDER.filter((key) => key === "stories" ? available.has(key) || Boolean(cmsBundle?.stories?.length) : available.has(key));
-  }, [cmsBundle?.stories?.length, sections]);
+    return HOMEPAGE_RENDER_ORDER.filter((key) => available.has(key));
+  }, [sections]);
 
   const renderProductSection = (section, fallbackTitle, testId) => {
-    if (!section || section.key === "stories") return null;
+    if (!section) return null;
     const products = sectionProducts(section, fallbackProducts, featuredProducts, curatedProducts);
     if (catalogProductsQuery.isError || featuredProductsQuery.isError || curatedProductsQuery.isError) return <section key={testId} data-testid={testId} className="py-6"><ErrorState onRetry={() => { catalogProductsQuery.refetch(); featuredProductsQuery.refetch(); curatedProductsQuery.refetch(); }} /></section>;
     if (catalogProductsQuery.isLoading || featuredProductsQuery.isLoading || curatedProductsQuery.isLoading) return <section key={testId} data-testid={testId} className="py-6"><GridSkeleton testId={`${testId}-loading`} /></section>;
@@ -151,7 +149,6 @@ export default function HomePage() {
         <CategoryStrip categories={departmentCards} nameOf={(department) => department.name} linkFor={(department) => `/shop?department=${department.slug}`} testIdPrefix="department-card" fillDesktop />
       </section>
     ) : null,
-    stories: <EditorialSection key="stories" stories={cmsBundle?.stories} title={pickCmsLocalized(cmsBundle?.story_title?.translations, locale)} cmsFailed={cmsFailed} />,
   };
   Object.entries(PRODUCT_SECTION_CONFIG).forEach(([key, config]) => {
     content[key] = renderProductSection(sectionByKey[key], config.fallbackTitle, config.testId);
@@ -160,7 +157,6 @@ export default function HomePage() {
   for (const key of sectionOrder) {
     if (PRODUCT_SECTION_CONFIG[key]) renderedSections.push(content[key]);
     else if (key === "categories" || key === "departments") renderedSections.push(content.categories);
-    else if (key === "stories") renderedSections.push(content.stories);
   }
 
   return (
