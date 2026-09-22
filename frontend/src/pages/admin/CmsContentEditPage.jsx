@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronDown, ExternalLink, History, ImagePlus, Info, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, ChevronUp, ExternalLink, History, ImagePlus, Info, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   createCmsContent,
@@ -24,11 +24,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { inputClass } from "./adminUtils";
 import {
   CMS_CONTENT_TYPES,
+  CMS_LEGACY_SECTION_KEYS,
   CMS_LOCALES,
   CMS_MEDIA_TYPES,
   CMS_SECTION_KEYS,
+  CMS_VALID_SECTION_KEYS,
   CMS_TRANSLATION_FIELDS,
   cmsStatusLabel,
+  cmsSectionLabel,
   cmsTypeLabel,
 } from "./cmsContentSchema";
 
@@ -147,6 +150,7 @@ function MediaPicker({ onSelect, onClose }) {
 
 function CatalogProductPicker({ contentType, payload, setPayload }) {
   const [search, setSearch] = useState("");
+  const [productCache, setProductCache] = useState({});
   const query = useQuery({
     queryKey: ["cms-catalog-products", search],
     queryFn: () => getCmsCatalogProducts({ q: search.trim() || undefined, page_size: 100 }),
@@ -155,21 +159,41 @@ function CatalogProductPicker({ contentType, payload, setPayload }) {
   const selectedIds = multiple
     ? (Array.isArray(payload.product_ids) ? payload.product_ids : [])
     : (payload.product_id ? [payload.product_id] : []);
-  const selectedProducts = (query.data?.items || []).filter((product) => selectedIds.includes(product.id));
+  const products = query.data?.items;
+  useEffect(() => {
+    if (!products?.length) return;
+    setProductCache((current) => ({
+      ...current,
+      ...Object.fromEntries(products.map((product) => [product.id, product])),
+    }));
+  }, [products]);
+  const selectedProducts = selectedIds.map((id) => productCache[id]).filter(Boolean);
   const selectProduct = (product) => {
     if (multiple) {
       const next = selectedIds.includes(product.id)
         ? selectedIds.filter((id) => id !== product.id)
         : [...selectedIds, product.id];
-      setPayload((current) => ({ ...current, product_ids: next }));
+      setPayload((current) => ({ ...current, source: "catalog", product_ids: next, sort: undefined }));
     } else {
       setPayload((current) => ({ ...current, product_id: product.id }));
     }
   };
+  const moveSelected = (index, direction) => setPayload((current) => {
+    const currentIds = Array.isArray(current.product_ids) ? [...current.product_ids] : [];
+    const target = index + direction;
+    if (target < 0 || target >= currentIds.length) return current;
+    [currentIds[index], currentIds[target]] = [currentIds[target], currentIds[index]];
+    return { ...current, source: "catalog", product_ids: currentIds, sort: undefined };
+  });
   const clear = () => setPayload((current) => {
     const next = { ...current };
-    delete next.product_id;
-    delete next.product_ids;
+    if (multiple) {
+      next.source = "catalog";
+      next.product_ids = [];
+      delete next.sort;
+    } else {
+      delete next.product_id;
+    }
     return next;
   });
   return (
@@ -179,12 +203,32 @@ function CatalogProductPicker({ contentType, payload, setPayload }) {
       testId="cms-editor-catalog-products"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-stone-500">{selectedIds.length ? `${selectedIds.length} produk dipilih` : "Belum ada pilihan manual — gunakan produk katalog terbaru secara otomatis."}</p>
+        <p className="text-xs text-stone-500">{selectedIds.length ? `${selectedIds.length} produk dipilih` : "Belum ada produk dipilih."}</p>
         {selectedIds.length ? <button type="button" onClick={clear} className="text-xs font-semibold text-red-700 hover:underline" data-testid="cms-catalog-clear">Hapus pilihan manual</button> : null}
       </div>
-      {multiple ? <div className="mt-4 grid gap-3 sm:grid-cols-2"><div><FormLabel htmlFor="cms-product-source">Sumber produk</FormLabel><select id="cms-product-source" value={selectedIds.length ? "manual" : (payload.sort || "newest")} onChange={(event) => { const value = event.target.value; if (value === "manual") return; setPayload((current) => ({ ...current, sort: value, product_ids: [] })); }} className={inputClass} data-testid="cms-product-source"><option value="newest">Produk terbaru</option><option value="featured">Produk pilihan katalog</option><option value="manual">Pilih manual</option></select></div><div><FormLabel htmlFor="cms-product-limit">Jumlah produk</FormLabel><input id="cms-product-limit" type="number" min="4" max="24" value={payload.limit || 8} onChange={(event) => setPayload((current) => ({ ...current, limit: Number(event.target.value) || 8 }))} className={inputClass} data-testid="cms-product-limit" /></div></div> : null}
+      {multiple ? <>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-[#D6E8DF] bg-[#F7FBF8] px-3.5 py-3">
+            <FormLabel>Mode pengelolaan</FormLabel>
+            <p className="text-sm font-semibold text-[#02422C]">Pilihan manual admin</p>
+          </div>
+          <div><FormLabel htmlFor="cms-product-limit">Jumlah produk</FormLabel><input id="cms-product-limit" type="number" min="1" max="24" value={payload.limit || 4} onChange={(event) => setPayload((current) => ({ ...current, limit: Number(event.target.value) || 4 }))} className={inputClass} data-testid="cms-product-limit" /></div>
+        </div>
+        <div className="mt-4 rounded-lg border border-[#E4DED2] bg-[#FDFBF6] p-3" data-testid="cms-selected-products">
+          <div className="flex items-center justify-between gap-3"><p className="text-xs font-bold uppercase tracking-[0.14em] text-[#8A6420]">Urutan tampil</p><span className="text-[11px] text-stone-500">Gunakan panah untuk mengatur urutan</span></div>
+          {selectedIds.length ? <ol className="mt-3 space-y-2">{selectedIds.map((id, index) => {
+            const product = productCache[id];
+            return <li key={id} className="flex items-center gap-3 rounded-lg border border-[#E4DED2] bg-white p-2.5" data-testid={`cms-selected-product-${id}`}>
+              {product ? <ImageWithFallback src={mediaUrl(product.image_url)} alt={product.name} className="h-12 w-10 shrink-0 rounded bg-stone-100 object-contain" /> : <div className="h-12 w-10 shrink-0 rounded bg-stone-100" />}
+              <span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold text-[#17392C]">{product?.name || "Produk tidak ditemukan"}</span><span className="mt-0.5 block text-[10px] uppercase tracking-wide text-stone-400">Posisi {index + 1}</span></span>
+              <button type="button" onClick={() => moveSelected(index, -1)} disabled={index === 0} className="rounded p-1.5 text-stone-500 hover:bg-[#F0F5EF] hover:text-[#02422C] disabled:opacity-30" aria-label={`Naikkan ${product?.name || "produk"}`} data-testid={`cms-selected-up-${id}`}><ChevronUp className="h-4 w-4" aria-hidden="true" /></button>
+              <button type="button" onClick={() => moveSelected(index, 1)} disabled={index === selectedIds.length - 1} className="rounded p-1.5 text-stone-500 hover:bg-[#F0F5EF] hover:text-[#02422C] disabled:opacity-30" aria-label={`Turunkan ${product?.name || "produk"}`} data-testid={`cms-selected-down-${id}`}><ChevronDown className="h-4 w-4" aria-hidden="true" /></button>
+            </li>;
+          })}</ol> : <p className="mt-3 rounded-lg border border-dashed border-[#D9D0C0] px-3 py-4 text-center text-xs text-stone-500">Cari produk di bawah lalu pilih untuk menambahkannya.</p>}
+        </div>
+      </> : null}
       <input value={search} onChange={(event) => setSearch(event.target.value)} className="mt-4 h-10 w-full rounded-lg border border-[#E4DED2] bg-white px-3 text-sm outline-none focus:border-[#02422C]" placeholder="Cari produk yang sudah ada…" aria-label="Cari produk katalog" data-testid="cms-catalog-search" />
-      {query.isError ? <p className="py-6 text-center text-sm text-red-700">Produk katalog gagal dimuat. Coba lagi setelah memuat ulang halaman.</p> : <div className="mt-4 grid max-h-[28rem] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">{query.isLoading ? Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} className="h-24 rounded-lg" />) : (query.data?.items || []).map((product) => { const selected = selectedIds.includes(product.id); return <button key={product.id} type="button" onClick={() => selectProduct(product)} className={`flex gap-3 rounded-lg border p-2 text-left transition ${selected ? "border-[#02422C] bg-[#F0F5EF] ring-1 ring-[#02422C]" : "border-[#E4DED2] bg-white hover:border-[#02422C]"}`} data-testid={`cms-catalog-product-${product.id}`}><ImageWithFallback src={mediaUrl(product.image_url)} alt={product.name} className="h-16 w-14 shrink-0 bg-stone-100 object-contain" /><span className="min-w-0"><span className="block truncate text-xs font-semibold text-[#17392C]">{product.name}</span><span className="mt-1 block text-[10px] uppercase tracking-wide text-stone-500">{product.brand || "Katalog"}</span><span className="mt-1 block text-xs text-[#02422C]">UZS {Number(product.base_price || 0).toLocaleString("en-US")}</span></span></button>; })}</div>}
+      {query.isError ? <p className="py-6 text-center text-sm text-red-700">Produk katalog gagal dimuat. Coba lagi setelah memuat ulang halaman.</p> : <div className="mt-4 grid max-h-[28rem] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">{query.isLoading ? Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} className="h-24 rounded-lg" />) : (products || []).map((product) => { const selected = selectedIds.includes(product.id); return <button key={product.id} type="button" onClick={() => selectProduct(product)} className={`flex gap-3 rounded-lg border p-2 text-left transition ${selected ? "border-[#02422C] bg-[#F0F5EF] ring-1 ring-[#02422C]" : "border-[#E4DED2] bg-white hover:border-[#02422C]"}`} data-testid={`cms-catalog-product-${product.id}`}><ImageWithFallback src={mediaUrl(product.image_url)} alt={product.name} className="h-16 w-14 shrink-0 bg-stone-100 object-contain" /><span className="min-w-0"><span className="block truncate text-xs font-semibold text-[#17392C]">{product.name}</span><span className="mt-1 block text-[10px] uppercase tracking-wide text-stone-500">{product.brand || "Katalog"}</span><span className="mt-1 block text-xs text-[#02422C]">UZS {Number(product.base_price || 0).toLocaleString("en-US")}</span></span></button>; })}</div>}
       {selectedProducts.length ? <p className="mt-3 text-[11px] text-[#315347]">Pilihan disimpan sebagai referensi produk. Jika gambar produk diperbarui di Products, homepage ikut berubah otomatis.</p> : null}
     </FormSection>
   );
@@ -201,7 +245,7 @@ function missingEnglish(type, form, translations) {
   if (type === "nav_item" && !form.cta_url.trim()) missing.push("Tautan navigasi");
   if (type === "footer_item" && !form.cta_url.trim()) missing.push("URL tautan");
   if (type === "footer_item" && !form.group?.trim()) missing.push("Grup footer");
-  if (type === "homepage_section" && !CMS_SECTION_KEYS.includes(form.slug)) missing.push("Bagian homepage");
+  if (type === "homepage_section" && !CMS_VALID_SECTION_KEYS.includes(form.slug)) missing.push("Bagian homepage");
   if (type === "department_visual" && (!form.slug || !form.media_id)) missing.push("Departemen dan gambar");
   return missing;
 }
@@ -209,10 +253,14 @@ function missingEnglish(type, form, translations) {
 export default function CmsContentEditPage() {
   const { entryId } = useParams();
   const isNew = !entryId;
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [contentType, setContentType] = useState("banner");
-  const [form, setForm] = useState({ internal_name: "", slug: "", placement: "home_after_hero", sort_order: 0, is_visible: true, cta_url: "", secondary_cta_url: "", media_id: null, group: "" });
+  const requestedType = searchParams.get("type");
+  const initialContentType = isNew && CMS_CONTENT_TYPES.some((item) => item.value === requestedType) ? requestedType : "banner";
+  const initialSlug = isNew ? searchParams.get("slug") || "" : "";
+  const [contentType, setContentType] = useState(initialContentType);
+  const [form, setForm] = useState({ internal_name: "", slug: initialSlug, placement: placementForType(initialContentType), sort_order: 0, is_visible: true, cta_url: "", secondary_cta_url: "", media_id: null, group: "" });
   const [translations, setTranslations] = useState({});
   const [activeLocale, setActiveLocale] = useState("en");
   const [payload, setPayload] = useState({});
@@ -282,6 +330,12 @@ export default function CmsContentEditPage() {
     delete nextPayload.image_url;
     if (contentType === "footer_item") nextPayload.group = form.group;
     else delete nextPayload.group;
+    if (contentType === "homepage_section") {
+      nextPayload.source = "catalog";
+      nextPayload.product_ids = Array.isArray(nextPayload.product_ids) ? nextPayload.product_ids : [];
+      nextPayload.limit = Math.min(24, Math.max(1, Number(nextPayload.limit) || 4));
+      delete nextPayload.sort;
+    }
     return {
       internal_name: form.internal_name.trim(),
       slug: form.slug.trim(),
@@ -439,7 +493,7 @@ export default function CmsContentEditPage() {
               {isNew ? <div className="sm:col-span-2"><FormLabel htmlFor="cms-type">Jenis konten</FormLabel><select id="cms-type" value={contentType} onChange={(event) => { const nextType = event.target.value; setContentType(nextType); setForm((current) => ({ ...current, placement: placementForType(nextType), slug: "", group: "" })); setPayload({}); }} className={inputClass} data-testid="cms-field-type">{CMS_CONTENT_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></div> : null}
               <div className="sm:col-span-2"><FormLabel htmlFor="cms-name">Nama internal <span className="text-red-600">*</span></FormLabel><input id="cms-name" value={form.internal_name} onChange={(event) => setFormValue("internal_name", event.target.value)} required maxLength={255} className={inputClass} placeholder="Contoh: Banner koleksi Idulfitri" data-testid="cms-field-name" /></div>
               {contentType === "homepage_section" ? (
-                <div><FormLabel htmlFor="cms-slug">Bagian homepage</FormLabel><select id="cms-slug" value={form.slug} onChange={(event) => setFormValue("slug", event.target.value)} className={inputClass} data-testid="cms-field-slug"><option value="">Pilih bagian</option>{CMS_SECTION_KEYS.map((key) => <option key={key} value={key}>{key.replaceAll("_", " ")}</option>)}</select></div>
+                <div><FormLabel htmlFor="cms-slug">Bagian homepage</FormLabel><select id="cms-slug" value={form.slug} onChange={(event) => setFormValue("slug", event.target.value)} className={inputClass} data-testid="cms-field-slug"><option value="">Pilih bagian</option>{CMS_SECTION_KEYS.map((key) => <option key={key} value={key}>{cmsSectionLabel(key)}</option>)}{CMS_LEGACY_SECTION_KEYS.includes(form.slug) ? <option value={form.slug}>{cmsSectionLabel(form.slug)}</option> : null}</select></div>
               ) : contentType === "department_visual" ? (
                 <div><FormLabel htmlFor="cms-slug">Departemen katalog</FormLabel><select id="cms-slug" value={form.slug} onChange={(event) => setFormValue("slug", event.target.value)} className={inputClass} data-testid="cms-field-slug"><option value="">Pilih departemen</option>{departments.map((department) => <option key={department.id} value={department.slug}>{pickCmsLocalized(department.translations, "en") || department.slug}</option>)}</select>{departmentsQuery.isLoading ? <p className="mt-1 text-[11px] text-stone-400">Memuat departemen…</p> : null}</div>
               ) : (

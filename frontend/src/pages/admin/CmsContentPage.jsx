@@ -7,13 +7,13 @@ import {
 } from "lucide-react";
 import { getCmsContent, getCmsMedia } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cmsStatusLabel, cmsTypeLabel, CMS_CONTENT_TYPES } from "./cmsContentSchema";
+import { CMS_CONTENT_TYPES, CMS_PRODUCT_SECTION_KEYS, cmsStatusLabel, cmsTypeLabel } from "./cmsContentSchema";
 
 const PAGE_SIZE = 20;
 const LOCALES = ["id", "en", "uz", "ru"];
 
 const HUB_GROUPS = [
-  { key: "homepage", title: "Homepage", description: "Atur tampilan halaman utama toko", icon: LayoutDashboard, tone: "bg-emerald-50 text-[#02422C]", hints: ["Hero utama", "Department", "Koleksi terbaru", "Terlaris", "Stories"], action: "Kelola homepage" },
+  { key: "homepage", title: "Homepage", description: "Atur tampilan halaman utama toko", icon: LayoutDashboard, tone: "bg-emerald-50 text-[#02422C]", hints: ["Hero utama", "Department", "Terlaris", "Koleksi Terbaru", "Rawat Kulitmu", "Gaya Sehari-hari"], action: "Kelola homepage" },
   { key: "store", title: "Toko", description: "Informasi yang membantu pelanggan", icon: Store, tone: "bg-[#F8F1DE] text-[#8A6420]", hints: ["Pengumuman", "FAQ", "Halaman informasi"], action: "Kelola" },
   { key: "stories", title: "Stories & Editorial", description: "Inspirasi, artikel, dan panduan untuk pelanggan", icon: BookOpen, tone: "bg-violet-50 text-violet-800", hints: ["Inspirasi", "Panduan", "Cerita"], action: "Kelola" },
   { key: "navigation", title: "Navigasi & Footer", description: "Atur menu, tautan, dan informasi footer", icon: Menu, tone: "bg-sky-50 text-sky-800", hints: ["Menu utama", "Grup footer", "Tautan bantuan"], action: "Kelola" },
@@ -35,12 +35,13 @@ function formatDate(value) {
 }
 
 function countTypes(items, types) { return items.filter((entry) => types.includes(entry.content_type)).length; }
+function countHomepageSections(items) { return items.filter((entry) => entry.content_type === "homepage_section" && CMS_PRODUCT_SECTION_KEYS.includes(entry.slug)).length; }
 function recentEntries(items) { return [...items].sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0)).slice(0, 3); }
 
 function HubCard({ group, count, mediaCount, onOpen }) {
   const Icon = group.icon;
   const isMedia = group.key === "media";
-  const unit = group.key === "homepage" ? "bagian" : group.key === "navigation" ? "item" : "konten";
+  const unit = group.key === "homepage" ? "section produk" : group.key === "navigation" ? "item" : "konten";
   return (
     <article className="rounded-2xl border border-[#E9E3D7] bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-[#02422C]/30 hover:shadow-md" data-testid={`cms-hub-card-${group.key}`}>
       <div className="flex items-start gap-4">
@@ -54,7 +55,7 @@ function HubCard({ group, count, mediaCount, onOpen }) {
 }
 
 function HubOverview({ items, mediaCount, isLoading, isMediaLoading, isError, onRetry, onOpen }) {
-  const counts = useMemo(() => ({ homepage: countTypes(items, ["homepage_section"]), store: countTypes(items, ["announcement", "faq_item", "page"]), stories: countTypes(items, ["story"]), navigation: countTypes(items, ["nav_item", "footer_group", "footer_item", "footer_text"]) }), [items]);
+  const counts = useMemo(() => ({ homepage: countHomepageSections(items), store: countTypes(items, ["announcement", "faq_item", "page"]), stories: countTypes(items, ["story"]), navigation: countTypes(items, ["nav_item", "footer_group", "footer_item", "footer_text"]) }), [items]);
   const recent = recentEntries(items);
   return (
     <div data-testid="cms-content-page" data-cms-view="hub" className="mx-auto max-w-7xl space-y-6 pb-8">

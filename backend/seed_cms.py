@@ -86,18 +86,47 @@ EDITORIAL_DESCRIPTIONS = {
 }
 
 SECTION_KEYS = [
-    "promo_bar", "hero", "categories", "curated_primary",
-    "curated_secondary", "stories", "footer",
+    "promo_bar", "hero", "categories", "best_sellers",
+    "new_arrivals", "skincare", "daily_style", "stories", "footer",
 ]
 
 SECTION_TITLES = {
     "promo_bar": {loc: "" for loc in LOCALES},
     "hero": {"en": "Curated fashion from Indonesia", "id": "Pilihan fashion dari Indonesia", "uz": "Indoneziyadan tanlangan moda", "ru": "Избранная мода из Индонезии"},
     "categories": {"en": "Shop by Department", "id": "Belanja berdasarkan Department", "uz": "Bo'lim bo'yicha xarid qiling", "ru": "Покупайте по отделам"},
-    "curated_primary": {"en": "Picks for you", "id": "Pilihan untukmu", "uz": "Siz uchun tanlovlar", "ru": "Подборка для вас"},
-    "curated_secondary": {"en": "Curated collection", "id": "Koleksi pilihan", "uz": "Tanlangan kolleksiya", "ru": "Избранная коллекция"},
+    "best_sellers": {"en": "Best Sellers", "id": "Terlaris", "uz": "Eng ko‘p sotilganlar", "ru": "Бестселлеры"},
+    "new_arrivals": {"en": "New Arrivals", "id": "Koleksi Terbaru", "uz": "Yangi kelganlar", "ru": "Новинки"},
+    "skincare": {"en": "Skincare Essentials", "id": "Rawat Kulitmu", "uz": "Teri parvarishi", "ru": "Уход за кожей"},
+    "daily_style": {"en": "Everyday Style", "id": "Gaya Sehari-hari", "uz": "Kundalik uslub", "ru": "Повседневный стиль"},
     "stories": {"en": "Stories & Guides", "id": "Cerita & Panduan", "uz": "Hikoyalar va qo'llanmalar", "ru": "Истории и гиды"},
     "footer": {loc: "" for loc in LOCALES},
+}
+
+HOMEPAGE_PRODUCT_SLUGS = {
+    "best_sellers": (
+        "smooth-cotton-crew-neck-sweater-4aa1f9",
+        "mini-cable-crew-neck-cardigan-7f6c29",
+        "skechers-d-lux-walker-3-0-5290c0",
+        "safi-age-defy-sensitive-biome-calming-gel-45gr-a0ed8c",
+    ),
+    "new_arrivals": (
+        "safi-acne-expert-acne-treatment-gel-bf9f7e",
+        "safi-acne-expert-sebum-control-fluid-c0e878",
+        "safi-acne-expert-clarifying-2-in-1-cleanser-4051de",
+        "safi-age-defy-sensitive-biome-calming-gel-45gr-a0ed8c",
+    ),
+    "skincare": (
+        "safi-age-defy-sensitive-biome-balancing-cleanser-100ml-b90220",
+        "safi-acne-expert-sebum-control-fluid-c0e878",
+        "safi-age-defy-sensitive-biome-soothing-serum-30ml-9ff972",
+        "safi-age-defy-sensitive-biome-calming-gel-45gr-a0ed8c",
+    ),
+    "daily_style": (
+        "smooth-cotton-crew-neck-sweater-97d9db",
+        "light-souffle-yarn-relaxed-cardigan-7651f5",
+        "pocketable-uv-protection-parka-water-repellent-nanodesign-0153f0",
+        "utility-short-jacket-58a69a",
+    ),
 }
 
 FOOTER_LINKS = {
@@ -349,13 +378,28 @@ async def seed():
                 "hero_mobile_asset_url": "/brand/generated/home-hero-smooth-cotton-mobile.png",
             } if hero_product_id else {},
         )
+
+        catalog_product_ids = {
+            slug: product_id
+            for product_id, slug in (
+                await session.execute(
+                    select(Product.id, Product.slug).where(
+                        Product.status == "active",
+                        Product.slug.in_(
+                            [slug for slugs in HOMEPAGE_PRODUCT_SLUGS.values() for slug in slugs]
+                        ),
+                    )
+                )
+            ).all()
+        }
+
         # homepage sections (visibility/order)
         for idx, key in enumerate(SECTION_KEYS):
             payload = {}
-            if key == "curated_primary":
-                payload = {"source": "catalog", "sort": "newest", "limit": 8}
-            elif key == "curated_secondary":
-                payload = {"source": "catalog", "sort": "featured", "limit": 8}
+            if key in HOMEPAGE_PRODUCT_SLUGS:
+                slugs = HOMEPAGE_PRODUCT_SLUGS[key]
+                product_ids = [catalog_product_ids[slug] for slug in slugs if slug in catalog_product_ids]
+                payload = {"source": "catalog", "product_ids": product_ids, "limit": 4}
             await add_entry(
                 "homepage_section", f"Section: {key}", key,
                 {loc: {"title": SECTION_TITLES[key][loc]} for loc in LOCALES},

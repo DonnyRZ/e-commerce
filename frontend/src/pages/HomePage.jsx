@@ -23,19 +23,39 @@ function GridSkeleton({ testId }) {
   );
 }
 
-const SECTION_ALIASES = {
-  curated_primary: "curated_primary",
-  new_arrivals: "curated_primary",
-  curated_secondary: "curated_secondary",
-  best_sellers: "curated_secondary",
+const LEGACY_SECTION_ALIASES = {
+  curated_primary: "new_arrivals",
+  curated_secondary: "best_sellers",
 };
+
+const PRODUCT_SECTION_CONFIG = {
+  best_sellers: { fallbackTitle: "Terlaris", testId: "home-best-sellers" },
+  new_arrivals: { fallbackTitle: "Koleksi Terbaru", testId: "home-new-arrivals" },
+  skincare: { fallbackTitle: "Rawat Kulitmu", testId: "home-skincare" },
+  daily_style: { fallbackTitle: "Gaya Sehari-hari", testId: "home-daily-style" },
+};
+
+const HOMEPAGE_RENDER_ORDER = [
+  "categories",
+  "best_sellers",
+  "new_arrivals",
+  "skincare",
+  "daily_style",
+  "stories",
+];
+
+function canonicalSectionKey(key) {
+  return LEGACY_SECTION_ALIASES[key] || key;
+}
 
 function sectionProducts(section, fallbackProducts, featuredProducts, curatedProducts) {
   const payload = section?.payload || {};
+  const canonicalKey = canonicalSectionKey(section?.key);
   const selectedIds = Array.isArray(payload.product_ids) ? payload.product_ids : [];
   const byId = new Map([...fallbackProducts, ...featuredProducts, ...curatedProducts].map((product) => [product.id, product]));
   if (selectedIds.length) return selectedIds.map((id) => byId.get(id)).filter(Boolean).slice(0, 24);
-  const source = payload.sort || (SECTION_ALIASES[section?.key] === "curated_secondary" ? "featured" : "newest");
+  if (PRODUCT_SECTION_CONFIG[canonicalKey] && section?.sourceKey === canonicalKey) return [];
+  const source = payload.sort || (canonicalKey === "best_sellers" ? "featured" : "newest");
   const sourceProducts = source === "featured" && featuredProducts.length ? featuredProducts : fallbackProducts;
   return sourceProducts.slice(0, Math.min(Number(payload.limit) || 8, 24));
 }
@@ -77,9 +97,11 @@ export default function HomePage() {
     staleTime: 60_000,
   });
   const curatedProducts = curatedProductsQuery.data?.items || [];
-  const sectionByKey = Object.fromEntries(sections.map((section) => [section.key, section]));
-  const primarySection = sectionByKey.curated_primary || sectionByKey.new_arrivals;
-  const secondarySection = sectionByKey.curated_secondary || sectionByKey.best_sellers;
+  const sectionByKey = sections.reduce((result, section) => {
+    const key = canonicalSectionKey(section.key);
+    if (!result[key] || section.key === key) result[key] = { ...section, key, sourceKey: section.key };
+    return result;
+  }, {});
   const hero = cmsBundle?.hero;
   const heroProductId = hero?.payload?.product_id;
   const heroProductQuery = useQuery({
@@ -100,7 +122,10 @@ export default function HomePage() {
   const heroAlt = heroProduct ? `${heroProduct.brand || ""} ${pickLocalized(heroProduct.translations, locale)}`.trim() : heroTitle;
   const heroPrimary = { label: pickCmsLocalized(hero?.translations, locale, "cta_label") || (cmsFailed ? t("home.shopNow") : ""), to: hero?.cta_url || "/shop" };
   const heroSecondary = { label: pickCmsLocalized(hero?.translations, locale, "secondary_cta_label") || (cmsFailed ? t("home.allDepartments") : ""), to: hero?.secondary_cta_url || "/shop" };
-  const sectionOrder = useMemo(() => sections.filter((section) => section.key !== "hero" && section.key !== "footer" && section.key !== "promo_bar").sort((a, b) => a.sort_order - b.sort_order).map((section) => section.key), [sections]);
+  const sectionOrder = useMemo(() => {
+    const available = new Set(sections.map((section) => canonicalSectionKey(section.key)));
+    return HOMEPAGE_RENDER_ORDER.filter((key) => key === "stories" ? available.has(key) || Boolean(cmsBundle?.stories?.length) : available.has(key));
+  }, [cmsBundle?.stories?.length, sections]);
 
   const renderProductSection = (section, fallbackTitle, testId) => {
     if (!section || section.key === "stories") return null;
@@ -108,7 +133,9 @@ export default function HomePage() {
     if (catalogProductsQuery.isError || featuredProductsQuery.isError || curatedProductsQuery.isError) return <section key={testId} data-testid={testId} className="py-6"><ErrorState onRetry={() => { catalogProductsQuery.refetch(); featuredProductsQuery.refetch(); curatedProductsQuery.refetch(); }} /></section>;
     if (catalogProductsQuery.isLoading || featuredProductsQuery.isLoading || curatedProductsQuery.isLoading) return <section key={testId} data-testid={testId} className="py-6"><GridSkeleton testId={`${testId}-loading`} /></section>;
     if (!products.length) return null;
-    const title = pickCmsLocalized(section.translations, locale) || fallbackTitle;
+    const title = section.sourceKey !== section.key
+      ? fallbackTitle
+      : pickCmsLocalized(section.translations, locale) || fallbackTitle;
     return (
       <section key={testId} data-testid={testId} className="py-6 lg:py-8">
         <div className="mb-2 flex items-end justify-between gap-4"><h2 className="text-lg font-semibold lg:text-xl">{title}</h2><Link to="/shop" className="shrink-0 text-sm font-medium text-foreground underline-offset-4 hover:underline">{t("home.viewAll")}</Link></div>
@@ -124,16 +151,15 @@ export default function HomePage() {
         <CategoryStrip categories={departmentCards} nameOf={(department) => department.name} linkFor={(department) => `/shop?department=${department.slug}`} testIdPrefix="department-card" fillDesktop />
       </section>
     ) : null,
-    primary: renderProductSection(primarySection, "Pilihan untukmu", "home-curated-primary"),
-    secondary: renderProductSection(secondarySection, "Koleksi pilihan", "home-curated-secondary"),
     stories: <EditorialSection key="stories" stories={cmsBundle?.stories} title={pickCmsLocalized(cmsBundle?.story_title?.translations, locale)} cmsFailed={cmsFailed} />,
   };
+  Object.entries(PRODUCT_SECTION_CONFIG).forEach(([key, config]) => {
+    content[key] = renderProductSection(sectionByKey[key], config.fallbackTitle, config.testId);
+  });
   const renderedSections = [];
   for (const key of sectionOrder) {
-    const alias = SECTION_ALIASES[key];
-    if (alias === "curated_primary" && !renderedSections.some((item) => item?.key === "home-curated-primary")) renderedSections.push(content.primary);
-    else if (alias === "curated_secondary" && !renderedSections.some((item) => item?.key === "home-curated-secondary")) renderedSections.push(content.secondary);
-    else if (key === "categories") renderedSections.push(content.categories);
+    if (PRODUCT_SECTION_CONFIG[key]) renderedSections.push(content[key]);
+    else if (key === "categories" || key === "departments") renderedSections.push(content.categories);
     else if (key === "stories") renderedSections.push(content.stories);
   }
 
