@@ -112,7 +112,7 @@ export default function HomePage() {
     categories: departmentCards.length ? (
       <section key="categories" data-testid="home-departments" className="py-10 lg:py-12">
         <h2 className="mb-5 text-lg font-semibold lg:text-xl">{pickCmsLocalized(sectionByKey.categories?.translations, locale) || t("home.shopByDepartment")}</h2>
-        <CategoryStrip categories={departmentCards} nameOf={(department) => department.name} linkFor={(department) => `/shop?department=${department.slug}`} testIdPrefix="department-card" />
+        <CategoryStrip categories={departmentCards} nameOf={(department) => department.name} linkFor={(department) => `/shop?department=${department.slug}`} testIdPrefix="department-card" fillDesktop cardVariant="wide" />
       </section>
     ) : null,
     primary: renderProductSection(primarySection, "Pilihan untukmu", "home-curated-primary"),
