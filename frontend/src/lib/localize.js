@@ -49,9 +49,11 @@ export function toCardProduct(p, locale) {
 }
 
 export function toCardCategory(c, locale) {
+  const brandName = c.slug === "skinfitic" ? "SKINTIFIC" : pickLocalized(c.translations, locale);
   return {
+    id: c.id,
     slug: c.slug,
     image: c.image_url || "",
-    name: pickLocalized(c.translations, locale),
+    name: brandName,
   };
 }

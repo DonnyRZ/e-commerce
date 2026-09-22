@@ -125,12 +125,15 @@ export default function ShopPage() {
     ? activeNode.children
     : categoryDetail
       ? []
-      : catalogTree.flatMap((node) => node.children || []);
+    : catalogTree.flatMap((node) => node.children || []);
+  const productCategoryIds = new Set(
+    (productsQuery.data?.items || []).map((product) => product.category_id).filter(Boolean)
+  );
   const stripCategories = stripNodes
     .map((c) => ({
       ...toCardCategory(c, locale),
       image: CATEGORY_VISUALS[c.slug] || "",
-      comingSoon: !CATEGORY_VISUALS[c.slug],
+      comingSoon: productsQuery.isSuccess && !productsQuery.isFetching && !productCategoryIds.has(c.id),
       comingSoonLabel: locale === "id" ? "Segera hadir" : locale === "uz" ? "Tez orada" : locale === "ru" ? "Скоро" : "Coming soon",
     }));
 

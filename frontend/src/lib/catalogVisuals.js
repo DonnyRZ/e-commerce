@@ -5,7 +5,11 @@ export const DEPARTMENT_VISUALS = {
 };
 
 export const CATEGORY_VISUALS = {
+  executive: "/brand/generated/catalog/brands/executive.png",
+  uniqlo: "/brand/generated/catalog/brands/uniqlo.png",
   skechers: "/brand/generated/catalog/categories/skechers.png",
-  uniqlo: "/brand/generated/catalog/categories/uniqlo.png",
-  safi: "/brand/generated/catalog/categories/safi.png",
+  safi: "/brand/generated/catalog/brands/safi.png",
+  skintific: "/brand/generated/catalog/brands/skintific.png",
+  skinfitic: "/brand/generated/catalog/brands/skintific.png",
+  wardah: "/brand/generated/catalog/brands/wardah.png",
 };
