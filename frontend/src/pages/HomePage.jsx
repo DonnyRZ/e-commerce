@@ -81,7 +81,8 @@ export default function HomePage() {
   });
   const heroProduct = heroProductQuery.data?.items?.[0] || fallbackProducts[0];
   const heroMedia = heroProduct?.media?.[0];
-  const heroImage = typeof heroMedia === "string" ? heroMedia : heroMedia?.url || "";
+  const catalogHeroImage = typeof heroMedia === "string" ? heroMedia : heroMedia?.url || "";
+  const heroImage = hero?.payload?.hero_asset_url || catalogHeroImage;
   const heroTitle = pickCmsLocalized(hero?.translations, locale) || (cmsFailed ? t("page.home.heroTitle") : "");
   const heroEyebrow = pickCmsLocalized(hero?.translations, locale, "eyebrow") || (cmsFailed ? t("brand.tagline") : "");
   const heroSubtitle = pickCmsLocalized(hero?.translations, locale, "subtitle") || (cmsFailed ? t("page.home.heroSubtitle") : "");
@@ -129,7 +130,7 @@ export default function HomePage() {
     <div data-testid="home-page">
       {hero || cmsFailed ? (
         <section data-testid="home-hero" className="relative -mx-4 overflow-hidden bg-brand-ivory sm:-mx-6 lg:-mx-10">
-          {heroImage ? <ImageWithFallback src={mediaUrl(heroImage)} alt={heroAlt} className="h-[58vh] min-h-[420px] w-full object-contain object-right lg:h-[72vh]" /> : <div className="h-[45vh] min-h-[360px] bg-brand-ivory" />}
+          {heroImage ? <ImageWithFallback src={mediaUrl(heroImage)} alt={heroAlt} className="h-[58vh] min-h-[420px] w-full object-cover object-center lg:h-[72vh]" /> : <div className="h-[45vh] min-h-[360px] bg-brand-ivory" />}
           <div className="absolute inset-0 flex items-end bg-gradient-to-r from-black/45 via-black/10 to-transparent pb-8 pt-20 sm:pb-12 lg:pb-16"><div className="w-full px-4 text-white sm:px-8 lg:px-12">{heroEyebrow ? <p className="text-[11px] font-medium uppercase tracking-[0.2em] sm:text-xs">{heroEyebrow}</p> : null}{heroTitle ? <h1 className="mt-2 max-w-xl text-2xl font-semibold tracking-tight sm:text-3xl lg:text-4xl">{heroTitle}</h1> : null}{heroSubtitle ? <p className="mt-2 max-w-xl text-sm text-white/85">{heroSubtitle}</p> : null}<div className="mt-5 flex flex-wrap items-center gap-3">{heroPrimary.label ? <Link to={heroPrimary.to} data-testid="hero-cta-shop" className="rounded-full bg-background px-6 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary">{heroPrimary.label}</Link> : null}{heroSecondary.label ? <Link to={heroSecondary.to} data-testid="hero-cta-departments" className="rounded-full border border-white/70 px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/10">{heroSecondary.label}</Link> : null}</div></div></div>
         </section>
       ) : null}

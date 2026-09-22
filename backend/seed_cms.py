@@ -316,14 +316,20 @@ async def seed():
             {loc: {"title": _tr(strings, "announcement.text", loc)} for loc in LOCALES},
             sort_order=0, placement="top",
         )
-        # hero: keep the image authoritative in the product catalog. CMS only
-        # stores the selected product reference.
+        # Hero remains anchored to a real catalog product while the campaign
+        # visual is a separately generated asset that preserves that product.
         hero_product_id = await session.scalar(
             select(Product.id)
-            .where(Product.status == "active")
-            .order_by(Product.featured.desc(), Product.created_at.desc(), Product.id.desc())
+            .where(Product.status == "active", Product.slug == "smooth-cotton-crew-neck-sweater-4aa1f9")
             .limit(1)
         )
+        if not hero_product_id:
+            hero_product_id = await session.scalar(
+                select(Product.id)
+                .where(Product.status == "active")
+                .order_by(Product.featured.desc(), Product.created_at.desc(), Product.id.desc())
+                .limit(1)
+            )
         await add_entry(
             "hero", "Homepage hero", "home-hero",
             {
@@ -337,7 +343,10 @@ async def seed():
                 for loc in LOCALES
             },
             cta_url="/shop", secondary_cta_url="/shop",
-            payload={"product_id": hero_product_id} if hero_product_id else {},
+            payload={
+                "product_id": hero_product_id,
+                "hero_asset_url": "/brand/generated/home-hero-smooth-cotton-collection.png",
+            } if hero_product_id else {},
         )
         # homepage sections (visibility/order)
         for idx, key in enumerate(SECTION_KEYS):
