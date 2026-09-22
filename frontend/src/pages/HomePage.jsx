@@ -141,7 +141,7 @@ export default function HomePage() {
                 <ImageWithFallback src={mediaUrl(heroImage)} alt={heroAlt} className="block h-auto w-full object-contain" />
               </picture>
             ) : <div className="h-[45vh] min-h-[360px] bg-brand-ivory" />}
-            <div className="bg-brand-ivory px-4 pb-8 pt-7 text-foreground sm:px-8 sm:pb-12 lg:absolute lg:inset-0 lg:flex lg:items-end lg:bg-gradient-to-r lg:from-black/45 lg:via-black/10 lg:to-transparent lg:px-12 lg:pb-16 lg:pt-20 lg:text-white">
+            <div className="bg-brand-ivory px-4 pb-8 pt-7 text-foreground sm:px-8 sm:pb-12 lg:absolute lg:inset-0 lg:flex lg:items-end lg:bg-transparent lg:bg-gradient-to-r lg:from-black/45 lg:via-black/10 lg:to-transparent lg:px-12 lg:pb-16 lg:pt-20 lg:text-white">
               <div className="w-full">
                 {heroEyebrow ? <p className="text-[11px] font-medium uppercase tracking-[0.2em] sm:text-xs">{heroEyebrow}</p> : null}
                 {heroTitle ? <h1 className="mt-2 max-w-xl text-2xl font-semibold tracking-tight sm:text-3xl lg:text-4xl">{heroTitle}</h1> : null}
