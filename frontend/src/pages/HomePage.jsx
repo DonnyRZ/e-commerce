@@ -130,12 +130,12 @@ export default function HomePage() {
   return (
     <div data-testid="home-page">
       {hero || cmsFailed ? (
-        <section data-testid="home-hero" className="relative -mx-4 overflow-hidden bg-brand-ivory sm:-mx-6 lg:-mx-10">
-          <div className="relative">
+        <section data-testid="home-hero" className="relative -mx-4 overflow-hidden bg-brand-ivory sm:-mx-6 lg:-mx-10 lg:h-[calc(100svh-8.25rem)] lg:min-h-[560px] lg:max-h-[820px]">
+          <div className="relative lg:flex lg:h-full lg:w-full lg:items-center lg:justify-center">
             {heroImage ? heroMediaType === "video" ? (
-              <video src={mediaUrl(heroImage)} poster={hero?.payload?.hero_poster_url ? mediaUrl(hero.payload.hero_poster_url) : undefined} autoPlay muted loop playsInline preload="metadata" aria-label={heroAlt} className="block h-auto w-full object-contain" />
+              <video src={mediaUrl(heroImage)} poster={hero?.payload?.hero_poster_url ? mediaUrl(hero.payload.hero_poster_url) : undefined} autoPlay muted loop playsInline preload="metadata" aria-label={heroAlt} className="block h-auto w-full object-contain lg:h-full lg:w-full" />
             ) : (
-              <ImageWithFallback src={mediaUrl(heroImage)} alt={heroAlt} className="block h-auto w-full object-contain" />
+              <ImageWithFallback src={mediaUrl(heroImage)} alt={heroAlt} className="block h-auto w-full object-contain lg:h-full lg:w-full" />
             ) : <div className="h-[45vh] min-h-[360px] bg-brand-ivory" />}
             <div className="bg-gradient-to-r from-black/45 via-black/10 to-transparent px-4 pb-8 pt-7 text-white sm:px-8 sm:pb-12 lg:absolute lg:inset-0 lg:flex lg:items-end lg:px-12 lg:pb-16 lg:pt-20">
               <div className="w-full">
