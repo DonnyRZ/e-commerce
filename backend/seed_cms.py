@@ -346,6 +346,7 @@ async def seed():
             payload={
                 "product_id": hero_product_id,
                 "hero_asset_url": "/brand/generated/home-hero-smooth-cotton-collection.png",
+                "hero_mobile_asset_url": "/brand/generated/home-hero-smooth-cotton-mobile.png",
             } if hero_product_id else {},
         )
         # homepage sections (visibility/order)

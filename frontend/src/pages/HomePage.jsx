@@ -84,6 +84,7 @@ export default function HomePage() {
   const catalogHeroImage = typeof heroMedia === "string" ? heroMedia : heroMedia?.url || "";
   const heroImage = hero?.payload?.hero_asset_url || catalogHeroImage;
   const heroMediaType = hero?.payload?.hero_media_type || (/\.(mp4|webm|mov)(\?|$)/i.test(heroImage) ? "video" : "image");
+  const heroMobileImage = heroMediaType === "image" ? hero?.payload?.hero_mobile_asset_url || "" : "";
   const heroTitle = pickCmsLocalized(hero?.translations, locale) || (cmsFailed ? t("page.home.heroTitle") : "");
   const heroEyebrow = pickCmsLocalized(hero?.translations, locale, "eyebrow") || (cmsFailed ? t("brand.tagline") : "");
   const heroSubtitle = pickCmsLocalized(hero?.translations, locale, "subtitle") || (cmsFailed ? t("page.home.heroSubtitle") : "");
@@ -135,7 +136,10 @@ export default function HomePage() {
             {heroImage ? heroMediaType === "video" ? (
               <video src={mediaUrl(heroImage)} poster={hero?.payload?.hero_poster_url ? mediaUrl(hero.payload.hero_poster_url) : undefined} autoPlay muted loop playsInline preload="metadata" aria-label={heroAlt} className="block h-auto w-full object-contain" />
             ) : (
-              <ImageWithFallback src={mediaUrl(heroImage)} alt={heroAlt} className="block h-auto w-full object-contain" />
+              <picture className="block">
+                {heroMobileImage ? <source media="(max-width: 1023px)" srcSet={mediaUrl(heroMobileImage)} /> : null}
+                <ImageWithFallback src={mediaUrl(heroImage)} alt={heroAlt} className="block h-auto w-full object-contain" />
+              </picture>
             ) : <div className="h-[45vh] min-h-[360px] bg-brand-ivory" />}
             <div className="bg-gradient-to-r from-black/45 via-black/10 to-transparent px-4 pb-8 pt-7 text-white sm:px-8 sm:pb-12 lg:absolute lg:inset-0 lg:flex lg:items-end lg:px-12 lg:pb-16 lg:pt-20">
               <div className="w-full">
