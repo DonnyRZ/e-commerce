@@ -1,5 +1,9 @@
 .git
 .gitignore
+.pytest_cache
+backend/.pytest_cache
+backend/.pytest_cache/
+backend/.pytest_cache/**
 .emergent
 **/.env
 **/.env.*
@@ -9,8 +13,6 @@
 **/__pycache__
 **/*.pyc
 **/.pytest_cache
-backend/.pytest_cache
-backend/.pytest_cache/**
 **/.mypy_cache
 **/.ruff_cache
 **/*.log

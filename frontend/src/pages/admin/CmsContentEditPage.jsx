@@ -7,6 +7,7 @@ import {
   createCmsContent,
   deleteCmsContent,
   getCatalogTree,
+  getCmsCatalogProducts,
   getCmsContent,
   getCmsContentEntry,
   getCmsMedia,
@@ -46,7 +47,7 @@ const LABELS = {
 const LOCALE_LABELS = { en: "English", id: "Indonesia", uz: "O'zbek", ru: "Русский" };
 const REVISION_LABELS = { created: "dibuat", saved_draft: "draft disimpan", published: "diterbitkan", unpublished: "dijadikan draft", archived: "diarsipkan", restored: "dipulihkan" };
 const TYPE_DESCRIPTIONS = {
-  hero: "Area pembuka di beranda. Atur judul, gambar, dan tombol utama.",
+  hero: "Area pembuka di beranda. Pilih produk aktif dari katalog sebagai visual hero; gambar tidak diunggah ulang.",
   announcement: "Pesan singkat yang muncul di bar paling atas toko.",
   banner: "Materi promosi yang tampil tepat setelah hero beranda.",
   story: "Cerita editorial atau panduan yang tampil di bagian inspirasi.",
@@ -56,7 +57,7 @@ const TYPE_DESCRIPTIONS = {
   footer_group: "Judul kelompok tautan pada footer. Slug-nya menjadi kunci grup.",
   footer_item: "Satu tautan di dalam grup footer yang dipilih.",
   footer_text: "Judul bagian cerita atau kalimat promosi pada footer.",
-  homepage_section: "Mengatur urutan bagian beranda. Bagian yang diarsipkan tidak ditampilkan.",
+  homepage_section: "Mengatur urutan dan pilihan produk di beranda. Produk diambil langsung dari katalog.",
   department_visual: "Gambar pengganti untuk kartu salah satu departemen katalog.",
 };
 const MEDIA_TYPES = new Set(CMS_MEDIA_TYPES);
@@ -141,6 +142,51 @@ function MediaPicker({ onSelect, onClose }) {
       </div>
       {!isLoading && !isError && !(data?.items || []).length ? <p className="py-8 text-center text-sm text-stone-500">Belum ada gambar. Unggah gambar pertama untuk mulai.</p> : null}
     </div>
+  );
+}
+
+function CatalogProductPicker({ contentType, payload, setPayload }) {
+  const [search, setSearch] = useState("");
+  const query = useQuery({
+    queryKey: ["cms-catalog-products", search],
+    queryFn: () => getCmsCatalogProducts({ q: search.trim() || undefined, page_size: 100 }),
+  });
+  const multiple = contentType === "homepage_section";
+  const selectedIds = multiple
+    ? (Array.isArray(payload.product_ids) ? payload.product_ids : [])
+    : (payload.product_id ? [payload.product_id] : []);
+  const selectedProducts = (query.data?.items || []).filter((product) => selectedIds.includes(product.id));
+  const selectProduct = (product) => {
+    if (multiple) {
+      const next = selectedIds.includes(product.id)
+        ? selectedIds.filter((id) => id !== product.id)
+        : [...selectedIds, product.id];
+      setPayload((current) => ({ ...current, product_ids: next }));
+    } else {
+      setPayload((current) => ({ ...current, product_id: product.id }));
+    }
+  };
+  const clear = () => setPayload((current) => {
+    const next = { ...current };
+    delete next.product_id;
+    delete next.product_ids;
+    return next;
+  });
+  return (
+    <FormSection
+      title={multiple ? "Produk homepage" : "Produk hero"}
+      description={multiple ? "Pilih produk yang sudah ada di katalog. Gambar, nama, dan harga tetap mengikuti halaman produk." : "Pilih satu produk aktif sebagai visual hero. CMS hanya menyimpan referensinya, bukan salinan gambar."}
+      testId="cms-editor-catalog-products"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-stone-500">{selectedIds.length ? `${selectedIds.length} produk dipilih` : "Belum ada pilihan manual — gunakan produk katalog terbaru secara otomatis."}</p>
+        {selectedIds.length ? <button type="button" onClick={clear} className="text-xs font-semibold text-red-700 hover:underline" data-testid="cms-catalog-clear">Hapus pilihan manual</button> : null}
+      </div>
+      {multiple ? <div className="mt-4 grid gap-3 sm:grid-cols-2"><div><FormLabel htmlFor="cms-product-source">Sumber produk</FormLabel><select id="cms-product-source" value={selectedIds.length ? "manual" : (payload.sort || "newest")} onChange={(event) => { const value = event.target.value; if (value === "manual") return; setPayload((current) => ({ ...current, sort: value, product_ids: [] })); }} className={inputClass} data-testid="cms-product-source"><option value="newest">Produk terbaru</option><option value="featured">Produk pilihan katalog</option><option value="manual">Pilih manual</option></select></div><div><FormLabel htmlFor="cms-product-limit">Jumlah produk</FormLabel><input id="cms-product-limit" type="number" min="4" max="24" value={payload.limit || 8} onChange={(event) => setPayload((current) => ({ ...current, limit: Number(event.target.value) || 8 }))} className={inputClass} data-testid="cms-product-limit" /></div></div> : null}
+      <input value={search} onChange={(event) => setSearch(event.target.value)} className="mt-4 h-10 w-full rounded-lg border border-[#E4DED2] bg-white px-3 text-sm outline-none focus:border-[#02422C]" placeholder="Cari produk yang sudah ada…" aria-label="Cari produk katalog" data-testid="cms-catalog-search" />
+      {query.isError ? <p className="py-6 text-center text-sm text-red-700">Produk katalog gagal dimuat. Coba lagi setelah memuat ulang halaman.</p> : <div className="mt-4 grid max-h-[28rem] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">{query.isLoading ? Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} className="h-24 rounded-lg" />) : (query.data?.items || []).map((product) => { const selected = selectedIds.includes(product.id); return <button key={product.id} type="button" onClick={() => selectProduct(product)} className={`flex gap-3 rounded-lg border p-2 text-left transition ${selected ? "border-[#02422C] bg-[#F0F5EF] ring-1 ring-[#02422C]" : "border-[#E4DED2] bg-white hover:border-[#02422C]"}`} data-testid={`cms-catalog-product-${product.id}`}><ImageWithFallback src={mediaUrl(product.image_url)} alt={product.name} className="h-16 w-14 shrink-0 bg-stone-100 object-contain" /><span className="min-w-0"><span className="block truncate text-xs font-semibold text-[#17392C]">{product.name}</span><span className="mt-1 block text-[10px] uppercase tracking-wide text-stone-500">{product.brand || "Katalog"}</span><span className="mt-1 block text-xs text-[#02422C]">UZS {Number(product.base_price || 0).toLocaleString("en-US")}</span></span></button>; })}</div>}
+      {selectedProducts.length ? <p className="mt-3 text-[11px] text-[#315347]">Pilihan disimpan sebagai referensi produk. Jika gambar produk diperbarui di Products, homepage ikut berubah otomatis.</p> : null}
+    </FormSection>
   );
 }
 
@@ -418,6 +464,8 @@ export default function CmsContentEditPage() {
               {pickerOpen ? <MediaPicker onClose={() => setPickerOpen(false)} onSelect={(asset) => { setFormValue("media_id", asset.id); setImagePreview(asset.url); setPickerOpen(false); }} /> : null}
             </FormSection>
           ) : null}
+
+          {contentType === "hero" || contentType === "homepage_section" ? <CatalogProductPicker contentType={contentType} payload={payload} setPayload={setPayload} /> : null}
 
           <FormSection title="Konten & bahasa" description="English wajib lengkap untuk publish. Bahasa lain opsional; toko akan memakai teks English bila terjemahan belum tersedia." testId="cms-editor-translations">
             <div className="flex flex-wrap gap-2" role="tablist" aria-label="Bahasa konten">

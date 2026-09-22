@@ -285,6 +285,8 @@ export const createCmsContent = (data) =>
   api.post("/v1/admin/cms/content", data).then((r) => r.data);
 export const getCmsContentEntry = (id) =>
   api.get(`/v1/admin/cms/content/${id}`).then((r) => r.data);
+export const getCmsCatalogProducts = (params = {}) =>
+  api.get("/v1/admin/cms/catalog-products", { params: clean(params) }).then((r) => r.data);
 export const updateCmsContent = (id, data) =>
   api.patch(`/v1/admin/cms/content/${id}`, data).then((r) => r.data);
 export const deleteCmsContent = (id) =>

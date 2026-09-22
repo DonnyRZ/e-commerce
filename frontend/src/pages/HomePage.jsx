@@ -1,13 +1,13 @@
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { getCatalogTree, getCmsBundle, getProducts } from "@/lib/api";
 import { mediaUrl, pickCmsLocalized, pickLocalized, toCardProduct } from "@/lib/localize";
-import { HERO_IMAGE } from "@/data/demo";
 import CategoryStrip from "@/components/common/CategoryStrip";
 import EditorialSection from "@/components/common/EditorialSection";
 import CmsBannerStrip from "@/components/common/CmsBannerStrip";
-import ProductGrid from "@/components/common/ProductGrid";
+import ProductRail from "@/components/common/ProductRail";
 import ErrorState from "@/components/common/ErrorState";
 import ImageWithFallback from "@/components/common/ImageWithFallback";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -16,118 +16,125 @@ function GridSkeleton({ testId }) {
   return (
     <div data-testid={testId} className="grid grid-cols-2 gap-x-3 gap-y-8 md:grid-cols-3 lg:grid-cols-4 lg:gap-x-5">
       {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i}>
-          <Skeleton className="aspect-[3/4] w-full" />
-          <Skeleton className="mt-3 h-4 w-3/4" />
-        </div>
+        <div key={i}><Skeleton className="aspect-[3/4] w-full" /><Skeleton className="mt-3 h-4 w-3/4" /></div>
       ))}
     </div>
   );
 }
 
+const SECTION_ALIASES = {
+  curated_primary: "curated_primary",
+  new_arrivals: "curated_primary",
+  curated_secondary: "curated_secondary",
+  best_sellers: "curated_secondary",
+};
+
+function sectionProducts(section, fallbackProducts, featuredProducts, curatedProducts) {
+  const payload = section?.payload || {};
+  const selectedIds = Array.isArray(payload.product_ids) ? payload.product_ids : [];
+  const byId = new Map([...fallbackProducts, ...featuredProducts, ...curatedProducts].map((product) => [product.id, product]));
+  if (selectedIds.length) return selectedIds.map((id) => byId.get(id)).filter(Boolean).slice(0, 24);
+  const source = payload.sort || (SECTION_ALIASES[section?.key] === "curated_secondary" ? "featured" : "newest");
+  const sourceProducts = source === "featured" && featuredProducts.length ? featuredProducts : fallbackProducts;
+  return sourceProducts.slice(0, Math.min(Number(payload.limit) || 8, 24));
+}
+
 export default function HomePage() {
   const { locale, t } = useI18n();
+  const catalogQuery = useQuery({ queryKey: ["catalog-tree"], queryFn: getCatalogTree, staleTime: 5 * 60 * 1000 });
+  const cmsBundleQuery = useQuery({ queryKey: ["cms", "bundle"], queryFn: getCmsBundle, staleTime: 60_000 });
+  const catalogProductsQuery = useQuery({ queryKey: ["products", "home-catalog"], queryFn: () => getProducts({ sort: "newest", limit: 60 }), staleTime: 60_000 });
+  const featuredProductsQuery = useQuery({ queryKey: ["products", "home-featured"], queryFn: () => getProducts({ sort: "featured", limit: 60 }), staleTime: 60_000 });
 
-  const catalogQuery = useQuery({
-    queryKey: ["catalog-tree"],
-    queryFn: getCatalogTree,
-    staleTime: 5 * 60 * 1000,
-  });
-  const catalogTree = catalogQuery.data || [];
-  const departments = catalogTree.filter((node) => node.kind === "department" && node.is_active !== false);
-  const newArrivals = useQuery({
-    queryKey: ["products", "home-new"],
-    queryFn: () => getProducts({ badge: "new", limit: 8 }),
-  });
-  const bestSellers = useQuery({
-    queryKey: ["products", "home-best"],
-    queryFn: () => getProducts({ badge: "bestseller", limit: 8 }),
-  });
-  const cmsBundleQuery = useQuery({
-    queryKey: ["cms", "bundle"],
-    queryFn: getCmsBundle,
+  const cmsBundle = cmsBundleQuery.data;
+  const cmsFailed = cmsBundleQuery.isError;
+  const departments = (catalogQuery.data || []).filter((node) => node.kind === "department" && node.is_active !== false).sort((a, b) => a.sort_order - b.sort_order);
+  const departmentVisuals = Object.fromEntries((cmsBundle?.department_visuals || []).map((visual) => [visual.slug, visual]));
+  const departmentCards = departments.map((department) => ({
+    ...department,
+    image: mediaUrl(departmentVisuals[department.slug]?.image_url) || department.image_url || "",
+    name: pickLocalized(department.translations, locale),
+  }));
+  const fallbackProducts = catalogProductsQuery.data?.items || [];
+  const featuredProducts = featuredProductsQuery.data?.items || [];
+  const sections = useMemo(() => cmsBundle?.sections || [], [cmsBundle?.sections]);
+  const selectedProductIds = [...new Set(sections.flatMap((section) => (
+    Array.isArray(section.payload?.product_ids) ? section.payload.product_ids : []
+  )))];
+  const curatedProductsQuery = useQuery({
+    queryKey: ["products", "home-curated", selectedProductIds.join(",")],
+    queryFn: () => getProducts({ ids: selectedProductIds.join(","), limit: selectedProductIds.length }),
+    enabled: selectedProductIds.length > 0,
     staleTime: 60_000,
   });
-  const cmsBundle = cmsBundleQuery.data;
-
-  const cmsFailed = cmsBundleQuery.isError;
+  const curatedProducts = curatedProductsQuery.data?.items || [];
+  const sectionByKey = Object.fromEntries(sections.map((section) => [section.key, section]));
+  const primarySection = sectionByKey.curated_primary || sectionByKey.new_arrivals;
+  const secondarySection = sectionByKey.curated_secondary || sectionByKey.best_sellers;
   const hero = cmsBundle?.hero;
-  const heroImage = mediaUrl(hero?.image_url) || (cmsFailed ? HERO_IMAGE : "");
-  const heroEyebrow = pickCmsLocalized(hero?.translations, locale, "eyebrow") || (cmsFailed ? t("brand.tagline") : "");
+  const heroProductId = hero?.payload?.product_id;
+  const heroProductQuery = useQuery({
+    queryKey: ["products", "home-hero", heroProductId || "fallback"],
+    queryFn: () => heroProductId ? getProducts({ ids: heroProductId, limit: 1 }) : getProducts({ sort: "featured", limit: 1 }),
+    enabled: Boolean(cmsBundleQuery.isSuccess),
+    staleTime: 60_000,
+  });
+  const heroProduct = heroProductQuery.data?.items?.[0] || fallbackProducts[0];
+  const heroMedia = heroProduct?.media?.[0];
+  const heroImage = typeof heroMedia === "string" ? heroMedia : heroMedia?.url || "";
   const heroTitle = pickCmsLocalized(hero?.translations, locale) || (cmsFailed ? t("page.home.heroTitle") : "");
-  const heroAlt = pickCmsLocalized(hero?.translations, locale, "alt_text") || heroTitle;
+  const heroEyebrow = pickCmsLocalized(hero?.translations, locale, "eyebrow") || (cmsFailed ? t("brand.tagline") : "");
   const heroSubtitle = pickCmsLocalized(hero?.translations, locale, "subtitle") || (cmsFailed ? t("page.home.heroSubtitle") : "");
-  const heroPrimary = {
-    label: pickCmsLocalized(hero?.translations, locale, "cta_label") || (cmsFailed ? t("home.shopNow") : ""),
-    to: hero?.cta_url || "/shop",
-  };
-  const heroSecondary = {
-    label: pickCmsLocalized(hero?.translations, locale, "secondary_cta_label") || (cmsFailed ? t("home.allDepartments") : ""),
-    to: hero?.secondary_cta_url || "/shop",
-  };
-  const departmentVisuals = Object.fromEntries(
-    (cmsBundle?.department_visuals || []).map((visual) => [visual.slug, visual])
-  );
+  const heroAlt = heroProduct ? `${heroProduct.brand || ""} ${pickLocalized(heroProduct.translations, locale)}`.trim() : heroTitle;
+  const heroPrimary = { label: pickCmsLocalized(hero?.translations, locale, "cta_label") || (cmsFailed ? t("home.shopNow") : ""), to: hero?.cta_url || "/shop" };
+  const heroSecondary = { label: pickCmsLocalized(hero?.translations, locale, "secondary_cta_label") || (cmsFailed ? t("home.allDepartments") : ""), to: hero?.secondary_cta_url || "/shop" };
+  const sectionOrder = useMemo(() => sections.filter((section) => section.key !== "hero" && section.key !== "footer" && section.key !== "promo_bar").sort((a, b) => a.sort_order - b.sort_order).map((section) => section.key), [sections]);
 
-  const departmentCards = departments
-    .slice()
-    .sort((a, b) => a.sort_order - b.sort_order)
-    .map((department) => {
-      const visual = departmentVisuals[department.slug];
-      return {
-        ...department,
-        image: mediaUrl(visual?.image_url) || department.image_url || "",
-        name: pickLocalized(department.translations, locale),
-      };
-    });
+  const renderProductSection = (section, fallbackTitle, testId) => {
+    if (!section || section.key === "stories") return null;
+    const products = sectionProducts(section, fallbackProducts, featuredProducts, curatedProducts);
+    if (catalogProductsQuery.isError || featuredProductsQuery.isError || curatedProductsQuery.isError) return <section key={testId} data-testid={testId} className="py-6"><ErrorState onRetry={() => { catalogProductsQuery.refetch(); featuredProductsQuery.refetch(); curatedProductsQuery.refetch(); }} /></section>;
+    if (catalogProductsQuery.isLoading || featuredProductsQuery.isLoading || curatedProductsQuery.isLoading) return <section key={testId} data-testid={testId} className="py-6"><GridSkeleton testId={`${testId}-loading`} /></section>;
+    if (!products.length) return null;
+    const title = pickCmsLocalized(section.translations, locale) || fallbackTitle;
+    return (
+      <section key={testId} data-testid={testId} className="py-6 lg:py-8">
+        <div className="mb-2 flex items-end justify-between gap-4"><h2 className="text-lg font-semibold lg:text-xl">{title}</h2><Link to="/shop" className="shrink-0 text-sm font-medium text-foreground underline-offset-4 hover:underline">{t("home.viewAll")}</Link></div>
+        <ProductRail products={products.map((product) => toCardProduct(product, locale))} testId={`${testId}-rail`} />
+      </section>
+    );
+  };
 
-  const sections = {
-    hero: (
-      <div key="hero">
-        {hero || cmsFailed ? (
-          <section data-testid="home-hero" className="relative -mx-4 sm:-mx-6 lg:-mx-10">
-            {heroImage ? <ImageWithFallback src={heroImage} alt={heroAlt} className="h-[60vh] w-full object-cover lg:h-[72vh]" /> : <div className="h-[45vh] bg-brand-ivory" />}
-            <div className="absolute inset-x-0 bottom-0 pb-8 pt-24 text-center text-white [background:linear-gradient(to_top,rgba(0,0,0,0.55),transparent)] lg:pb-12">
-              {heroEyebrow ? <p className="text-[11px] font-medium uppercase tracking-[0.2em] sm:text-xs">{heroEyebrow}</p> : null}
-              {heroTitle ? <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl lg:text-4xl">{heroTitle}</h1> : null}
-              {heroSubtitle ? <p className="mx-auto mt-2 max-w-xl px-4 text-sm text-white/85">{heroSubtitle}</p> : null}
-              <div className="mt-5 flex items-center justify-center gap-3">
-                {heroPrimary.label ? <Link to={heroPrimary.to} data-testid="hero-cta-shop" className="rounded-full bg-background px-6 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary">{heroPrimary.label}</Link> : null}
-                {heroSecondary.label ? <Link to={heroSecondary.to} data-testid="hero-cta-departments" className="rounded-full border border-white/70 px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/10">{heroSecondary.label}</Link> : null}
-              </div>
-            </div>
-          </section>
-        ) : null}
-        <CmsBannerStrip banners={cmsBundle?.banners || []} />
-      </div>
-    ),
-    categories: (
-      <section key="categories" data-testid="home-departments" className="py-10 lg:py-14">
-        <h2 className="mb-5 text-lg font-semibold lg:text-xl">{t("home.shopByDepartment")}</h2>
-        {catalogQuery.isError ? <ErrorState onRetry={() => catalogQuery.refetch()} /> : departmentCards.length ? <CategoryStrip categories={departmentCards} nameOf={(department) => department.name} linkFor={(department) => `/shop?department=${department.slug}`} testIdPrefix="department-card" /> : <div className="flex gap-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="aspect-[3/4] w-36 shrink-0 sm:w-44 lg:w-48" />)}</div>}
+  const content = {
+    categories: departmentCards.length ? (
+      <section key="categories" data-testid="home-departments" className="py-10 lg:py-12">
+        <h2 className="mb-5 text-lg font-semibold lg:text-xl">{pickCmsLocalized(sectionByKey.categories?.translations, locale) || t("home.shopByDepartment")}</h2>
+        <CategoryStrip categories={departmentCards} nameOf={(department) => department.name} linkFor={(department) => `/shop?department=${department.slug}`} testIdPrefix="department-card" />
       </section>
-    ),
-    new_arrivals: (
-      <section key="new_arrivals" data-testid="home-new-arrivals" className="py-4 lg:py-6">
-        <div className="mb-5 flex items-end justify-between"><h2 className="text-lg font-semibold lg:text-xl">{t("home.newArrivals")}</h2><Link to="/shop?badge=new" data-testid="new-arrivals-view-all" className="text-sm font-medium text-foreground underline-offset-4 hover:underline">{t("home.viewAll")}</Link></div>
-        {newArrivals.isError ? <ErrorState onRetry={() => newArrivals.refetch()} /> : newArrivals.isLoading ? <GridSkeleton testId="new-arrivals-loading" /> : <ProductGrid products={(newArrivals.data?.items || []).map((p) => toCardProduct(p, locale))} testId="new-arrivals-grid" />}
-      </section>
-    ),
-    best_sellers: (
-      <section key="best_sellers" data-testid="home-best-sellers" className="pb-12 pt-2 lg:pb-16">
-        <div className="mb-5 flex items-end justify-between"><h2 className="text-lg font-semibold lg:text-xl">{t("home.bestSellers")}</h2><Link to="/shop?badge=bestseller" data-testid="best-sellers-view-all" className="text-sm font-medium text-foreground underline-offset-4 hover:underline">{t("home.viewAll")}</Link></div>
-        {bestSellers.isError ? <ErrorState onRetry={() => bestSellers.refetch()} /> : bestSellers.isLoading ? <GridSkeleton testId="best-sellers-loading" /> : <ProductGrid products={(bestSellers.data?.items || []).map((p) => toCardProduct(p, locale))} testId="best-sellers-grid" />}
-      </section>
-    ),
+    ) : null,
+    primary: renderProductSection(primarySection, "Pilihan untukmu", "home-curated-primary"),
+    secondary: renderProductSection(secondarySection, "Koleksi pilihan", "home-curated-secondary"),
     stories: <EditorialSection key="stories" stories={cmsBundle?.stories} title={pickCmsLocalized(cmsBundle?.story_title?.translations, locale)} cmsFailed={cmsFailed} />,
   };
-  const defaultOrder = ["hero", "categories", "new_arrivals", "best_sellers", "stories"];
-  const order = cmsBundleQuery.isSuccess
-    ? (cmsBundle.sections || []).filter((section) => section.key in sections && !["promo_bar", "footer"].includes(section.key)).sort((a, b) => a.sort_order - b.sort_order).map((section) => section.key)
-    : defaultOrder;
-  if (cmsBundleQuery.isSuccess && (cmsBundle?.banners || []).length && !order.includes("hero")) {
-    order.unshift("hero");
+  const renderedSections = [];
+  for (const key of sectionOrder) {
+    const alias = SECTION_ALIASES[key];
+    if (alias === "curated_primary" && !renderedSections.some((item) => item?.key === "home-curated-primary")) renderedSections.push(content.primary);
+    else if (alias === "curated_secondary" && !renderedSections.some((item) => item?.key === "home-curated-secondary")) renderedSections.push(content.secondary);
+    else if (key === "categories") renderedSections.push(content.categories);
+    else if (key === "stories") renderedSections.push(content.stories);
   }
 
-  return <div data-testid="home-page">{order.map((key) => sections[key])}</div>;
+  return (
+    <div data-testid="home-page">
+      {hero || cmsFailed ? (
+        <section data-testid="home-hero" className="relative -mx-4 overflow-hidden bg-brand-ivory sm:-mx-6 lg:-mx-10">
+          {heroImage ? <ImageWithFallback src={mediaUrl(heroImage)} alt={heroAlt} className="h-[58vh] min-h-[420px] w-full object-contain object-right lg:h-[72vh]" /> : <div className="h-[45vh] min-h-[360px] bg-brand-ivory" />}
+          <div className="absolute inset-0 flex items-end bg-gradient-to-r from-black/45 via-black/10 to-transparent pb-8 pt-20 sm:pb-12 lg:pb-16"><div className="w-full px-4 text-white sm:px-8 lg:px-12">{heroEyebrow ? <p className="text-[11px] font-medium uppercase tracking-[0.2em] sm:text-xs">{heroEyebrow}</p> : null}{heroTitle ? <h1 className="mt-2 max-w-xl text-2xl font-semibold tracking-tight sm:text-3xl lg:text-4xl">{heroTitle}</h1> : null}{heroSubtitle ? <p className="mt-2 max-w-xl text-sm text-white/85">{heroSubtitle}</p> : null}<div className="mt-5 flex flex-wrap items-center gap-3">{heroPrimary.label ? <Link to={heroPrimary.to} data-testid="hero-cta-shop" className="rounded-full bg-background px-6 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary">{heroPrimary.label}</Link> : null}{heroSecondary.label ? <Link to={heroSecondary.to} data-testid="hero-cta-departments" className="rounded-full border border-white/70 px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/10">{heroSecondary.label}</Link> : null}</div></div></div>
+        </section>
+      ) : null}
+      <CmsBannerStrip banners={cmsBundle?.banners || []} />
+      {catalogQuery.isError ? <ErrorState onRetry={() => catalogQuery.refetch()} /> : renderedSections}
+    </div>
+  );
 }

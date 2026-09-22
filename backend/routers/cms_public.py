@@ -40,7 +40,14 @@ async def public_bundle(session: AsyncSession = Depends(get_session)):
     footer_texts = await _published(session, "footer_text")
     return {
         "sections": [
-            {"key": s["slug"], "sort_order": s["sort_order"]} for s in sections
+            {
+                "id": s["id"],
+                "key": s["slug"],
+                "sort_order": s["sort_order"],
+                "payload": s["payload"] or {},
+                "translations": s["translations"],
+            }
+            for s in sections
         ],
         "hero": heroes[0] if heroes else None,
         "announcement": announcements[0] if announcements else None,

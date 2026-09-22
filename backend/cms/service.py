@@ -30,7 +30,8 @@ CONTENT_TYPES = (
 
 HOMEPAGE_SECTION_KEYS = (
     "promo_bar", "hero", "categories", "new_arrivals",
-    "departments", "best_sellers", "stories", "footer",
+    "departments", "best_sellers", "curated_primary",
+    "curated_secondary", "stories", "footer",
 )
 
 REVISION_ACTIONS = ("created", "saved_draft", "published", "unpublished", "archived", "restored")

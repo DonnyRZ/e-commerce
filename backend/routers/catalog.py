@@ -1,3 +1,4 @@
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -468,6 +469,7 @@ async def list_products(
     motif: Optional[str] = Query(default=None, max_length=120),
     format: Optional[str] = Query(default=None, max_length=120),
     availability: Optional[str] = Query(default=None, max_length=20),
+    ids: Optional[str] = Query(default=None, max_length=2200),
     sort: str = Query(default="featured", max_length=20),
     page: int = Query(1, ge=1),
     limit: int = Query(12, ge=1, le=60),
@@ -481,6 +483,14 @@ async def list_products(
         max_price=max_price,
     )
     filters = await _scope_filters(session, department, category)
+
+    if ids:
+        product_ids = [item.strip() for item in ids.split(",") if item.strip()]
+        if not product_ids or len(product_ids) > 60 or any(
+            not re.fullmatch(r"[A-Za-z0-9_-]{8,40}", item) for item in product_ids
+        ):
+            raise HTTPException(status_code=400, detail="invalid_product_ids")
+        filters.append(Product.id.in_(product_ids))
 
     if badge == "new":
         filters.append(Product.new_arrival.is_(True))

@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sqlalchemy import func, select
 
-from db.models import CmsContentEntry, CmsContentTranslation
+from db.models import CmsContentEntry, CmsContentTranslation, Product
 from db.session import SessionLocal
 
 TRANSLATIONS_PATH = os.environ.get(
@@ -86,9 +86,19 @@ EDITORIAL_DESCRIPTIONS = {
 }
 
 SECTION_KEYS = [
-    "promo_bar", "hero", "categories", "new_arrivals",
-    "departments", "best_sellers", "stories", "footer",
+    "promo_bar", "hero", "categories", "curated_primary",
+    "curated_secondary", "stories", "footer",
 ]
+
+SECTION_TITLES = {
+    "promo_bar": {loc: "" for loc in LOCALES},
+    "hero": {"en": "Curated fashion from Indonesia", "id": "Pilihan fashion dari Indonesia", "uz": "Indoneziyadan tanlangan moda", "ru": "Избранная мода из Индонезии"},
+    "categories": {"en": "Shop by Department", "id": "Belanja berdasarkan Department", "uz": "Bo'lim bo'yicha xarid qiling", "ru": "Покупайте по отделам"},
+    "curated_primary": {"en": "Picks for you", "id": "Pilihan untukmu", "uz": "Siz uchun tanlovlar", "ru": "Подборка для вас"},
+    "curated_secondary": {"en": "Curated collection", "id": "Koleksi pilihan", "uz": "Tanlangan kolleksiya", "ru": "Избранная коллекция"},
+    "stories": {"en": "Stories & Guides", "id": "Cerita & Panduan", "uz": "Hikoyalar va qo'llanmalar", "ru": "Истории и гиды"},
+    "footer": {loc: "" for loc in LOCALES},
+}
 
 FOOTER_LINKS = {
     "shop": [
@@ -306,7 +316,14 @@ async def seed():
             {loc: {"title": _tr(strings, "announcement.text", loc)} for loc in LOCALES},
             sort_order=0, placement="top",
         )
-        # hero
+        # hero: keep the image authoritative in the product catalog. CMS only
+        # stores the selected product reference.
+        hero_product_id = await session.scalar(
+            select(Product.id)
+            .where(Product.status == "active")
+            .order_by(Product.featured.desc(), Product.created_at.desc(), Product.id.desc())
+            .limit(1)
+        )
         await add_entry(
             "hero", "Homepage hero", "home-hero",
             {
@@ -320,13 +337,21 @@ async def seed():
                 for loc in LOCALES
             },
             cta_url="/shop", secondary_cta_url="/shop",
-            payload={},
+            payload={"product_id": hero_product_id} if hero_product_id else {},
         )
         # homepage sections (visibility/order)
         for idx, key in enumerate(SECTION_KEYS):
-            await add_entry("homepage_section", f"Section: {key}", key,
-                            {loc: {"title": key.replace("_", " ").title()} for loc in LOCALES},
-                            sort_order=idx)
+            payload = {}
+            if key == "curated_primary":
+                payload = {"source": "catalog", "sort": "newest", "limit": 8}
+            elif key == "curated_secondary":
+                payload = {"source": "catalog", "sort": "featured", "limit": 8}
+            await add_entry(
+                "homepage_section", f"Section: {key}", key,
+                {loc: {"title": SECTION_TITLES[key][loc]} for loc in LOCALES},
+                sort_order=idx, payload=payload,
+                status="draft" if key == "promo_bar" else "published",
+            )
         # stories & guides
         for idx, slug in enumerate(EDITORIAL_SLUGS):
             await add_entry(

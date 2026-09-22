@@ -17,7 +17,8 @@ export const CMS_CONTENT_TYPES = [
 
 export const CMS_SECTION_KEYS = [
   "promo_bar", "hero", "categories", "new_arrivals",
-  "departments", "best_sellers", "stories", "footer",
+  "departments", "best_sellers", "curated_primary",
+  "curated_secondary", "stories", "footer",
 ];
 
 export const CMS_TRANSLATION_FIELDS = {
@@ -35,7 +36,7 @@ export const CMS_TRANSLATION_FIELDS = {
   department_visual: ["alt_text"],
 };
 
-export const CMS_MEDIA_TYPES = ["hero", "banner", "story", "page", "department_visual"];
+export const CMS_MEDIA_TYPES = ["banner", "story", "page", "department_visual"];
 
 export const cmsTypeLabel = (value) =>
   CMS_CONTENT_TYPES.find((type) => type.value === value)?.label || value?.replaceAll("_", " ") || "Konten";

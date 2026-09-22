@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from auth import csrf_protect, require_roles
 from cms import service as cms
@@ -25,6 +26,7 @@ from db.models import (
     CmsRevision,
     Category,
     Product,
+    ProductTranslation,
     ProductVariant,
     User,
 )
@@ -178,6 +180,24 @@ async def _validate_references(session: AsyncSession, content_type: str, slug: s
             raise HTTPException(status_code=400, detail={"error": "invalid_media"})
     if content_type == "homepage_section" and slug and slug not in cms.HOMEPAGE_SECTION_KEYS:
         raise HTTPException(status_code=400, detail={"error": "invalid_homepage_section"})
+    if content_type == "hero" or content_type == "homepage_section":
+        product_ids = []
+        if isinstance(payload, dict):
+            if payload.get("product_id"):
+                product_ids.append(payload.get("product_id"))
+            if isinstance(payload.get("product_ids"), list):
+                product_ids.extend(payload.get("product_ids"))
+        product_ids = [item for item in product_ids if isinstance(item, str) and item]
+        if len(product_ids) > 60:
+            raise HTTPException(status_code=400, detail={"error": "too_many_product_references"})
+        if product_ids:
+            active_count = await session.scalar(
+                select(func.count(Product.id)).where(
+                    Product.id.in_(product_ids), Product.status == "active"
+                )
+            )
+            if int(active_count or 0) != len(set(product_ids)):
+                raise HTTPException(status_code=400, detail={"error": "invalid_product_reference"})
     if content_type == "footer_item":
         group = (payload or {}).get("group")
         if group and not await session.scalar(
@@ -367,6 +387,88 @@ async def list_content(
     ).scalars().all()
     items = [await cms.entry_summary(session, r) for r in rows]
     return {"items": items, "total": int(total or 0), "page": page, "page_size": page_size}
+
+
+@router.get("/catalog-products")
+async def list_cms_catalog_products(
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    q: Optional[str] = Query(default=None, max_length=120),
+    page_size: int = Query(default=100, ge=1, le=200),
+):
+    """Return existing active catalog products for CMS references.
+
+    Homepage merchandising stores only product IDs. Product images, prices,
+    and names remain authoritative in the catalog tables and are never copied
+    into CMS media or content payloads.
+    """
+    query = (
+        select(Product)
+        .options(selectinload(Product.translations), selectinload(Product.variants))
+        .where(Product.status == "active")
+        .order_by(Product.featured.desc(), Product.created_at.desc(), Product.id.desc())
+        .limit(page_size)
+    )
+    if q:
+        like = f"%{q}%"
+        query = query.where(
+            Product.slug.ilike(like)
+            | Product.brand.ilike(like)
+            | Product.id.in_(
+                select(ProductTranslation.product_id).where(
+                    ProductTranslation.name.ilike(like)
+                )
+            )
+        )
+    products = (await session.execute(query)).scalars().all()
+    category_ids = {product.category_id for product in products}
+    categories = {}
+    if category_ids:
+        categories = {
+            category.id: category
+            for category in (
+                await session.execute(select(Category).where(Category.id.in_(category_ids)))
+            ).scalars().all()
+        }
+
+    items = []
+    for product in products:
+        translation = next(
+            (item for item in product.translations if item.locale == "en"),
+            product.translations[0] if product.translations else None,
+        )
+        image_url = None
+        for media in product.media or []:
+            if isinstance(media, dict) and media.get("media_id"):
+                image_url = await _resolve_media_url(session, media["media_id"])
+            else:
+                image_url = media_item_url(media)
+            if image_url:
+                break
+        if not image_url:
+            variant = next((item for item in product.variants if item.is_active), None)
+            if variant:
+                image_url = (
+                    await _resolve_media_url(session, variant.media_id)
+                    if variant.media_id else variant.image_url
+                )
+        category = categories.get(product.category_id)
+        items.append({
+            "id": product.id,
+            "slug": product.slug,
+            "name": translation.name if translation else product.slug,
+            "brand": product.brand,
+            "base_price": product.base_price,
+            "compare_at_price": product.compare_at_price,
+            "currency": product.currency,
+            "image_url": image_url,
+            "category_id": product.category_id,
+            "department": category.department if category else "",
+            "is_demo": False,
+            "featured": product.featured,
+            "new_arrival": product.new_arrival,
+        })
+    return {"items": items, "total": len(items)}
 
 
 @router.post("/content", status_code=201)

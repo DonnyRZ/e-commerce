@@ -43,7 +43,7 @@ export default function ProductCard({ product }) {
             src={product.image}
             alt={product.name}
             loading="lazy"
-            className="aspect-[3/4] w-full object-cover"
+            className="aspect-[3/4] w-full object-contain p-2 sm:p-3"
           />
         </Link>
         {product.badge ? (
