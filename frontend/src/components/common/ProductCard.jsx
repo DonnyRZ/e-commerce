@@ -37,7 +37,7 @@ export default function ProductCard({ product }) {
   };
   return (
     <article data-testid={`product-card-${product.slug || product.id}`} className="group">
-      <div className="relative overflow-hidden bg-secondary">
+      <div className="relative overflow-hidden bg-white">
         <Link to={href} aria-label={product.name}>
           <ImageWithFallback
             src={product.image}
