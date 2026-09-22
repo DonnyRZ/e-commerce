@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Heart, Search, ShoppingBag, User } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -10,7 +10,6 @@ import { pickLocalized } from "@/lib/localize";
 import { taxonomyLabel, taxonomySections } from "@/lib/taxonomy";
 import LanguageSelector from "./LanguageSelector";
 import MobileNavigation from "./MobileNavigation";
-import SecondaryNav from "./SecondaryNav";
 import SearchOverlay from "./SearchOverlay";
 import BrandLogo from "@/components/brand/BrandLogo";
 
@@ -25,6 +24,9 @@ export default function Header() {
   const { cartCount, wishlistCount } = useShop();
   const { user } = useAuth();
   const [overlay, setOverlay] = useState({ open: false, dept: null });
+  const [headerVisible, setHeaderVisible] = useState(true);
+  const lastScrollY = useRef(0);
+  const upwardScrollDistance = useRef(0);
   const { data: catalogTree = [] } = useQuery({
     queryKey: ["catalog-tree"],
     queryFn: getCatalogTree,
@@ -37,9 +39,39 @@ export default function Header() {
       : item
   );
 
+  useEffect(() => {
+    const handleScroll = () => {
+      const currentScrollY = window.scrollY;
+      const previousScrollY = lastScrollY.current;
+      const scrollDelta = currentScrollY - previousScrollY;
+
+      if (currentScrollY <= 0) {
+        upwardScrollDistance.current = 0;
+        setHeaderVisible(true);
+      } else if (scrollDelta > 0) {
+        upwardScrollDistance.current = 0;
+        setHeaderVisible(true);
+      } else if (scrollDelta < 0) {
+        upwardScrollDistance.current += Math.abs(scrollDelta);
+        if (upwardScrollDistance.current >= 4) setHeaderVisible(false);
+      }
+
+      lastScrollY.current = currentScrollY;
+    };
+
+    lastScrollY.current = window.scrollY;
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
   return (
     <>
-      <header data-testid="site-header" className="sticky top-0 z-40 bg-background">
+      <header
+        data-testid="site-header"
+        className={`sticky top-0 z-40 bg-background transition-transform duration-200 will-change-transform ${
+          headerVisible ? "translate-y-0" : "-translate-y-full"
+        }`}
+      >
         <div className="border-b border-border">
           <div className="mx-auto flex h-14 w-full max-w-[1440px] items-center gap-2 px-4 sm:px-6 lg:h-16 lg:gap-4 lg:px-10">
             <MobileNavigation />
@@ -121,7 +153,6 @@ export default function Header() {
             </div>
           </div>
         </div>
-        <SecondaryNav />
       </header>
       <SearchOverlay
         open={overlay.open}
