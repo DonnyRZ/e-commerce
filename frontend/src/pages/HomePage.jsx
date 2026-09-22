@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { getCatalogTree, getCmsBundle, getProducts } from "@/lib/api";
 import { mediaUrl, pickCmsLocalized, pickLocalized, toCardProduct } from "@/lib/localize";
+import { DEPARTMENT_VISUALS } from "@/lib/catalogVisuals";
 import CategoryStrip from "@/components/common/CategoryStrip";
 import EditorialSection from "@/components/common/EditorialSection";
 import CmsBannerStrip from "@/components/common/CmsBannerStrip";
@@ -50,12 +51,20 @@ export default function HomePage() {
   const cmsFailed = cmsBundleQuery.isError;
   const departments = (catalogQuery.data || []).filter((node) => node.kind === "department" && node.is_active !== false).sort((a, b) => a.sort_order - b.sort_order);
   const departmentVisuals = Object.fromEntries((cmsBundle?.department_visuals || []).map((visual) => [visual.slug, visual]));
+  const fallbackProducts = catalogProductsQuery.data?.items || [];
+  const productCategoryIds = new Set(fallbackProducts.map((product) => product.category_id).filter(Boolean));
+  const hasProductsInNode = (node) => productCategoryIds.has(node.id) || (node.children || []).some((child) => hasProductsInNode(child));
+  const productsLoaded = catalogProductsQuery.isSuccess;
+  const comingSoonLabel = locale === "id" ? "Segera hadir" : locale === "uz" ? "Tez orada" : locale === "ru" ? "Скоро" : "Coming soon";
   const departmentCards = departments.map((department) => ({
     ...department,
-    image: mediaUrl(departmentVisuals[department.slug]?.image_url) || department.image_url || "",
+    image: !productsLoaded || hasProductsInNode(department)
+      ? DEPARTMENT_VISUALS[department.slug] || mediaUrl(departmentVisuals[department.slug]?.image_url) || department.image_url || ""
+      : "",
+    comingSoon: productsLoaded && !hasProductsInNode(department),
+    comingSoonLabel,
     name: pickLocalized(department.translations, locale),
   }));
-  const fallbackProducts = catalogProductsQuery.data?.items || [];
   const featuredProducts = featuredProductsQuery.data?.items || [];
   const sections = useMemo(() => cmsBundle?.sections || [], [cmsBundle?.sections]);
   const selectedProductIds = [...new Set(sections.flatMap((section) => (
@@ -112,7 +121,7 @@ export default function HomePage() {
     categories: departmentCards.length ? (
       <section key="categories" data-testid="home-departments" className="py-10 lg:py-12">
         <h2 className="mb-5 text-lg font-semibold lg:text-xl">{pickCmsLocalized(sectionByKey.categories?.translations, locale) || t("home.shopByDepartment")}</h2>
-        <CategoryStrip categories={departmentCards} nameOf={(department) => department.name} linkFor={(department) => `/shop?department=${department.slug}`} testIdPrefix="department-card" fillDesktop cardVariant="wide" />
+        <CategoryStrip categories={departmentCards} nameOf={(department) => department.name} linkFor={(department) => `/shop?department=${department.slug}`} testIdPrefix="department-card" fillDesktop />
       </section>
     ) : null,
     primary: renderProductSection(primarySection, "Pilihan untukmu", "home-curated-primary"),

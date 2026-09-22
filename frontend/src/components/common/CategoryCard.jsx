@@ -1,12 +1,11 @@
 import { Link } from "react-router-dom";
-import { ShoppingBag } from "lucide-react";
 import ImageWithFallback from "./ImageWithFallback";
 
 export default function CategoryCard({ category, name, onNavigate, href, testIdPrefix = "category-card", variant = "default" }) {
   const hasImage = typeof category.image === "string"
     && category.image.trim()
     && !category.image.includes("image-placeholder");
-  const frameClassName = variant === "wide" ? "aspect-[4/3]" : "aspect-[3/4]";
+  const frameClassName = variant === "portrait" ? "aspect-[3/4]" : "aspect-square";
 
   return (
     <Link
@@ -15,15 +14,16 @@ export default function CategoryCard({ category, name, onNavigate, href, testIdP
       data-testid={`${testIdPrefix}-${category.slug}`}
       className="group block"
     >
-      <div className={`flex ${frameClassName} items-center justify-center overflow-hidden bg-brand-ivory p-2 sm:p-3`}>
+      <div className={`relative flex ${frameClassName} items-center justify-center overflow-hidden bg-white`}>
         {hasImage ? <ImageWithFallback
           src={category.image}
           alt={name}
           loading="lazy"
           className="h-full w-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
-        /> : <div className="flex h-full w-full items-center justify-center border border-brand-green/10 bg-white/45 text-brand-green/55">
-          <ShoppingBag className="h-10 w-10 stroke-[1.25] sm:h-12 sm:w-12" aria-hidden="true" />
+        /> : <div className="flex h-full w-full items-center justify-center bg-white px-4 text-center">
+          <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{category.comingSoonLabel || "Coming soon"}</span>
         </div>}
+        {category.comingSoon ? <span className="absolute inset-x-0 bottom-0 bg-white/92 px-2 py-2 text-center text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{category.comingSoonLabel || "Coming soon"}</span> : null}
       </div>
       <p className="mt-2 text-sm font-medium leading-snug group-hover:underline">
         {name}

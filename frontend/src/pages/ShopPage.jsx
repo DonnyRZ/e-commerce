@@ -9,6 +9,7 @@ import {
   getProducts,
 } from "@/lib/api";
 import { pickLocalized, toCardCategory, toCardProduct } from "@/lib/localize";
+import { CATEGORY_VISUALS } from "@/lib/catalogVisuals";
 import { findTaxonomyNode, leafTaxonomy } from "@/lib/taxonomy";
 import CategoryStrip from "@/components/common/CategoryStrip";
 import ProductGrid from "@/components/common/ProductGrid";
@@ -126,7 +127,12 @@ export default function ShopPage() {
       ? []
       : catalogTree.flatMap((node) => node.children || []);
   const stripCategories = stripNodes
-    .map((c) => toCardCategory(c, locale));
+    .map((c) => ({
+      ...toCardCategory(c, locale),
+      image: CATEGORY_VISUALS[c.slug] || "",
+      comingSoon: !CATEGORY_VISUALS[c.slug],
+      comingSoonLabel: locale === "id" ? "Segera hadir" : locale === "uz" ? "Tez orada" : locale === "ru" ? "Скоро" : "Coming soon",
+    }));
 
   const breadcrumbNodes = categoryDetail?.ancestors || (activeDept ? [activeDept] : []);
 
