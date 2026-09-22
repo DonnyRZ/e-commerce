@@ -130,7 +130,7 @@ export default function HomePage() {
   return (
     <div data-testid="home-page">
       {hero || cmsFailed ? (
-        <section data-testid="home-hero" className="relative -mx-4 overflow-hidden bg-brand-ivory sm:-mx-6 lg:-mx-10 lg:h-[calc(100svh-8.25rem)] lg:min-h-[560px] lg:max-h-[820px]">
+        <section data-testid="home-hero" className="relative left-1/2 w-screen -translate-x-1/2 overflow-hidden bg-brand-ivory lg:h-[calc(100svh-8.25rem)] lg:min-h-[560px] lg:max-h-[820px]">
           <div className="relative lg:flex lg:h-full lg:w-full lg:items-center lg:justify-center">
             {heroImage ? heroMediaType === "video" ? (
               <video src={mediaUrl(heroImage)} poster={hero?.payload?.hero_poster_url ? mediaUrl(hero.payload.hero_poster_url) : undefined} autoPlay muted loop playsInline preload="metadata" aria-label={heroAlt} className="block h-auto w-full object-contain lg:h-full lg:w-full" />
