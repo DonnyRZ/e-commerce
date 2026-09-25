@@ -221,6 +221,10 @@ def summary_chunks(snapshot: dict, reference: str, limit: int = 3800) -> list[st
 class TelegramDeliveryError(Exception):
     """A definite Bot API rejection; message contents/tokens are never exposed."""
 
+    def __init__(self, message: str, *, safe_code: str = "telegram_api_rejected_request"):
+        super().__init__(message)
+        self.safe_code = safe_code
+
 
 async def bot_request(
     token: str, method: str, payload: dict, *, timeout_seconds: float = 20.0
@@ -237,7 +241,13 @@ async def bot_request(
         # this particular send because its outcome is ambiguous.
         raise TimeoutError("telegram_delivery_outcome_unknown") from exc
     if response.is_error or not isinstance(data, dict) or not data.get("ok"):
-        raise TelegramDeliveryError("telegram_api_rejected_request")
+        description = str(data.get("description") or "").casefold() if isinstance(data, dict) else ""
+        safe_code = (
+            "message_not_modified"
+            if "message is not modified" in description
+            else "telegram_api_rejected_request"
+        )
+        raise TelegramDeliveryError("telegram_api_rejected_request", safe_code=safe_code)
     return data.get("result") or {}
 
 
@@ -259,7 +269,7 @@ async def telegram_webhook_is_ready(token: str, webhook_url: str) -> bool:
     )
     return bool(
         info.get("url") == webhook_url
-        and {"business_connection", "business_message"}.issubset(allowed)
+        and {"business_connection", "business_message", "callback_query"}.issubset(allowed)
         and int(info.get("pending_update_count") or 0) < 100
         and not recent_error
     )

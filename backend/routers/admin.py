@@ -34,6 +34,7 @@ from db.models import (
     Order,
     OrderItem,
     Payment,
+    PaymentDestination,
     PaymentEvent,
     Product,
     ProductTranslation,
@@ -1730,17 +1731,30 @@ async def admin_audit_log(
 
 
 @router.get("/settings")
-async def admin_settings(user: User = Depends(require_admin)):
+async def admin_settings(
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+):
     import os
 
     from shipping.mock import FREE_STANDARD_THRESHOLD, _METHODS
 
+    active_payment_destinations = await session.scalar(
+        select(func.count(PaymentDestination.id)).where(
+            PaymentDestination.is_active.is_(True)
+        )
+    )
     return {
         "store": "MUSLIMAH CANTIK",
         "business_model": "single_vendor",
         "currency": BASE_CURRENCY,
         "checkout_enabled": CHECKOUT_ENABLED,
-        "payment_status": "disabled",
+        "payment_status": (
+            "manual_transfer_ready"
+            if active_payment_destinations
+            else "manual_transfer_needs_configuration"
+        ),
+        "active_payment_destinations": int(active_payment_destinations or 0),
         "shipping_provider": SHIPPING_PROVIDER,
         "shipping_methods": list(_METHODS),
         "free_standard_threshold": FREE_STANDARD_THRESHOLD,

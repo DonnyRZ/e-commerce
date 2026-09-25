@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +31,10 @@ from config import (
     TELEGRAM_WEBHOOK_SECRET,
 )
 from db.models import (
+    Order,
+    OrderItem,
+    Payment,
+    PaymentDestination,
     TelegramBusinessConnection,
     TelegramCartInquiry,
     TelegramUpdateReceipt,
@@ -48,10 +52,21 @@ from telegram_inquiries import (
     send_inquiry,
     telegram_webhook_is_ready,
 )
+from payment_destinations import (
+    answer_locale_error,
+    payment_choice_keyboard,
+    payment_detail_keyboard,
+    payment_detail_text,
+    payment_locale,
+    payment_prompt_text,
+)
 
 router = APIRouter(prefix="/api/v1/telegram", tags=["telegram-inquiries"])
 logger = logging.getLogger("muslimah_cantik.telegram")
 REFERENCE_RE = re.compile(r"\bSC-[A-F0-9]{32}\b", re.IGNORECASE)
+PAYMENT_CALLBACK_RE = re.compile(
+    r"^(?P<action>bank|back):(?P<token>[A-Za-z0-9_-]{16,24})(?::(?P<key>[a-fA-F0-9]{8}))?(?::(?P<locale>id|en|uz|ru))?$"
+)
 _memory_windows: dict[str, tuple[float, int]] = {}
 _memory_lock = asyncio.Lock()
 _webhook_health_cache: tuple[float, bool] | None = None
@@ -392,6 +407,222 @@ async def _handle_business_message(session: AsyncSession, message: dict) -> None
     await session.commit()
 
 
+async def _answer_payment_callback(
+    callback_query: dict, text: str | None = None, *, show_alert: bool = False
+) -> None:
+    callback_id = callback_query.get("id")
+    if not isinstance(callback_id, str) or not callback_id or not TELEGRAM_BOT_TOKEN:
+        return
+    payload: dict[str, object] = {"callback_query_id": callback_id}
+    if text:
+        payload["text"] = text[:190]
+        payload["show_alert"] = show_alert
+    try:
+        await bot_request(TELEGRAM_BOT_TOKEN, "answerCallbackQuery", payload)
+    except (TelegramDeliveryError, TimeoutError):
+        # The state change is persisted independently; Telegram can still
+        # deliver the callback update again if its acknowledgement failed.
+        return
+
+
+async def _edit_payment_message(
+    connection_id: str,
+    chat_id: int,
+    message_id: int,
+    text: str,
+    reply_markup: dict,
+) -> None:
+    try:
+        await bot_request(
+            TELEGRAM_BOT_TOKEN,
+            "editMessageText",
+            {
+                "business_connection_id": connection_id,
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text[:3900],
+                "reply_markup": reply_markup,
+            },
+        )
+    except TelegramDeliveryError as exc:
+        if exc.safe_code != "message_not_modified":
+            raise
+
+
+async def _refresh_payment_prompt(
+    session: AsyncSession, payment: Payment, order: Order, inquiry: TelegramCartInquiry
+) -> None:
+    destinations = (
+        await session.execute(
+            select(PaymentDestination)
+            .where(PaymentDestination.is_active.is_(True))
+            .order_by(PaymentDestination.slot)
+        )
+    ).scalars().all()
+    item_count = await session.scalar(
+        select(func.coalesce(func.sum(OrderItem.quantity), 0)).where(
+            OrderItem.order_id == order.id
+        )
+    )
+    tracking_link = (
+        f"{FRONTEND_URL}/orders/track?order_number={order.order_number}&token={order.guest_access_token}"
+        if order.guest_access_token
+        else f"{FRONTEND_URL}/orders/{order.order_number}"
+    )
+    text = (
+        payment_prompt_text(order, int(item_count or 0), inquiry.locale, tracking_link)
+        if destinations
+        else answer_locale_error(inquiry.locale, "no_destinations")
+    )
+    await _edit_payment_message(
+        inquiry.telegram_connection_id,
+        inquiry.telegram_chat_id,
+        payment.telegram_payment_message_id,
+        text,
+        payment_choice_keyboard(
+            destinations, payment.telegram_selection_token, inquiry.locale
+        ),
+    )
+
+
+async def _handle_payment_callback(
+    session: AsyncSession, callback_query: dict
+) -> None:
+    data = callback_query.get("data")
+    match = PAYMENT_CALLBACK_RE.fullmatch(data) if isinstance(data, str) else None
+    if not match:
+        await _answer_payment_callback(callback_query)
+        return
+
+    token = match.group("token")
+    callback_locale = match.group("locale") or "id"
+    payment = await session.scalar(
+        select(Payment)
+        .where(Payment.telegram_selection_token == token)
+        .with_for_update()
+    )
+    message = callback_query.get("message")
+    message = message if isinstance(message, dict) else {}
+    chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
+    sender = (
+        callback_query.get("from")
+        if isinstance(callback_query.get("from"), dict)
+        else {}
+    )
+    chat_id = chat.get("id")
+    message_id = message.get("message_id")
+    if (
+        not payment
+        or not isinstance(chat_id, int)
+        or isinstance(chat_id, bool)
+        or chat.get("type") != "private"
+        or not isinstance(sender.get("id"), int)
+        or sender.get("id") != chat_id
+        or not isinstance(message_id, int)
+        or isinstance(message_id, bool)
+    ):
+        await _answer_payment_callback(
+            callback_query,
+            answer_locale_error(payment_locale(callback_locale), "invalid"),
+            show_alert=True,
+        )
+        return
+
+    order = await session.scalar(
+        select(Order).where(Order.id == payment.order_id).with_for_update()
+    )
+    inquiry = await session.scalar(
+        select(TelegramCartInquiry).where(TelegramCartInquiry.order_id == payment.order_id)
+    )
+    if (
+        not order
+        or not inquiry
+        or not inquiry.telegram_connection_id
+        or inquiry.telegram_chat_id != chat_id
+        or (
+            message.get("business_connection_id")
+            and message["business_connection_id"] != inquiry.telegram_connection_id
+        )
+        or (
+            payment.telegram_payment_message_id is not None
+            and payment.telegram_payment_message_id != message_id
+        )
+    ):
+        await _answer_payment_callback(
+            callback_query, answer_locale_error("id", "invalid"), show_alert=True
+        )
+        return
+
+    locale = payment_locale(inquiry.locale)
+    if order.status != "pending_payment" or payment.status != "pending":
+        await _answer_payment_callback(
+            callback_query, answer_locale_error(locale, "locked"), show_alert=True
+        )
+        try:
+            await _edit_payment_message(
+                inquiry.telegram_connection_id,
+                chat_id,
+                message_id,
+                answer_locale_error(locale, "locked"),
+                {"inline_keyboard": []},
+            )
+        except (TelegramDeliveryError, TimeoutError):
+            pass
+        return
+
+    if payment.telegram_payment_message_id is None:
+        # A customer can tap as soon as Telegram renders the keyboard, before
+        # the sendMessage HTTP response has been committed by the API process.
+        payment.telegram_payment_message_id = message_id
+
+    action = match.group("action")
+    if action == "bank":
+        destination = await session.scalar(
+            select(PaymentDestination).where(
+                PaymentDestination.callback_key == match.group("key"),
+                PaymentDestination.is_active.is_(True),
+            ).with_for_update()
+        )
+        if not destination:
+            await session.commit()
+            await _answer_payment_callback(
+                callback_query,
+                answer_locale_error(locale, "unavailable"),
+                show_alert=True,
+            )
+            await _refresh_payment_prompt(session, payment, order, inquiry)
+            return
+        snapshot = {
+            "bank_name": destination.bank_name,
+            "destination_type": destination.destination_type,
+            "account_number": destination.account_number,
+            "holder_name": destination.holder_name,
+        }
+        payment.destination_id = destination.id
+        payment.destination_snapshot = snapshot
+        await session.commit()
+        await _answer_payment_callback(
+            callback_query, answer_locale_error(locale, "selected")
+        )
+        await _edit_payment_message(
+            inquiry.telegram_connection_id,
+            chat_id,
+            message_id,
+            payment_detail_text(order, snapshot, locale),
+            payment_detail_keyboard(snapshot, token, locale),
+        )
+        return
+
+    if not payment.destination_snapshot:
+        await _answer_payment_callback(callback_query)
+        return
+    payment.destination_id = None
+    payment.destination_snapshot = None
+    await session.commit()
+    await _answer_payment_callback(callback_query)
+    await _refresh_payment_prompt(session, payment, order, inquiry)
+
+
 @router.post("/webhook")
 async def telegram_webhook(
     request: Request,
@@ -427,6 +658,9 @@ async def telegram_webhook(
         business_message = payload.get("business_message")
         if TELEGRAM_INQUIRIES_ENABLED and isinstance(business_message, dict):
             await _handle_business_message(session, business_message)
+        callback_query = payload.get("callback_query")
+        if isinstance(callback_query, dict):
+            await _handle_payment_callback(session, callback_query)
         receipt = await session.get(TelegramUpdateReceipt, update_id)
         if receipt:
             receipt.status = "processed"

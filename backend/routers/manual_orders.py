@@ -12,7 +12,7 @@ import mimetypes
 import secrets
 import uuid
 from datetime import timedelta
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -38,6 +38,7 @@ from db.models import (
     OrderFulfillmentStage,
     OrderItem,
     Payment,
+    PaymentDestination,
     Product,
     ProductVariant,
     TelegramCartInquiry,
@@ -48,7 +49,15 @@ from db.session import get_session
 from storage.payment_evidence import delete as delete_evidence_file
 from storage.payment_evidence import resolve as resolve_evidence_file
 from storage.payment_evidence import save as save_evidence_file
-from telegram_inquiries import bot_request
+from payment_destinations import (
+    MAX_PAYMENT_DESTINATIONS,
+    destination_admin_payload,
+    mask_account_number,
+    normalize_account_number,
+    payment_prompt_text,
+    payment_choice_keyboard,
+)
+from telegram_inquiries import TelegramDeliveryError, bot_request
 
 router = APIRouter(prefix="/api/v1", tags=["manual-orders"])
 require_admin = require_roles("admin")
@@ -101,6 +110,18 @@ class ManualOrderCreateIn(BaseModel):
 
 class PaymentRejectIn(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
+
+
+class PaymentDestinationIn(BaseModel):
+    bank_name: str = Field(min_length=2, max_length=100)
+    destination_type: Literal["bank_account", "card"]
+    account_number: str = Field(min_length=8, max_length=64)
+    holder_name: str = Field(min_length=2, max_length=120)
+    is_active: bool = True
+
+
+class PaymentNotificationRetryIn(BaseModel):
+    confirm_uncertain: bool = False
 
 
 class FulfillmentIn(BaseModel):
@@ -213,6 +234,100 @@ async def _notify_order(
         return
 
 
+async def _send_payment_prompt(order_number: str, session: AsyncSession) -> None:
+    """Send the stable order-payment message and persist its delivery outcome."""
+    order = await session.scalar(
+        select(Order).where(Order.order_number == order_number)
+    )
+    if not order:
+        return
+    payment = await session.scalar(
+        select(Payment).where(Payment.order_id == order.id).with_for_update()
+    )
+    if not payment:
+        return
+    inquiry = await session.scalar(
+        select(TelegramCartInquiry).where(TelegramCartInquiry.order_id == order.id)
+    )
+    destinations = (
+        await session.execute(
+            select(PaymentDestination)
+            .where(PaymentDestination.is_active.is_(True))
+            .order_by(PaymentDestination.slot)
+        )
+    ).scalars().all()
+    if not destinations:
+        payment.telegram_payment_status = "blocked"
+        payment.telegram_payment_error = "no_active_destinations"
+        await session.commit()
+        return
+    if (
+        not inquiry
+        or not inquiry.telegram_connection_id
+        or not inquiry.telegram_chat_id
+        or not TELEGRAM_BOT_TOKEN
+    ):
+        payment.telegram_payment_status = "unavailable"
+        payment.telegram_payment_error = "telegram_chat_unavailable"
+        await session.commit()
+        return
+
+    token = secrets.token_urlsafe(12)
+    payment.telegram_selection_token = token
+    # A retry gets a fresh callback token and message. Clear the previous
+    # message id so a customer can tap the newly sent keyboard immediately,
+    # before this request receives and persists Telegram's message_id.
+    payment.telegram_payment_message_id = None
+    payment.telegram_payment_status = "sending"
+    payment.telegram_payment_error = None
+    await session.commit()
+
+    count = await session.scalar(
+        select(func.coalesce(func.sum(OrderItem.quantity), 0)).where(
+            OrderItem.order_id == order.id
+        )
+    )
+    tracking_link = (
+        f"{FRONTEND_URL}/orders/track?order_number={order.order_number}&token={order.guest_access_token}"
+        if order.guest_access_token
+        else f"{FRONTEND_URL}/orders/{order.order_number}"
+    )
+    text = payment_prompt_text(
+        order, int(count or 0), inquiry.locale, tracking_link
+    )
+    try:
+        result = await bot_request(
+            TELEGRAM_BOT_TOKEN,
+            "sendMessage",
+            {
+                "business_connection_id": inquiry.telegram_connection_id,
+                "chat_id": inquiry.telegram_chat_id,
+                "text": text[:3900],
+                "reply_markup": payment_choice_keyboard(
+                    destinations, token, inquiry.locale
+                ),
+            },
+        )
+    except TimeoutError:
+        payment.telegram_payment_status = "unknown"
+        payment.telegram_payment_error = "delivery_outcome_unknown"
+        await session.commit()
+        return
+    except TelegramDeliveryError:
+        payment.telegram_payment_status = "failed"
+        payment.telegram_payment_error = "telegram_rejected_message"
+        await session.commit()
+        return
+
+    message_id = result.get("message_id") if isinstance(result, dict) else None
+    payment.telegram_payment_message_id = (
+        message_id if isinstance(message_id, int) and not isinstance(message_id, bool) else None
+    )
+    payment.telegram_payment_status = "sent"
+    payment.telegram_payment_error = None
+    await session.commit()
+
+
 async def _inquiry_id_for_order(session: AsyncSession, order_id: str) -> Optional[str]:
     return await session.scalar(
         select(TelegramCartInquiry.id).where(TelegramCartInquiry.order_id == order_id)
@@ -239,6 +354,128 @@ async def _load_admin_order(order_number: str, session: AsyncSession) -> Order:
     if not order:
         raise _error(404, "order_not_found")
     return order
+
+
+def _destination_values(payload: PaymentDestinationIn) -> dict[str, Any]:
+    bank_name = payload.bank_name.strip()
+    holder_name = payload.holder_name.strip()
+    if not bank_name or not holder_name:
+        raise _error(422, "destination_fields_required")
+    try:
+        account_number = normalize_account_number(
+            payload.account_number, payload.destination_type
+        )
+    except ValueError as exc:
+        raise _error(422, str(exc)) from exc
+    return {
+        "bank_name": bank_name,
+        "destination_type": payload.destination_type,
+        "account_number": account_number,
+        "holder_name": holder_name,
+        "is_active": payload.is_active,
+    }
+
+
+@router.get("/admin/payment-destinations")
+async def list_payment_destinations(
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    rows = (
+        await session.execute(
+            select(PaymentDestination).order_by(PaymentDestination.slot)
+        )
+    ).scalars().all()
+    return {
+        "items": [destination_admin_payload(row) for row in rows],
+        "active_count": sum(1 for row in rows if row.is_active),
+        "max_count": MAX_PAYMENT_DESTINATIONS,
+    }
+
+
+@router.post("/admin/payment-destinations", status_code=201)
+async def create_payment_destination(
+    payload: PaymentDestinationIn,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(csrf_protect),
+):
+    slots = set(
+        (await session.scalars(select(PaymentDestination.slot))).all()
+    )
+    available = next(
+        (slot for slot in range(MAX_PAYMENT_DESTINATIONS) if slot not in slots), None
+    )
+    if available is None:
+        raise _error(409, "payment_destination_limit_reached")
+    row = PaymentDestination(
+        slot=available,
+        callback_key=secrets.token_hex(4),
+        **_destination_values(payload),
+    )
+    session.add(row)
+    try:
+        await session.flush()
+        await audit(
+            session,
+            user.id,
+            "admin.payment_destination.create",
+            "payment_destination",
+            row.id,
+            {"bank_name": row.bank_name, "active": row.is_active},
+        )
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise _error(409, "payment_destination_slot_conflict") from exc
+    return destination_admin_payload(row)
+
+
+@router.get("/admin/payment-destinations/{destination_id}")
+async def get_payment_destination(
+    destination_id: str,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    row = await session.get(PaymentDestination, destination_id)
+    if not row:
+        raise _error(404, "payment_destination_not_found")
+    return destination_admin_payload(row, include_number=True)
+
+
+@router.patch("/admin/payment-destinations/{destination_id}")
+async def update_payment_destination(
+    destination_id: str,
+    payload: PaymentDestinationIn,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(csrf_protect),
+):
+    row = await session.scalar(
+        select(PaymentDestination)
+        .where(PaymentDestination.id == destination_id)
+        .with_for_update()
+    )
+    if not row:
+        raise _error(404, "payment_destination_not_found")
+    values = _destination_values(payload)
+    changed = any(getattr(row, key) != value for key, value in values.items())
+    for key, value in values.items():
+        setattr(row, key, value)
+    # Previously sent buttons become stale when their destination changes.
+    # The callback handler then refreshes the same Telegram message safely.
+    if changed:
+        row.callback_key = secrets.token_hex(4)
+    await audit(
+        session,
+        user.id,
+        "admin.payment_destination.update",
+        "payment_destination",
+        row.id,
+        {"bank_name": row.bank_name, "active": row.is_active},
+    )
+    await session.commit()
+    return destination_admin_payload(row)
 
 
 @router.get("/admin/telegram-inquiries")
@@ -595,19 +832,62 @@ async def create_manual_order(
         {"inquiry": reference},
     )
     await session.commit()
-    tracking_link = (
-        f"{FRONTEND_URL}/orders/track?order_number={order.order_number}&token={order.guest_access_token}"
-        if order.guest_access_token
-        else f"{FRONTEND_URL}/orders/{order.order_number}"
+    await _send_payment_prompt(order.order_number, session)
+    return await _admin_order_payload(session, order)
+
+
+@router.post("/admin/orders/{order_number}/payment-notification")
+async def retry_payment_notification(
+    order_number: str,
+    payload: PaymentNotificationRetryIn,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(csrf_protect),
+):
+    order = await _load_admin_order(order_number, session)
+    payment = await session.scalar(
+        select(Payment).where(Payment.order_id == order.id).with_for_update()
     )
-    await _notify_order(
-        inquiry.id,
-        (
-            f"Order {order.order_number} dibuat. Total: {order.grand_total:,} "
-            f"{order.currency}. Lihat status: {tracking_link}"
-        ),
+    if not payment:
+        raise _error(409, "payment_record_missing")
+    if order.status != "pending_payment" or payment.status != "pending":
+        raise _error(409, "payment_notification_locked")
+    if payment.destination_snapshot:
+        raise _error(409, "payment_destination_already_selected")
+    if payment.telegram_payment_status == "sending":
+        sending_is_stale = bool(
+            payment.updated_at and payment.updated_at <= utcnow() - timedelta(minutes=2)
+        )
+        if not sending_is_stale:
+            raise _error(409, "payment_notification_in_progress")
+        if not payload.confirm_uncertain:
+            raise _error(409, "payment_notification_outcome_uncertain")
+    if payment.telegram_payment_status == "sent":
+        raise _error(409, "payment_notification_already_sent")
+    if (
+        payment.telegram_payment_status == "unknown"
+        and not payload.confirm_uncertain
+    ):
+        raise _error(409, "payment_notification_outcome_uncertain")
+    if payment.telegram_payment_status not in {
+        "not_sent",
+        "blocked",
+        "unavailable",
+        "failed",
+        "unknown",
+        "sending",
+    }:
+        raise _error(409, "payment_notification_not_retryable")
+    await _send_payment_prompt(order_number, session)
+    await audit(
         session,
+        user.id,
+        "admin.payment_notification.retry",
+        "order",
+        order.order_number,
+        {"status": payment.telegram_payment_status},
     )
+    await session.commit()
     return await _admin_order_payload(session, order)
 
 
@@ -983,6 +1263,26 @@ async def _admin_order_payload(session: AsyncSession, order: Order) -> dict:
                 "paid_at": payment.paid_at,
                 "failure_note": payment.failure_note,
                 "review_note": payment.review_note,
+                "telegram_notification": {
+                    "status": payment.telegram_payment_status,
+                    "error": payment.telegram_payment_error,
+                    "message_id": payment.telegram_payment_message_id,
+                    "updated_at": payment.updated_at,
+                },
+                "destination": (
+                    {
+                        "bank_name": payment.destination_snapshot.get("bank_name"),
+                        "destination_type": payment.destination_snapshot.get(
+                            "destination_type"
+                        ),
+                        "masked_account_number": mask_account_number(
+                            payment.destination_snapshot.get("account_number")
+                        ),
+                        "holder_name": payment.destination_snapshot.get("holder_name"),
+                    }
+                    if payment.destination_snapshot
+                    else None
+                ),
                 "evidence": [_evidence_payload(item) for item in evidence],
             }
             if payment

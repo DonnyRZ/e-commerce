@@ -259,6 +259,8 @@ export const getAdminPaymentEvidence = (orderNumber) =>
   api.get(`/v1/admin/orders/${orderNumber}/payment-evidence`).then((r) => r.data);
 export const confirmAdminPayment = (orderNumber) =>
   api.post(`/v1/admin/orders/${orderNumber}/payment/confirm`).then((r) => r.data);
+export const retryAdminPaymentNotification = (orderNumber, data = {}) =>
+  api.post(`/v1/admin/orders/${orderNumber}/payment-notification`, data).then((r) => r.data);
 export const rejectAdminPayment = (orderNumber, reason) =>
   api.post(`/v1/admin/orders/${orderNumber}/payment/reject`, { reason }).then((r) => r.data);
 export const updateAdminFulfillment = (orderNumber, data) =>
@@ -277,6 +279,14 @@ export const getAdminAudit = (params) =>
   api.get("/v1/admin/audit", { params }).then((r) => r.data);
 export const getAdminSettings = () =>
   api.get("/v1/admin/settings").then((r) => r.data);
+export const getAdminPaymentDestinations = () =>
+  api.get("/v1/admin/payment-destinations").then((r) => r.data);
+export const getAdminPaymentDestination = (id) =>
+  api.get(`/v1/admin/payment-destinations/${id}`).then((r) => r.data);
+export const createAdminPaymentDestination = (data) =>
+  api.post("/v1/admin/payment-destinations", data).then((r) => r.data);
+export const updateAdminPaymentDestination = (id, data) =>
+  api.patch(`/v1/admin/payment-destinations/${id}`, data).then((r) => r.data);
 
 // ---------------- CMS admin ----------------
 export const getCmsContent = (params) =>

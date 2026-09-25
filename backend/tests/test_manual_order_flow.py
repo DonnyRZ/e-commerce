@@ -23,6 +23,8 @@ def _login(credentials):
 
 def test_manual_order_admin_surface_is_protected():
     assert requests.get(f"{API}/admin/telegram-inquiries").status_code == 401
+    assert requests.get(f"{API}/admin/payment-destinations").status_code == 401
+    assert requests.post(f"{API}/admin/payment-destinations", json={}).status_code == 401
     assert (
         requests.post(f"{API}/admin/orders/MC-NOT-REAL/payment/confirm").status_code
         == 401
@@ -32,6 +34,8 @@ def test_manual_order_admin_surface_is_protected():
 def test_customer_cannot_read_or_mutate_manual_order_surface():
     customer = _login(CUSTOMER)
     assert customer.get(f"{API}/admin/telegram-inquiries").status_code == 403
+    assert customer.get(f"{API}/admin/payment-destinations").status_code == 403
+    assert customer.post(f"{API}/admin/payment-destinations", json={}).status_code == 403
     assert (
         customer.post(f"{API}/admin/orders/MC-NOT-REAL/payment/confirm").status_code
         == 403

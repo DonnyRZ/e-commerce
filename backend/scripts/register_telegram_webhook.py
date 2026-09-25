@@ -59,7 +59,11 @@ def main() -> int:
                     json={
                         "url": webhook_url,
                         "secret_token": TELEGRAM_WEBHOOK_SECRET,
-                        "allowed_updates": ["business_connection", "business_message"],
+                        "allowed_updates": [
+                            "business_connection",
+                            "business_message",
+                            "callback_query",
+                        ],
                         "drop_pending_updates": False,
                     },
                 )
@@ -76,7 +80,11 @@ def main() -> int:
         info = result.get("result") or {}
         configured = info.get("url") == webhook_url
         updates = set(info.get("allowed_updates") or [])
-        updates_ready = {"business_connection", "business_message"}.issubset(updates)
+        updates_ready = {
+            "business_connection",
+            "business_message",
+            "callback_query",
+        }.issubset(updates)
         last_error = info.get("last_error_date")
         recent_error = (
             isinstance(last_error, (int, float))
@@ -93,7 +101,7 @@ def main() -> int:
         return 0 if configured and updates_ready and not recent_error and backlog < 100 else 1
 
     print(
-        "Webhook registered for business_connection and business_message updates. "
+        "Webhook registered for business_connection, business_message, and callback_query updates. "
         f"Verify the bot connection for @{TELEGRAM_BOT_USERNAME.strip().lstrip('@')}; keep "
         "TELEGRAM_INQUIRIES_ENABLED=false until the staging test succeeds."
     )

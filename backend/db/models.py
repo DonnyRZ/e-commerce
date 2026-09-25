@@ -5,10 +5,12 @@ from typing import Any, Optional
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
     Integer,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -397,6 +399,30 @@ class PaymentEvent(Base):
     )
 
 
+class PaymentDestination(TimestampMixin, Base):
+    """A manually managed bank account/card that customers may transfer to."""
+
+    __tablename__ = "payment_destinations"
+    __table_args__ = (
+        CheckConstraint("slot >= 0 AND slot < 4", name="ck_payment_destinations_slot"),
+        CheckConstraint(
+            "destination_type IN ('bank_account', 'card')",
+            name="ck_payment_destinations_type",
+        ),
+        UniqueConstraint("slot", name="uq_payment_destinations_slot"),
+        UniqueConstraint("callback_key", name="uq_payment_destinations_callback_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    slot: Mapped[int] = mapped_column(SmallInteger)
+    callback_key: Mapped[str] = mapped_column(String(12))
+    bank_name: Mapped[str] = mapped_column(String(100))
+    destination_type: Mapped[str] = mapped_column(String(20))
+    account_number: Mapped[str] = mapped_column(String(34))
+    holder_name: Mapped[str] = mapped_column(String(120))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+
+
 class Payment(TimestampMixin, Base):
     __tablename__ = "payments"
     __table_args__ = (
@@ -412,6 +438,24 @@ class Payment(TimestampMixin, Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
     order_id: Mapped[str] = mapped_column(ForeignKey("orders.id"), index=True)
+    destination_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("payment_destinations.id", ondelete="SET NULL"), nullable=True
+    )
+    destination_snapshot: Mapped[Optional[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=True
+    )
+    telegram_selection_token: Mapped[Optional[str]] = mapped_column(
+        String(24), unique=True, nullable=True
+    )
+    telegram_payment_message_id: Mapped[Optional[int]] = mapped_column(
+        BigInteger, nullable=True
+    )
+    telegram_payment_status: Mapped[str] = mapped_column(
+        String(24), default="not_sent", index=True
+    )
+    telegram_payment_error: Mapped[Optional[str]] = mapped_column(
+        String(80), nullable=True
+    )
     provider: Mapped[str] = mapped_column(String(20), default="unconfigured")
     environment: Mapped[str] = mapped_column(String(12), default="local")
     currency: Mapped[str] = mapped_column(String(3), default="UZS")
