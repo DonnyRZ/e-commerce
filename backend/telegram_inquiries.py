@@ -296,7 +296,7 @@ async def send_inquiry(token: str, connection_id: str, chat_id: int, snapshot: d
                         await bot_request(
                             token,
                             "sendPhoto",
-                            {**base, **chunk[0]},
+                            {**base, "photo": chunk[0]["media"], "caption": chunk[0]["caption"]},
                         )
                     else:
                         await bot_request(

@@ -31,6 +31,7 @@ from config import (
     TELEGRAM_WEBHOOK_SECRET,
 )
 from db.models import (
+    Cart,
     Order,
     OrderItem,
     Payment,
@@ -91,7 +92,7 @@ async def _expire_old_snapshots(session: AsyncSession) -> None:
         update(TelegramCartInquiry)
         .where(
             TelegramCartInquiry.expires_at <= now,
-            TelegramCartInquiry.status.in_(["pending", "sending", "sent"]),
+            TelegramCartInquiry.status.in_(["pending", "sending", "sent", "unknown"]),
         )
         .values(status="expired", snapshot=None)
     )
@@ -206,6 +207,25 @@ async def telegram_status(session: AsyncSession = Depends(get_session)):
     return await _status(session)
 
 
+@router.get("/inquiries/{reference}")
+async def inquiry_status(reference: str, request: Request, guest: bool = False,
+                         session: AsyncSession = Depends(get_session)):
+    user = None if guest else await _optional_user(request, session)
+    cart = await _find_cart(request, session, user)
+    row = await session.scalar(select(TelegramCartInquiry).where(
+        TelegramCartInquiry.reference == reference,
+        TelegramCartInquiry.cart_id == (cart.id if cart else ""),
+    ))
+    if not row:
+        raise HTTPException(status_code=404, detail="inquiry_not_found")
+    state = row.status
+    if row.expires_at <= utcnow() and state != "order_created":
+        state = "expired"
+    elif state == "sending" and time.time() - (row.snapshot or {}).get("_delivery", {}).get("started", 0) >= 300:
+        state = "unknown"
+    return {"reference": row.reference, "status": state, "expires_at": row.expires_at.isoformat()}
+
+
 @router.post("/inquiries", status_code=201)
 async def create_inquiry(
     payload: InquiryRequest,
@@ -225,11 +245,10 @@ async def create_inquiry(
 
     user = None if guest else await _optional_user(request, session)
     cart = await _find_cart(request, session, user)
-    cart_payload = await _cart_payload(session, cart)
-    if not cart or not cart_payload["items"]:
+    if not cart:
         raise HTTPException(status_code=400, detail={"error": "cart_empty"})
-    await _limit_inquiry(cart.id)
-    await _expire_old_snapshots(session)
+    # Serialize snapshot creation with cart mutations and concurrent retries.
+    await session.scalar(select(Cart).where(Cart.id == cart.id).with_for_update())
 
     existing = await session.scalar(
         select(TelegramCartInquiry).where(
@@ -244,6 +263,10 @@ async def create_inquiry(
         expires_at = existing.expires_at
         link_locale = existing.locale
     else:
+        await _limit_inquiry(cart.id)
+        cart_payload = await _cart_payload(session, cart)
+        if not cart_payload["items"]:
+            raise HTTPException(status_code=400, detail={"error": "cart_empty"})
         reference = f"SC-{secrets.token_hex(16).upper()}"
         expires_at = utcnow() + timedelta(days=TELEGRAM_INQUIRY_TTL_DAYS)
         inquiry = TelegramCartInquiry(
@@ -280,6 +303,7 @@ async def create_inquiry(
     return {
         "reference": reference,
         "telegram_url": telegram_url,
+        "message": message,
         "expires_at": expires_at.isoformat(),
     }
 
@@ -291,9 +315,15 @@ async def _claim_update(session: AsyncSession, update_id: int) -> bool:
         .with_for_update()
     )
     if receipt:
-        if receipt.status != "failed":
+        stale = receipt.status == "processing" and receipt.received_at < utcnow() - timedelta(minutes=5)
+        if receipt.status == "processing" and not stale:
+            # Do not acknowledge an unfinished update: if its worker crashes,
+            # Telegram must still retry after the lease expires.
+            raise HTTPException(status_code=503, detail="telegram_update_in_progress")
+        if receipt.status != "failed" and not stale:
             return False
         receipt.status = "processing"
+        receipt.received_at = utcnow()
         await session.commit()
         return True
     session.add(TelegramUpdateReceipt(update_id=update_id, status="processing"))
@@ -302,7 +332,7 @@ async def _claim_update(session: AsyncSession, update_id: int) -> bool:
         return True
     except IntegrityError:
         await session.rollback()
-        return False
+        raise HTTPException(status_code=503, detail="telegram_update_in_progress")
 
 
 async def _store_connection(session: AsyncSession, payload: dict) -> None:
@@ -337,13 +367,20 @@ async def _send_expired(connection_id: str, chat_id: int, locale: str) -> None:
     )
 
 
-async def _handle_business_message(session: AsyncSession, message: dict) -> None:
+async def _handle_business_message(session: AsyncSession, message: dict, update_id: int | None = None) -> None:
     connection_id = message.get("business_connection_id")
     chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
     sender = message.get("from") if isinstance(message.get("from"), dict) else {}
     if not isinstance(connection_id, str) or chat.get("type") != "private":
         return
     connection = await session.get(TelegramBusinessConnection, connection_id)
+    if connection is None:
+        # Connection updates can arrive out of order or be missed during a restart.
+        details = await bot_request(TELEGRAM_BOT_TOKEN, "getBusinessConnection", {"business_connection_id": connection_id})
+        if details.get("id") != connection_id:
+            raise TelegramDeliveryError("business_connection_unavailable")
+        await _store_connection(session, details)
+        connection = await session.get(TelegramBusinessConnection, connection_id)
     if (
         not connection
         or not connection.is_enabled
@@ -353,6 +390,7 @@ async def _handle_business_message(session: AsyncSession, message: dict) -> None
         or str(sender.get("id") or "") == connection.business_user_id
         or sender.get("is_bot")
     ):
+        logger.info("business message ignored: connection_or_sender_not_eligible")
         return
     chat_id = chat.get("id")
     if not isinstance(chat_id, int) or isinstance(chat_id, bool):
@@ -368,6 +406,7 @@ async def _handle_business_message(session: AsyncSession, message: dict) -> None
         .with_for_update()
     )
     if not inquiry:
+        logger.info("inquiry ignored: reference_not_found")
         return
     if inquiry.status == "expired" or inquiry.expires_at <= utcnow():
         locale = inquiry.locale
@@ -380,14 +419,33 @@ async def _handle_business_message(session: AsyncSession, message: dict) -> None
         except (TelegramDeliveryError, TimeoutError):
             pass
         return
-    if inquiry.status != "pending" or not isinstance(inquiry.snapshot, dict):
+    if not isinstance(inquiry.snapshot, dict):
+        return
+    # Never allow a leaked reference to move an already bound inquiry to another chat.
+    if inquiry.telegram_chat_id is not None and (
+        inquiry.telegram_chat_id != chat_id or inquiry.telegram_connection_id != connection_id
+    ):
+        logger.warning("inquiry ignored: chat_mismatch")
+        return
+    delivery = inquiry.snapshot.get("_delivery", {})
+    if inquiry.status == "sending":
+        if time.time() - delivery.get("started", 0) < 300:
+            return
+        inquiry.status = "unknown"
+    if inquiry.status == "unknown" and delivery.get("update_id") == update_id:
+        # A redelivery of the original update cannot establish whether a send succeeded.
+        await session.commit()
+        return
+    if inquiry.status not in ("pending", "unknown"):
+        logger.info("inquiry ignored: status=%s", inquiry.status)
         return
 
     # Keep the Business chat mapping so admin order updates can notify the
     # same customer later. The chat id is never exposed to the storefront.
     inquiry.telegram_connection_id = connection_id
     inquiry.telegram_chat_id = chat_id
-    snapshot = inquiry.snapshot
+    snapshot = {**inquiry.snapshot, "_delivery": {"started": time.time(), "update_id": update_id}}
+    inquiry.snapshot = snapshot
     inquiry.status = "sending"
     await session.commit()
     try:
@@ -397,6 +455,9 @@ async def _handle_business_message(session: AsyncSession, message: dict) -> None
     except TimeoutError:
         # Telegram may have accepted the request before the network timed out.
         # Keep this update claimed; retrying it could send a duplicate carousel.
+        inquiry.status = "unknown"
+        await session.commit()
+        logger.warning("inquiry delivery outcome unknown; awaiting explicit customer retry")
         return
     except TelegramDeliveryError:
         inquiry.status = "pending"
@@ -655,9 +716,9 @@ async def telegram_webhook(
         connection_update = payload.get("business_connection")
         if isinstance(connection_update, dict):
             await _store_connection(session, connection_update)
-        business_message = payload.get("business_message")
+        business_message = payload.get("business_message") or payload.get("edited_business_message")
         if TELEGRAM_INQUIRIES_ENABLED and isinstance(business_message, dict):
-            await _handle_business_message(session, business_message)
+            await _handle_business_message(session, business_message, update_id)
         callback_query = payload.get("callback_query")
         if isinstance(callback_query, dict):
             await _handle_payment_callback(session, callback_query)

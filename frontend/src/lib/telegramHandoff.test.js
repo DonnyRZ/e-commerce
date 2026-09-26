@@ -1,0 +1,23 @@
+import { cartSignature, readHandoff, saveHandoff, handoffText } from "./telegramHandoff";
+
+beforeEach(() => sessionStorage.clear());
+test("same cart snapshot keeps its key across remounts; changes invalidate it", () => {
+  const cart = { id: "cart", items: [{ id: "a", quantity: 1, unit_price: 100 }] };
+  const signature = cartSignature(cart, "id");
+  saveHandoff({ signature, key: "retry-key", until: Date.now() + 10000 });
+  expect(readHandoff(signature).key).toBe("retry-key");
+  expect(readHandoff(cartSignature({ ...cart, id: "other" }, "id"))).toBeNull();
+  expect(readHandoff(cartSignature({ ...cart, items: [{ id: "a", quantity: 2, unit_price: 100 }] }, "id"))).toBeNull();
+  expect(readHandoff(cartSignature(cart, "en"))).toBeNull();
+});
+test("expired and corrupt sessions cannot resume", () => {
+  saveHandoff({ signature: "x", until: 0 });
+  expect(readHandoff("x")).toBeNull();
+  sessionStorage.setItem("mc.telegram.handoff.v1", "broken");
+  expect(readHandoff("x")).toBeNull();
+});
+test("all supported languages have recovery copy", () => {
+  for (const language of ["id", "en", "uz", "ru"]) {
+    expect(Object.keys(handoffText[language]).sort()).toEqual(Object.keys(handoffText.en).sort());
+  }
+});

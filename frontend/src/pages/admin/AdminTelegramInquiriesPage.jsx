@@ -69,7 +69,7 @@ export default function AdminTelegramInquiriesPage() {
         {isLoading ? <Skeleton className="h-48 w-full" /> : null}
         {!isLoading && !items.length ? <div className="border border-dashed border-neutral-300 bg-white p-10 text-center text-sm text-neutral-500">Belum ada inquiry Telegram.</div> : null}
         {items.map((inquiry) => {
-          const canCreate = !inquiry.order_id && inquiry.snapshot;
+          const canCreate = !inquiry.order_id && inquiry.snapshot && ["sent", "unknown"].includes(inquiry.status);
           return (
             <article key={inquiry.reference} className="border border-neutral-200 bg-white p-5" data-testid={`telegram-inquiry-${inquiry.reference}`}>
               <div className="flex flex-wrap items-start justify-between gap-3">

@@ -584,7 +584,7 @@ async def list_order_workflow(
     entries: list[dict] = []
     inquiry_query = select(TelegramCartInquiry).where(
         TelegramCartInquiry.order_id.is_(None),
-        TelegramCartInquiry.status.in_(["pending", "sending", "sent"]),
+        TelegramCartInquiry.status.in_(["pending", "sending", "sent", "unknown"]),
     )
     if q:
         inquiry_query = inquiry_query.where(
@@ -713,6 +713,8 @@ async def create_manual_order(
             return await _admin_order_payload(session, order)
     if inquiry.status == "expired" or inquiry.expires_at <= utcnow():
         raise _error(409, "inquiry_expired")
+    if not inquiry.telegram_chat_id or not inquiry.telegram_connection_id or inquiry.status not in ("sent", "unknown"):
+        raise _error(409, "inquiry_not_received")
     snapshot = inquiry.snapshot or {}
     snapshot_items = snapshot.get("items") or []
     if not snapshot_items:

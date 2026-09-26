@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { cartSignature, readHandoff, saveHandoff, handoffText } from "@/lib/telegramHandoff";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Minus, Plus, Trash2 } from "lucide-react";
@@ -7,6 +8,7 @@ import { useI18n } from "@/i18n";
 import { useAuth } from "@/lib/AuthContext";
 import {
   createTelegramCartInquiry,
+  getTelegramCartInquiry,
   getTelegramInquiryStatus,
 } from "@/lib/api";
 import { useShop } from "@/lib/ShopContext";
@@ -38,23 +40,42 @@ export default function CartPage() {
     retry: false,
   });
   const [openingTelegram, setOpeningTelegram] = useState(false);
+  const busy = useRef(false);
+  const signature = cartSignature(cart, locale);
+  const [handoff, setHandoff] = useState(null);
+  const active = handoff?.signature === signature ? handoff : readHandoff(signature);
+  const copy = handoffText[locale] || handoffText.en;
+  const receipt = useQuery({
+    queryKey: ["telegram-receipt", cart?.id, active?.inquiry?.reference],
+    queryFn: () => getTelegramCartInquiry(active.inquiry.reference, guestCartMode),
+    enabled: Boolean(active?.inquiry?.reference),
+    refetchInterval: (query) => ["sent", "order_created", "expired"].includes(query.state.data?.status) ? false : 5000,
+    refetchOnWindowFocus: true,
+    retry: false,
+  });
+  const delivered = ["sent", "order_created"].includes(receipt.data?.status);
   const telegramAvailable =
     telegramStatusQuery.isSuccess && telegramStatusQuery.data?.available === true;
 
   const handleConfirm = async () => {
-    if (!telegramAvailable || openingTelegram || cartMutationsBlocked) return;
+    if (!telegramAvailable || busy.current || cartMutationsBlocked) return;
+    busy.current = true;
     setOpeningTelegram(true);
     try {
-      const key = window.crypto?.randomUUID
+      const key = active?.key || (window.crypto?.randomUUID
         ? window.crypto.randomUUID()
         : Array.from(window.crypto.getRandomValues(new Uint8Array(16)))
             .map((value) => value.toString(16).padStart(2, "0"))
-            .join("");
-      const inquiry = await createTelegramCartInquiry({
+            .join(""));
+      const attempt = active || { signature, key, until: Date.now() + 86400000 };
+      saveHandoff(attempt);
+      setHandoff(attempt);
+      const inquiry = active?.inquiry || await createTelegramCartInquiry({
         locale,
         idempotencyKey: key,
         guest: guestCartMode,
       });
+      const ready = { ...attempt, inquiry };
       const target = new URL(inquiry.telegram_url);
       const expectedUsername = telegramStatusQuery.data.store_username;
       if (
@@ -63,9 +84,17 @@ export default function CartPage() {
       ) {
         throw new Error("invalid_telegram_destination");
       }
+      saveHandoff(ready);
+      setHandoff(ready);
       window.location.assign(target.toString());
-    } catch {
+    } catch (error) {
+      if (error.response?.status === 409) {
+        const next = { signature, key: window.crypto.randomUUID(), until: Date.now() + 86400000 };
+        saveHandoff(next); setHandoff(next);
+      }
       toast.error(t("cart.confirmFailed"));
+    } finally {
+      busy.current = false;
       setOpeningTelegram(false);
     }
   };
@@ -189,7 +218,7 @@ export default function CartPage() {
                         type="button"
                         data-testid={`cart-remove-${item.id}`}
                         aria-label={t("cart.remove")}
-                        disabled={cartMutationsBlocked}
+                        disabled={cartMutationsBlocked || openingTelegram}
                         onClick={() => handleRemove(item.id)}
                         className="text-muted-foreground transition-colors hover:text-destructive"
                       >
@@ -202,7 +231,7 @@ export default function CartPage() {
                           type="button"
                           data-testid={`cart-qty-minus-${item.id}`}
                           aria-label="Decrease quantity"
-                          disabled={item.quantity <= 1 || cartMutationsBlocked}
+                          disabled={item.quantity <= 1 || cartMutationsBlocked || openingTelegram}
                           onClick={() => handleQty(item, item.quantity - 1)}
                           className="inline-flex h-9 w-9 items-center justify-center disabled:opacity-30"
                         >
@@ -215,7 +244,7 @@ export default function CartPage() {
                           type="button"
                           data-testid={`cart-qty-plus-${item.id}`}
                           aria-label="Increase quantity"
-                          disabled={item.quantity >= 99 || cartMutationsBlocked}
+                          disabled={item.quantity >= 99 || cartMutationsBlocked || openingTelegram}
                           onClick={() => handleQty(item, item.quantity + 1)}
                           className="inline-flex h-9 w-9 items-center justify-center disabled:opacity-30"
                         >
@@ -265,6 +294,25 @@ export default function CartPage() {
             >
               {t("cart.confirm")}
             </button>
+            {active?.inquiry ? (
+              <div className="mt-4 space-y-3 rounded border border-border p-3 text-sm" aria-live="polite">
+                <p>{delivered ? copy.sent : receipt.data?.status === "unknown" ? copy.unknown : receipt.data?.status === "expired" ? copy.expired : copy.waiting}</p>
+                {!delivered && receipt.data?.status !== "expired" ? <>
+                  <textarea aria-label={copy.copy} readOnly value={active.inquiry.message || new URL(active.inquiry.telegram_url).searchParams.get("text") || ""} className="w-full rounded border p-2 text-xs" rows={4} />
+                  <a className="block underline" href={active.inquiry.telegram_url}>{copy.open}</a>
+                  <button type="button" className="underline" onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(active.inquiry.message || new URL(active.inquiry.telegram_url).searchParams.get("text") || "");
+                      toast.success(copy.copied);
+                    } catch { /* The selectable text above remains available. */ }
+                  }}>{copy.copy}</button>
+                </> : <button type="button" className="underline" onClick={() => {
+                  const next = { signature, key: window.crypto.randomUUID(), until: Date.now() + 86400000 };
+                  saveHandoff(next); setHandoff(next);
+                }}>{copy.new}</button>}
+                <p className="text-xs text-muted-foreground">{copy.retained}</p>
+              </div>
+            ) : null}
             {!telegramAvailable ? (
               <p data-testid="cart-telegram-unavailable" className="mt-2 text-xs leading-relaxed text-muted-foreground">
                 {t("cart.confirmUnavailable")}

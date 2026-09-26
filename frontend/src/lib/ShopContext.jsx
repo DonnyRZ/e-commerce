@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo } from "react";
+import { createContext, useContext, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "./AuthContext";
 import {
@@ -14,6 +14,8 @@ import {
 const ShopContext = createContext(null);
 
 export function ShopProvider({ children }) {
+  const queue = useRef(Promise.resolve());
+  const [mutationCount, setMutationCount] = useState(0);
   const {
     user,
     cartMergeError,
@@ -36,6 +38,7 @@ export function ShopProvider({ children }) {
     // endpoint (which correctly rejects non-customer users).
     queryFn: () => getCart({ guest: guestCartMode }),
     enabled: !isCustomer || cartMergeReady,
+    refetchOnWindowFocus: true,
   });
   const wishlistQuery = useQuery({
     queryKey: wishlistKey,
@@ -51,7 +54,17 @@ export function ShopProvider({ children }) {
   );
 
   const refresh = () => {
-    queryClient.invalidateQueries({ queryKey: cartKey });
+    return queryClient.invalidateQueries({ queryKey: cartKey });
+  };
+
+  const mutateCart = (operation) => {
+    setMutationCount((count) => count + 1);
+    const result = queue.current.then(async () => {
+      await queryClient.cancelQueries({ queryKey: cartKey });
+      return operation();
+    });
+    queue.current = result.catch(() => {});
+    return result.finally(() => setMutationCount((count) => count - 1));
   };
 
   const cacheCartForCurrentUser = (data) => {
@@ -71,30 +84,36 @@ export function ShopProvider({ children }) {
     wishlistIds,
     wishlist: wishlistQuery.data || null,
     cartMergePending,
-    cartMutationsBlocked,
+    cartMutationsBlocked: cartMutationsBlocked || mutationCount > 0,
     guestCartMode,
     async addToCart(payload) {
       if (cartMutationsBlocked) {
         throw new Error("cart_merge_pending");
       }
-      const data = await addCartItem(payload, { guest: guestCartMode });
-      cacheCartForCurrentUser(data);
-      return data;
+      return mutateCart(async () => {
+        const data = await addCartItem(payload, { guest: guestCartMode });
+        cacheCartForCurrentUser(data);
+        return data;
+      });
     },
     async updateItem(itemId, quantity) {
       if (cartMutationsBlocked) {
         throw new Error("cart_merge_pending");
       }
-      const data = await updateCartItem(itemId, quantity, { guest: guestCartMode });
-      cacheCartForCurrentUser(data);
-      return data;
+      return mutateCart(async () => {
+        const data = await updateCartItem(itemId, quantity, { guest: guestCartMode });
+        cacheCartForCurrentUser(data);
+        return data;
+      });
     },
     async removeItem(itemId) {
       if (cartMutationsBlocked) {
         throw new Error("cart_merge_pending");
       }
-      await removeCartItem(itemId, { guest: guestCartMode });
-      refresh();
+      return mutateCart(async () => {
+        await removeCartItem(itemId, { guest: guestCartMode });
+        await refresh();
+      });
     },
     async toggleWishlist(productId) {
       if (!isCustomer) return "auth_required";

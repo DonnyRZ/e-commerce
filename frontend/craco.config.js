@@ -69,6 +69,12 @@ if (config.enableHealthCheck) {
 }
 
 let webpackConfig = {
+  jest: {
+    configure: (config) => ({
+      ...config,
+      moduleNameMapper: { ...config.moduleNameMapper, "^@/(.*)$": "<rootDir>/src/$1" },
+    }),
+  },
   entry: path.resolve(
     __dirname,
     frontendTarget === "cms" ? "src/cms/index.js" : "src/index.js",

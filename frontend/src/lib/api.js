@@ -167,6 +167,11 @@ export const getCheckoutOptions = ({ guest = false } = {}) =>
 export const getTelegramInquiryStatus = () =>
   api.get("/v1/telegram/status").then((r) => r.data);
 
+export const getTelegramCartInquiry = (reference, guest = false) =>
+  api.get(`/v1/telegram/inquiries/${encodeURIComponent(reference)}`, {
+    params: clean({ guest: guest ? true : undefined }), timeout: 15000,
+  }).then((r) => r.data);
+
 export const createTelegramCartInquiry = ({
   locale,
   idempotencyKey,
@@ -179,6 +184,7 @@ export const createTelegramCartInquiry = ({
       {
         params: clean({ guest: guest ? true : undefined }),
         headers: { "Idempotency-Key": idempotencyKey },
+        timeout: 30000,
       }
     )
     .then((r) => r.data);

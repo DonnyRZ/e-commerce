@@ -13,7 +13,7 @@ export default function AdminInquiryDetailPage() {
   const { reference } = useParams();
   const navigate = useNavigate();
   const [form, setForm] = useState({ recipient: "", phone: "", email: "", address: "", city: "", shippingAmount: "0" });
-  const { data: inquiry, isLoading } = useQuery({ queryKey: ["admin-telegram-inquiry", reference], queryFn: () => getAdminTelegramInquiry(reference) });
+  const { data: inquiry, isLoading } = useQuery({ queryKey: ["admin-telegram-inquiry", reference], queryFn: () => getAdminTelegramInquiry(reference), refetchInterval: 10000 });
   useEffect(() => {
     if (inquiry?.order_number) navigate(`/orders/${inquiry.order_number}`, { replace: true });
   }, [inquiry, navigate]);
@@ -30,6 +30,13 @@ export default function AdminInquiryDetailPage() {
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   if (isLoading) return <div data-testid="admin-inquiry-loading"><Skeleton className="h-8 w-64" /><Skeleton className="mt-6 h-96 w-full" /></div>;
   if (!inquiry) return <div className="py-12 text-sm text-neutral-500">Inquiry tidak ditemukan.</div>;
+  if (!["sent", "unknown", "order_created"].includes(inquiry.status)) return (
+    <div className="space-y-4 rounded border p-5" role="status">
+      <h1 className="text-xl font-semibold">Menunggu pesan customer di Telegram</h1>
+      <p>Order belum dapat dibuat. Customer perlu mengirim pesan referensi dari keranjang terlebih dahulu. Halaman ini diperbarui otomatis.</p>
+      <Link className="underline" to="/orders?stage=inquiry">Kembali ke workflow</Link>
+    </div>
+  );
   const items = inquiry.snapshot?.items || [];
 
   return (
