@@ -306,6 +306,21 @@ async def catalog_tree(session: AsyncSession = Depends(get_session)):
         )
     ).scalars().all()
     nodes = {category.id: {**_category_out(category), "children": []} for category in rows}
+    product_counts = {}
+    if nodes:
+        count_rows = (
+            await session.execute(
+                select(Product.category_id, func.count(Product.id))
+                .where(
+                    Product.status == "active",
+                    Product.category_id.in_(nodes.keys()),
+                )
+                .group_by(Product.category_id)
+            )
+        ).all()
+        product_counts = {category_id: int(count) for category_id, count in count_rows}
+    for category_id, node in nodes.items():
+        node["product_count"] = product_counts.get(category_id, 0)
     roots = []
     for category in rows:
         node = nodes[category.id]

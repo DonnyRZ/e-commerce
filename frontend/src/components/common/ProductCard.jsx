@@ -2,6 +2,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Heart } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n";
+import { mediaVariantUrl } from "@/lib/localize";
 import { useShop } from "@/lib/ShopContext";
 import PriceDisplay from "./PriceDisplay";
 import ImageWithFallback from "./ImageWithFallback";
@@ -40,7 +41,7 @@ export default function ProductCard({ product }) {
       <div className="relative overflow-hidden bg-white">
         <Link to={href} aria-label={product.name}>
           <ImageWithFallback
-            src={product.image}
+            src={mediaVariantUrl(product.image, 640)}
             alt={product.name}
             loading="lazy"
             className="aspect-[3/4] w-full object-contain p-2 sm:p-3"

@@ -15,6 +15,23 @@ export const mediaUrl = (url) => {
   return `${origin}${url}`;
 };
 
+export const mediaVariantUrl = (url, width) => {
+  const resolved = mediaUrl(url);
+  if (!resolved || !width) return resolved;
+  try {
+    const parsed = new URL(resolved, window.location.origin);
+    if (
+      parsed.origin !== window.location.origin ||
+      !parsed.pathname.startsWith("/api/v1/cms/media/file/")
+    ) return resolved;
+    parsed.searchParams.set("width", String(width));
+    parsed.searchParams.set("format", "webp");
+    return parsed.toString();
+  } catch {
+    return resolved;
+  }
+};
+
 const COLOR_HEX = {
   gray: "#8A8A8A",
   black: "#1A1A1A",

@@ -43,6 +43,22 @@ def test_departments(s):
     assert slugs == sorted(["women-muslimah", "uniqlo-products", "tropical-halal-skincare"]), slugs
 
 
+def test_catalog_tree_includes_direct_product_counts(s):
+    r = s.get(f"{API}/tree")
+    assert r.status_code == 200
+    nodes = []
+
+    def collect(items):
+        for item in items:
+            nodes.append(item)
+            collect(item.get("children", []))
+
+    collect(r.json())
+    assert nodes
+    assert all(isinstance(node.get("product_count"), int) for node in nodes)
+    assert any(node["kind"] == "category" and node["product_count"] > 0 for node in nodes)
+
+
 # ---------- Categories by department ----------
 def test_categories_women_muslimah(s):
     r = s.get(f"{API}/categories", params={"department": "women-muslimah"})

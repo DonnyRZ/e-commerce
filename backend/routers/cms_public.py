@@ -3,13 +3,15 @@ HMAC-signed time-limited draft preview and media file serving."""
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from cms import service as cms
+from cms.media_variants import SUPPORTED_WIDTHS, create_webp_variant
 from db.models import Category, CmsContentEntry, CmsMediaAsset
 from db.session import get_session
 from storage import get_media_storage
@@ -162,7 +164,12 @@ async def preview_entry(
 
 
 @router.get("/media/file/{key}")
-async def media_file(key: str, session: AsyncSession = Depends(get_session)):
+async def media_file(
+    key: str,
+    width: int | None = Query(default=None, ge=1, le=1920),
+    image_format: str = Query(default="webp", alias="format", max_length=8),
+    session: AsyncSession = Depends(get_session),
+):
     asset = await session.scalar(
         select(CmsMediaAsset).where(CmsMediaAsset.storage_key == key)
     )
@@ -183,6 +190,19 @@ async def media_file(key: str, session: AsyncSession = Depends(get_session)):
         # A DB row can outlive a manually removed local file. Return a stable
         # 404 instead of turning a missing asset into a framework 500.
         raise HTTPException(status_code=404, detail="media_not_found")
+    if width is not None:
+        if width not in SUPPORTED_WIDTHS or image_format != "webp":
+            raise HTTPException(status_code=422, detail="unsupported_media_variant")
+        if asset.mime_type in {"image/jpeg", "image/png", "image/webp"}:
+            variant_path = await run_in_threadpool(create_webp_variant, file_path, width)
+            return FileResponse(
+                variant_path,
+                media_type="image/webp",
+                headers={
+                    "X-Content-Type-Options": "nosniff",
+                    "Cache-Control": "public, max-age=31536000, immutable",
+                },
+            )
     return FileResponse(
         file_path,
         media_type=asset.mime_type,

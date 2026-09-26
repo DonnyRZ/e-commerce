@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { ArrowUpRight } from "lucide-react";
 import { useI18n } from "@/i18n";
-import { mediaUrl, pickCmsLocalized } from "@/lib/localize";
+import { mediaVariantUrl, pickCmsLocalized } from "@/lib/localize";
 import ImageWithFallback from "./ImageWithFallback";
 
 function BannerCard({ banner, locale }) {
@@ -9,7 +9,7 @@ function BannerCard({ banner, locale }) {
   const eyebrow = pickCmsLocalized(banner.translations, locale, "eyebrow");
   const description = pickCmsLocalized(banner.translations, locale, "description");
   const ctaLabel = pickCmsLocalized(banner.translations, locale, "cta_label");
-  const image = mediaUrl(banner.image_url);
+  const image = mediaVariantUrl(banner.image_url, 1280);
   const href = banner.cta_url;
   const content = (
     <>

@@ -6,6 +6,7 @@ to the public API), preview tokens, content sanitization, revisions,
 media upload validation, audit log.
 """
 import base64
+from io import BytesIO
 import os
 import struct
 import uuid
@@ -784,6 +785,18 @@ def test_media_upload_validation_and_serving(admin):
     f = requests.get(f"{BASE}{asset['url']}")
     assert f.status_code == 200
     assert f.headers["Content-Type"].startswith("image/png")
+
+    variant = requests.get(f"{BASE}{asset['url']}", params={"width": 640, "format": "webp"})
+    assert variant.status_code == 200
+    assert variant.headers["Content-Type"].startswith("image/webp")
+    assert variant.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+    from PIL import Image
+
+    with Image.open(BytesIO(variant.content)) as optimized:
+        assert optimized.size == (1, 1)
+
+    invalid_variant = requests.get(f"{BASE}{asset['url']}", params={"width": 777, "format": "webp"})
+    assert invalid_variant.status_code == 422
 
     r = admin.patch(
         f"{API}/admin/cms/media/{asset['id']}",

@@ -37,7 +37,15 @@ class LocalFilesystemStorage(MediaStorageProvider):
         return ""
 
     async def delete(self, key: str) -> None:
+        safe = os.path.basename(key)
         try:
-            os.remove(self.resolve_path(key))
+            os.remove(self.resolve_path(safe))
         except FileNotFoundError:
             pass
+        variant_dir = self.root / ".variants"
+        if variant_dir.is_dir():
+            for variant in variant_dir.glob(f"{safe}.w*.webp"):
+                try:
+                    variant.unlink()
+                except FileNotFoundError:
+                    pass

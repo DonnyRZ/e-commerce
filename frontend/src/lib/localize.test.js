@@ -1,4 +1,8 @@
-import { colorHex, mediaUrl, pickLocalized, toCardProduct } from "./localize";
+import { colorHex, mediaUrl, mediaVariantUrl, pickLocalized, toCardProduct } from "./localize";
+
+afterEach(() => {
+  delete process.env.REACT_APP_BACKEND_URL;
+});
 
 describe("localization helpers", () => {
   test("prefers the requested locale and falls back to English", () => {
@@ -28,5 +32,22 @@ describe("localization helpers", () => {
     );
     expect(card).toMatchObject({ id: "p1", name: "Hijab", badge: "sale", href: "/product/hijab" });
     expect(colorHex("black")).toBe("#1A1A1A");
+  });
+});
+
+describe("mediaVariantUrl", () => {
+  test("requests a cached WebP derivative for local CMS media", () => {
+    expect(mediaVariantUrl("/api/v1/cms/media/file/asset.png", 640)).toBe(
+      `${window.location.origin}/api/v1/cms/media/file/asset.png?width=640&format=webp`
+    );
+  });
+
+  test("leaves external and static assets unchanged", () => {
+    expect(mediaVariantUrl("https://cdn.example.com/image.png", 640)).toBe(
+      "https://cdn.example.com/image.png"
+    );
+    expect(mediaVariantUrl("/brand/generated/hero.png", 1920)).toBe(
+      `${window.location.origin}/brand/generated/hero.png`
+    );
   });
 });

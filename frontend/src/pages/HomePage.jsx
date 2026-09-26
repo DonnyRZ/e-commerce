@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "@/i18n";
 import { getCatalogTree, getCmsBundle, getProducts } from "@/lib/api";
-import { mediaUrl, pickCmsLocalized, pickLocalized, toCardProduct } from "@/lib/localize";
+import { mediaUrl, mediaVariantUrl, pickCmsLocalized, pickLocalized, toCardProduct } from "@/lib/localize";
 import { DEPARTMENT_VISUALS } from "@/lib/catalogVisuals";
 import CategoryStrip from "@/components/common/CategoryStrip";
 import CmsBannerStrip from "@/components/common/CmsBannerStrip";
@@ -62,53 +62,64 @@ export default function HomePage() {
   const { locale, t } = useI18n();
   const catalogQuery = useQuery({ queryKey: ["catalog-tree"], queryFn: getCatalogTree, staleTime: 5 * 60 * 1000 });
   const cmsBundleQuery = useQuery({ queryKey: ["cms", "bundle"], queryFn: getCmsBundle, staleTime: 60_000 });
-  const catalogProductsQuery = useQuery({ queryKey: ["products", "home-catalog"], queryFn: () => getProducts({ sort: "newest", limit: 60 }), staleTime: 60_000 });
-  const featuredProductsQuery = useQuery({ queryKey: ["products", "home-featured"], queryFn: () => getProducts({ sort: "featured", limit: 60 }), staleTime: 60_000 });
 
   const cmsBundle = cmsBundleQuery.data;
   const cmsFailed = cmsBundleQuery.isError;
   const departments = (catalogQuery.data || []).filter((node) => node.kind === "department" && node.is_active !== false).sort((a, b) => a.sort_order - b.sort_order);
   const departmentVisuals = Object.fromEntries((cmsBundle?.department_visuals || []).map((visual) => [visual.slug, visual]));
-  const fallbackProducts = catalogProductsQuery.data?.items || [];
-  const productCategoryIds = new Set(fallbackProducts.map((product) => product.category_id).filter(Boolean));
-  const hasProductsInNode = (node) => productCategoryIds.has(node.id) || (node.children || []).some((child) => hasProductsInNode(child));
-  const productsLoaded = catalogProductsQuery.isSuccess;
+  const hasProductsInNode = (node) => Number(node.product_count || 0) > 0 || (node.children || []).some((child) => hasProductsInNode(child));
+  const catalogReady = catalogQuery.isSuccess;
   const comingSoonLabel = locale === "id" ? "Segera hadir" : locale === "uz" ? "Tez orada" : locale === "ru" ? "Скоро" : "Coming soon";
   const departmentCards = departments.map((department) => ({
     ...department,
-    image: !productsLoaded || hasProductsInNode(department)
+    image: !catalogReady || hasProductsInNode(department)
       ? DEPARTMENT_VISUALS[department.slug] || mediaUrl(departmentVisuals[department.slug]?.image_url) || department.image_url || ""
       : "",
-    comingSoon: productsLoaded && !hasProductsInNode(department),
+    comingSoon: catalogReady && !hasProductsInNode(department),
     comingSoonLabel,
     name: pickLocalized(department.translations, locale),
   }));
-  const featuredProducts = featuredProductsQuery.data?.items || [];
   const sections = useMemo(() => cmsBundle?.sections || [], [cmsBundle?.sections]);
-  const selectedProductIds = [...new Set(sections.flatMap((section) => (
+  const hero = cmsBundle?.hero;
+  const heroProductId = hero?.payload?.product_id;
+  const selectedProductIds = [...new Set([...sections.flatMap((section) => (
     Array.isArray(section.payload?.product_ids) ? section.payload.product_ids : []
-  )))];
-  const curatedProductsQuery = useQuery({
-    queryKey: ["products", "home-curated", selectedProductIds.join(",")],
+  )), ...(heroProductId ? [heroProductId] : [])])];
+  const fallbackSorts = [...new Set(sections.flatMap((section) => {
+    const canonicalKey = canonicalSectionKey(section.key);
+    const isLegacySection = PRODUCT_SECTION_CONFIG[canonicalKey] && section.key !== canonicalKey;
+    if (!isLegacySection || section.payload?.product_ids?.length) return [];
+    return [section.payload?.sort === "featured" || (!section.payload?.sort && canonicalKey === "best_sellers") ? "featured" : "newest"];
+  }))];
+  if (hero && !hero.payload?.hero_asset_url) fallbackSorts.push(heroProductId ? "newest" : "featured");
+  const productsByIdQuery = useQuery({
+    queryKey: ["products", "home-selected", selectedProductIds.join(",")],
     queryFn: () => getProducts({ ids: selectedProductIds.join(","), limit: selectedProductIds.length }),
     enabled: selectedProductIds.length > 0,
     staleTime: 60_000,
   });
-  const curatedProducts = curatedProductsQuery.data?.items || [];
+  const fallbackNewestQuery = useQuery({
+    queryKey: ["products", "home-fallback-newest"],
+    queryFn: () => getProducts({ sort: "newest", limit: 24 }),
+    enabled: cmsBundleQuery.isSuccess && fallbackSorts.includes("newest"),
+    staleTime: 60_000,
+  });
+  const fallbackFeaturedQuery = useQuery({
+    queryKey: ["products", "home-fallback-featured"],
+    queryFn: () => getProducts({ sort: "featured", limit: 24 }),
+    enabled: cmsBundleQuery.isSuccess && fallbackSorts.includes("featured"),
+    staleTime: 60_000,
+  });
+  const curatedProducts = productsByIdQuery.data?.items || [];
+  const fallbackProducts = fallbackNewestQuery.data?.items || [];
+  const featuredProducts = fallbackFeaturedQuery.data?.items || [];
   const sectionByKey = sections.reduce((result, section) => {
     const key = canonicalSectionKey(section.key);
     if (!result[key] || section.key === key) result[key] = { ...section, key, sourceKey: section.key };
     return result;
   }, {});
-  const hero = cmsBundle?.hero;
-  const heroProductId = hero?.payload?.product_id;
-  const heroProductQuery = useQuery({
-    queryKey: ["products", "home-hero", heroProductId || "fallback"],
-    queryFn: () => heroProductId ? getProducts({ ids: heroProductId, limit: 1 }) : getProducts({ sort: "featured", limit: 1 }),
-    enabled: Boolean(cmsBundleQuery.isSuccess),
-    staleTime: 60_000,
-  });
-  const heroProduct = heroProductQuery.data?.items?.[0] || fallbackProducts[0];
+  const allLoadedProducts = new Map([...fallbackProducts, ...featuredProducts, ...curatedProducts].map((product) => [product.id, product]));
+  const heroProduct = allLoadedProducts.get(heroProductId) || featuredProducts[0] || fallbackProducts[0];
   const heroMedia = heroProduct?.media?.[0];
   const catalogHeroImage = typeof heroMedia === "string" ? heroMedia : heroMedia?.url || "";
   const heroImage = hero?.payload?.hero_asset_url || catalogHeroImage;
@@ -122,14 +133,17 @@ export default function HomePage() {
   const heroSecondary = { label: pickCmsLocalized(hero?.translations, locale, "secondary_cta_label") || (cmsFailed ? t("home.allDepartments") : ""), to: hero?.secondary_cta_url || "/shop" };
   const sectionOrder = useMemo(() => {
     const available = new Set(sections.map((section) => canonicalSectionKey(section.key)));
+    available.add("categories");
     return HOMEPAGE_RENDER_ORDER.filter((key) => available.has(key));
   }, [sections]);
 
   const renderProductSection = (section, fallbackTitle, testId) => {
     if (!section) return null;
     const products = sectionProducts(section, fallbackProducts, featuredProducts, curatedProducts);
-    if (catalogProductsQuery.isError || featuredProductsQuery.isError || curatedProductsQuery.isError) return <section key={testId} data-testid={testId} className="py-6"><ErrorState onRetry={() => { catalogProductsQuery.refetch(); featuredProductsQuery.refetch(); curatedProductsQuery.refetch(); }} /></section>;
-    if (catalogProductsQuery.isLoading || featuredProductsQuery.isLoading || curatedProductsQuery.isLoading) return <section key={testId} data-testid={testId} className="py-6"><GridSkeleton testId={`${testId}-loading`} /></section>;
+    const hasProductError = productsByIdQuery.isError || fallbackNewestQuery.isError || fallbackFeaturedQuery.isError;
+    const productsLoading = productsByIdQuery.isLoading || fallbackNewestQuery.isLoading || fallbackFeaturedQuery.isLoading;
+    if (hasProductError) return <section key={testId} data-testid={testId} className="py-6"><ErrorState onRetry={() => { if (selectedProductIds.length) productsByIdQuery.refetch(); if (fallbackSorts.includes("newest")) fallbackNewestQuery.refetch(); if (fallbackSorts.includes("featured")) fallbackFeaturedQuery.refetch(); }} /></section>;
+    if (productsLoading) return <section key={testId} data-testid={testId} className="py-6"><GridSkeleton testId={`${testId}-loading`} /></section>;
     if (!products.length) return null;
     const title = section.sourceKey !== section.key
       ? fallbackTitle
@@ -147,6 +161,13 @@ export default function HomePage() {
       <section key="categories" data-testid="home-departments" className="py-10 lg:py-12">
         <h2 className="mb-5 text-lg font-semibold lg:text-xl">{pickCmsLocalized(sectionByKey.categories?.translations, locale) || t("home.shopByDepartment")}</h2>
         <CategoryStrip categories={departmentCards} nameOf={(department) => department.name} linkFor={(department) => `/shop?department=${department.slug}`} testIdPrefix="department-card" fillDesktop />
+      </section>
+    ) : catalogQuery.isLoading ? (
+      <section key="categories-loading" data-testid="home-departments-loading" aria-busy="true" className="py-10 lg:py-12">
+        <Skeleton className="mb-5 h-6 w-40" />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          {Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} className="aspect-[4/3] w-full" />)}
+        </div>
       </section>
     ) : null,
   };
@@ -168,8 +189,8 @@ export default function HomePage() {
               <video src={mediaUrl(heroImage)} poster={hero?.payload?.hero_poster_url ? mediaUrl(hero.payload.hero_poster_url) : undefined} autoPlay muted loop playsInline preload="metadata" aria-label={heroAlt} className="block h-auto w-full object-contain" />
             ) : (
               <picture className="block">
-                {heroMobileImage ? <source media="(max-width: 1023px)" srcSet={mediaUrl(heroMobileImage)} /> : null}
-                <ImageWithFallback src={mediaUrl(heroImage)} alt={heroAlt} className="block h-auto w-full object-contain" />
+                {heroMobileImage ? <source media="(max-width: 1023px)" srcSet={mediaVariantUrl(heroMobileImage, 1280)} /> : null}
+                <ImageWithFallback src={mediaVariantUrl(heroImage, 1920)} alt={heroAlt} className="block h-auto w-full object-contain" />
               </picture>
             ) : <div className="h-[45vh] min-h-[360px] bg-brand-ivory" />}
             <div className="bg-brand-ivory px-4 pb-8 pt-7 text-foreground sm:px-8 sm:pb-12 lg:absolute lg:inset-0 lg:flex lg:items-end lg:bg-transparent lg:bg-gradient-to-r lg:from-black/45 lg:via-black/10 lg:to-transparent lg:px-12 lg:pb-16 lg:pt-20 lg:text-white">
@@ -184,6 +205,10 @@ export default function HomePage() {
               </div>
             </div>
           </div>
+        </section>
+      ) : cmsBundleQuery.isLoading ? (
+        <section data-testid="home-hero-loading" aria-busy="true" className="relative left-1/2 w-screen -translate-x-1/2 overflow-hidden">
+          <Skeleton className="h-[42vh] min-h-[280px] w-full rounded-none" />
         </section>
       ) : null}
       <CmsBannerStrip banners={cmsBundle?.banners || []} />
