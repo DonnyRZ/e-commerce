@@ -9,7 +9,7 @@ No schema migration is required. Implementation does not modify live orders or c
 - The cart-owner-scoped GET `/api/v1/telegram/inquiries/{reference}` reports delivery without exposing chat IDs. Poll unresolved requests and refresh on focus.
 - A delivered request can be explicitly replaced by a new request. Item changes invalidate the handoff.
 - Queue cart mutations and block confirmation while they are pending. Snapshot creation holds the Cart lock used by mutations.
-- Keep the cart: opening Telegram does not mean pressing Send. Automatic selective cart reconciliation is not implemented; it must preserve additions made after the snapshot.
+- Opening Telegram does not mean pressing Send, so opening/cancelling never clears the cart. After Telegram successfully delivers the carousel, remove only the row quantities captured by that inquiry in the same database commit as `sent`; later quantity increases and newly added rows remain. Timeouts and failed delivery leave the cart intact. Legacy snapshots without row IDs are safely retained.
 
 ## Delivery recovery
 
@@ -31,7 +31,7 @@ Run isolated backend tests without the existing database-mutating pytest fixture
 backend/.venv/Scripts/python.exe -m unittest discover -s backend/unit_tests -v
 ```
 
-The tests cover timeout recovery, stale receipts, duplicate updates, chat ownership, cart-scoped status, quota-free idempotent retry, premature CMS orders, connection recovery and 1/2/10/11-photo fallback.
+The tests cover timeout recovery, stale receipts, duplicate updates, chat ownership, cart-scoped status, quota-free idempotent retry, quantity-aware cart reconciliation, premature CMS orders, connection recovery and 1/2/10/11-photo fallback.
 
 Frontend tests exercise the actual CartPage with mocked network/navigation, including cancelled navigation and lost API responses, plus handoff persistence and four-language copy. Run frontend lint, test:ci and both production builds.
 

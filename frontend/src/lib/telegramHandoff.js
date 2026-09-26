@@ -21,7 +21,7 @@ export const handoffText = {
     open: "Buka ulang Telegram", copy: "Salin pesan", copied: "Pesan disalin",
     sent: "Permintaan sudah diterima di Telegram. Admin akan melanjutkan pesananmu.",
     unknown: "Pengiriman belum dapat dipastikan. Periksa chat dahulu. Jika belum ada balasan, kirim ulang pesan ini; balasan mungkin muncul dua kali.",
-    retained: "Keranjang tetap disimpan agar barang tidak hilang jika Telegram batal dibuka.",
+    retained: "Jika Telegram dibatalkan, keranjang tetap utuh. Produk permintaan dihapus setelah pesan berhasil dikirim.",
     new: "Buat permintaan baru", expired: "Permintaan kedaluwarsa. Buat permintaan baru.",
   },
   en: {
@@ -29,7 +29,7 @@ export const handoffText = {
     open: "Reopen Telegram", copy: "Copy message", copied: "Message copied",
     sent: "Your request reached Telegram. An admin will continue your order.",
     unknown: "Delivery is uncertain. Check the chat first. If no reply arrived, resend this message; a duplicate reply is possible.",
-    retained: "Your cart is kept so cancelling Telegram does not lose your items.",
+    retained: "Your cart stays intact if you cancel Telegram; submitted items are removed only after the message is sent.",
     new: "Create a new request", expired: "This request expired. Create a new request.",
   },
   uz: {
@@ -37,7 +37,7 @@ export const handoffText = {
     open: "Telegramni qayta ochish", copy: "Xabarni nusxalash", copied: "Xabar nusxalandi",
     sent: "So‘rovingiz Telegramga yetib bordi. Admin buyurtmangizni davom ettiradi.",
     unknown: "Yetkazilganligi noma’lum. Avval chatni tekshiring. Javob bo‘lmasa, xabarni qayta yuboring; javob takrorlanishi mumkin.",
-    retained: "Telegram ochilishi bekor qilinsa, mahsulotlar yo‘qolmasligi uchun savat saqlanadi.",
+    retained: "Telegram bekor qilinsa, savat o‘zgarishsiz qoladi; so‘rov mahsulotlari xabar yuborilgandan keyingina o‘chiriladi.",
     new: "Yangi so‘rov yaratish", expired: "So‘rov muddati tugagan. Yangi so‘rov yarating.",
   },
   ru: {
@@ -45,7 +45,7 @@ export const handoffText = {
     open: "Открыть Telegram снова", copy: "Копировать сообщение", copied: "Сообщение скопировано",
     sent: "Запрос получен в Telegram. Администратор продолжит оформление заказа.",
     unknown: "Результат отправки неизвестен. Сначала проверьте чат. Если ответа нет, отправьте сообщение повторно; возможен повторный ответ.",
-    retained: "Корзина сохраняется, чтобы товары не пропали при отмене открытия Telegram.",
+    retained: "Если отменить переход в Telegram, корзина останется без изменений; товары запроса удалятся только после отправки сообщения.",
     new: "Создать новый запрос", expired: "Срок запроса истёк. Создайте новый запрос.",
   },
 };

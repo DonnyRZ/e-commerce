@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cartSignature, readHandoff, saveHandoff, handoffText } from "@/lib/telegramHandoff";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -41,6 +41,7 @@ export default function CartPage() {
   });
   const [openingTelegram, setOpeningTelegram] = useState(false);
   const busy = useRef(false);
+  const refreshedAfterDelivery = useRef(null);
   const signature = cartSignature(cart, locale);
   const [handoff, setHandoff] = useState(null);
   const active = handoff?.signature === signature ? handoff : readHandoff(signature);
@@ -54,6 +55,13 @@ export default function CartPage() {
     retry: false,
   });
   const delivered = ["sent", "order_created"].includes(receipt.data?.status);
+  useEffect(() => {
+    const reference = active?.inquiry?.reference;
+    if (delivered && reference && refreshedAfterDelivery.current !== reference) {
+      refreshedAfterDelivery.current = reference;
+      void refetchCart();
+    }
+  }, [active?.inquiry?.reference, delivered, refetchCart]);
   const telegramAvailable =
     telegramStatusQuery.isSuccess && telegramStatusQuery.data?.available === true;
 

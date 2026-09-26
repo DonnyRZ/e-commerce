@@ -32,6 +32,7 @@ from config import (
 )
 from db.models import (
     Cart,
+    CartItem,
     Order,
     OrderItem,
     Payment,
@@ -80,6 +81,39 @@ class InquiryRequest(BaseModel):
 
 def _normalized_username(value: str) -> str:
     return value.strip().lstrip("@").casefold()
+
+
+async def _remove_submitted_cart_quantities(
+    session: AsyncSession, cart_id: str, items: list[dict]
+) -> None:
+    """Remove only quantities included in the successfully sent inquiry."""
+    cart = await session.scalar(
+        select(Cart).where(Cart.id == cart_id).with_for_update()
+    )
+    if not cart:
+        return
+    for snapshot_item in items:
+        item_id = snapshot_item.get("_cart_item_id")
+        quantity = snapshot_item.get("quantity")
+        if not isinstance(item_id, str) or not item_id or not isinstance(quantity, int) or quantity <= 0:
+            continue
+        row = await session.scalar(
+            select(CartItem)
+            .where(
+                CartItem.id == item_id,
+                CartItem.cart_id == cart.id,
+                CartItem.product_id == snapshot_item.get("_cart_product_id"),
+                CartItem.variant_id == snapshot_item.get("_cart_variant_id"),
+            )
+            .with_for_update()
+        )
+        if not row:
+            continue
+        remaining = max(int(row.quantity or 0) - quantity, 0)
+        if remaining:
+            row.quantity = remaining
+        else:
+            await session.delete(row)
 
 
 def _configuration_ready() -> bool:
@@ -465,6 +499,9 @@ async def _handle_business_message(session: AsyncSession, message: dict, update_
         raise
     inquiry.status = "sent"
     inquiry.delivered_at = utcnow()
+    await _remove_submitted_cart_quantities(
+        session, inquiry.cart_id, snapshot.get("items", [])
+    )
     await session.commit()
 
 

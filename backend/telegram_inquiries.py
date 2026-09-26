@@ -123,6 +123,9 @@ def make_snapshot(cart: dict, locale: str) -> dict:
         items.append(
             {
                 "name": str(translation.get("title") or source.get("slug") or localized(locale, "item"))[:255],
+                "_cart_item_id": str(source.get("id") or "")[:32],
+                "_cart_product_id": str(source.get("product_id") or "")[:32],
+                "_cart_variant_id": str(source.get("variant_id") or "")[:32],
                 "variant": variant[:255],
                 "sku": str(source.get("sku") or "")[:80],
                 "quantity": int(source.get("quantity") or 0),
