@@ -83,7 +83,7 @@ function StatusBadge({ value }) {
 
 function ConversationList({ items, selectedId, onSelect, loading, status, onStatus }) {
   return (
-    <section className="flex min-h-0 flex-col border-r border-neutral-200 bg-white lg:w-[290px] lg:shrink-0" data-testid="telegram-inbox-list">
+    <section className="flex h-full min-h-0 flex-col border-r border-neutral-200 bg-white lg:w-[290px] lg:shrink-0" data-testid="telegram-inbox-list">
       <div className="border-b border-neutral-200 p-4">
         <div className="flex items-center justify-between">
           <div><h2 className="font-semibold text-[#02422C]">Percakapan</h2><p className="mt-0.5 text-xs text-neutral-500">Chat Telegram Business</p></div>
@@ -359,8 +359,8 @@ export default function AdminTelegramInboxPage() {
         <div><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#CD9B3A]">Sales · Telegram Business</p><h1 className="mt-0.5 text-lg font-semibold tracking-tight text-[#02422C]">Inbox Telegram</h1></div>
         <span className="hidden items-center gap-1.5 text-[11px] text-neutral-500 sm:inline-flex"><span className="h-2 w-2 rounded-full bg-emerald-500" />Tampilan diperbarui otomatis</span>
       </header>
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div className={`${mobileThread ? "hidden" : "flex"} min-h-0 w-full flex-col lg:flex`}>{currentList}</div>
+      <div className="flex min-h-0 flex-1 overflow-hidden lg:grid lg:grid-cols-[290px_minmax(0,1fr)_320px]">
+        <div className={`${mobileThread ? "hidden" : "flex"} min-h-0 w-full flex-col lg:flex lg:w-auto lg:min-w-0`}>{currentList}</div>
         {!selectedId ? (
           <div className="hidden flex-1 flex-col items-center justify-center bg-[#FAFBFA] px-8 text-center lg:flex">
             <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#EAF3EF]"><MessageCircle className="h-6 w-6 text-[#145A46]" /></div>
@@ -369,8 +369,14 @@ export default function AdminTelegramInboxPage() {
           </div>
         ) : null}
         {selectedId ? (
-          <section className={`${mobileThread ? "flex" : "hidden lg:flex"} min-h-0 min-w-0 flex-1 flex-col bg-[#F7F8F7]`} data-testid="telegram-inbox-thread">
-            {detailQuery.isLoading || !detail ? <div className="flex flex-1 items-center justify-center text-sm text-neutral-400"><LoaderCircle className="mr-2 h-4 w-4 animate-spin" />Memuat chat…</div> : <>
+          <section className={`${mobileThread ? "flex" : "hidden lg:flex"} min-h-0 min-w-0 flex-1 flex-col bg-[#F7F8F7] lg:col-start-2 lg:col-end-3`} data-testid="telegram-inbox-thread">
+            {detailQuery.isError && !detail ? (
+              <div className="flex flex-1 flex-col items-center justify-center px-6 text-center" role="alert">
+                <p className="text-sm font-medium text-neutral-700">Percakapan gagal dimuat.</p>
+                <p className="mt-1 text-xs text-neutral-500">Pesan tetap tersimpan. Coba muat detail chat sekali lagi.</p>
+                <button type="button" onClick={() => detailQuery.refetch()} className="mt-3 border border-[#145A46] px-3 py-2 text-xs font-medium text-[#145A46] hover:bg-white">Coba lagi</button>
+              </div>
+            ) : detailQuery.isLoading || !detail ? <div className="flex flex-1 items-center justify-center text-sm text-neutral-400"><LoaderCircle className="mr-2 h-4 w-4 animate-spin" />Memuat chat…</div> : <>
               <div className="flex items-center justify-between gap-3 border-b border-neutral-200 bg-white px-3 py-3 lg:px-4">
                 <div className="flex min-w-0 items-center gap-2"><button type="button" className="lg:hidden" onClick={() => setMobileThread(false)} aria-label="Kembali ke daftar chat"><ArrowLeft className="h-5 w-5" /></button><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#EAF3EF] text-xs font-semibold text-[#145A46]">{detail.customer_name?.slice(0, 1)?.toUpperCase() || "T"}</div><div className="min-w-0"><h2 className="truncate text-sm font-semibold text-[#02422C]">{detail.customer_name}</h2><p className="truncate text-[10px] text-neutral-500">{detail.customer_username ? `@${detail.customer_username}` : `ID ${detail.chat_id}`} · {detail.locale.toUpperCase()}</p></div></div>
                 <div className="flex shrink-0 items-center gap-2"><select aria-label="Bahasa konfirmasi" value={detail.locale} onChange={async (event) => { try { await updateAdminTelegramConversation(selectedId, { locale: event.target.value }); invalidate(); } catch (error) { toast.error(errorMessage(error)); } }} className="h-8 border border-neutral-200 bg-white px-1.5 text-[10px] uppercase text-neutral-600"><option value="id">ID</option><option value="en">EN</option><option value="uz">UZ</option><option value="ru">RU</option></select><StatusBadge value={detail.status} /><button type="button" onClick={() => setConversationStatus(detail.status === "archived" ? "needs_admin" : "archived")} className="inline-flex h-8 items-center gap-1 border border-neutral-200 px-2 text-[10px] text-neutral-600 hover:bg-neutral-50" title={detail.status === "archived" ? "Buka kembali" : "Arsipkan chat"}>{detail.status === "archived" ? <MessageCircle className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}<span className="hidden sm:inline">{detail.status === "archived" ? "Buka kembali" : "Arsipkan"}</span></button></div>
@@ -404,7 +410,7 @@ export default function AdminTelegramInboxPage() {
             </>}
           </section>
         ) : null}
-        {selectedId && detail ? <div className="hidden lg:flex"><ProductWorkspace conversation={detail} detail={detail} onInvalidate={invalidate} onOrderCreated={handleOrderCreated} sourceMessageId={sourceMessageId} setSourceMessageId={setSourceMessageId} /></div> : null}
+        {selectedId && detail ? <div className="hidden min-h-0 lg:col-start-3 lg:col-end-4 lg:flex"><ProductWorkspace conversation={detail} detail={detail} onInvalidate={invalidate} onOrderCreated={handleOrderCreated} sourceMessageId={sourceMessageId} setSourceMessageId={setSourceMessageId} /></div> : null}
       </div>
     </div>
   );
