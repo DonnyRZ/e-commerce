@@ -63,6 +63,7 @@ def main() -> int:
                             "business_connection",
                             "business_message",
                             "edited_business_message",
+                            "deleted_business_messages",
                             "callback_query",
                         ],
                         "drop_pending_updates": False,
@@ -85,6 +86,7 @@ def main() -> int:
             "business_connection",
             "business_message",
             "edited_business_message",
+            "deleted_business_messages",
             "callback_query",
         }.issubset(updates)
         last_error = info.get("last_error_date")
@@ -103,7 +105,7 @@ def main() -> int:
         return 0 if configured and updates_ready and not recent_error and backlog < 100 else 1
 
     print(
-        "Webhook registered for business_connection, business_message, edited_business_message, and callback_query updates. "
+        "Webhook registered for business_connection, business_message, edited_business_message, deleted_business_messages, and callback_query updates. "
         f"Verify the bot connection for @{TELEGRAM_BOT_USERNAME.strip().lstrip('@')}; keep "
         "TELEGRAM_INQUIRIES_ENABLED=false until the staging test succeeds."
     )

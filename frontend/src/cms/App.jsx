@@ -17,6 +17,7 @@ import CmsContentEditPage from "@/pages/admin/CmsContentEditPage";
 import { CmsHelpWorkspace, CmsHomepageWorkspace, CmsNavigationWorkspace, CmsStoriesWorkspace } from "@/pages/admin/CmsContentWorkspacePages";
 import CmsMediaPage from "@/pages/admin/CmsMediaPage";
 import AdminSettingsPage from "@/pages/admin/AdminSettingsPage";
+import AdminTelegramInboxPage from "@/pages/admin/AdminTelegramInboxPage";
 import ForgotPasswordPage from "@/pages/ForgotPasswordPage";
 import ResetPasswordPage from "@/pages/ResetPasswordPage";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -84,6 +85,7 @@ function CmsRoutes() {
         <Route path="orders" element={<AdminOrdersPage />} />
         <Route path="orders/inquiry/:reference" element={<AdminInquiryDetailPage />} />
         <Route path="orders/:orderNumber" element={<AdminOrderDetailPage />} />
+        <Route path="telegram-inbox" element={<AdminTelegramInboxPage />} />
         <Route path="telegram-inquiries" element={<Navigate to="/orders?stage=inquiry" replace />} />
         <Route path="payments" element={<Navigate to="/orders?stage=payment_review" replace />} />
         <Route path="customers" element={<AdminCustomersPage />} />

@@ -286,6 +286,101 @@ class TelegramUpdateReceipt(Base):
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class TelegramConversation(Base):
+    """A Telegram Business private chat captured for the CMS inbox."""
+
+    __tablename__ = "telegram_conversations"
+    __table_args__ = (
+        UniqueConstraint("connection_id", "chat_id", name="uq_telegram_conversations_connection_chat"),
+        Index("ix_telegram_conversations_status_activity", "status", "last_message_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    connection_id: Mapped[str] = mapped_column(
+        ForeignKey("telegram_business_connections.connection_id", ondelete="CASCADE"), index=True
+    )
+    chat_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    customer_user_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    customer_username: Mapped[str] = mapped_column(String(64), default="")
+    customer_name: Mapped[str] = mapped_column(String(160), default="")
+    telegram_language_code: Mapped[str] = mapped_column(String(16), default="")
+    locale: Mapped[str] = mapped_column(String(5), default="id")
+    status: Mapped[str] = mapped_column(String(24), default="needs_admin", index=True)
+    last_message_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    last_customer_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_admin_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class TelegramInboxMessage(Base):
+    """CMS transcript entry; Telegram file IDs remain server-side only."""
+
+    __tablename__ = "telegram_inbox_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id", "chat_id", "telegram_message_id",
+            name="uq_telegram_inbox_messages_telegram_message",
+        ),
+        Index("ix_telegram_inbox_messages_conversation_created", "conversation_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("telegram_conversations.id", ondelete="CASCADE"), index=True
+    )
+    connection_id: Mapped[str] = mapped_column(String(255), index=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    telegram_message_id: Mapped[int] = mapped_column(BigInteger)
+    update_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True, index=True)
+    sender_user_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    direction: Mapped[str] = mapped_column(String(12))
+    source: Mapped[str] = mapped_column(String(12), default="telegram")
+    message_type: Mapped[str] = mapped_column(String(12), default="text")
+    text: Mapped[str] = mapped_column(Text, default="")
+    photo_file_id: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    photo_file_unique_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    photo_file_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    edited_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class TelegramProductCandidate(Base):
+    """Admin-selected catalog item awaiting explicit customer confirmation."""
+
+    __tablename__ = "telegram_product_candidates"
+    __table_args__ = (
+        UniqueConstraint("callback_token", name="uq_telegram_product_candidates_callback_token"),
+        Index("ix_telegram_product_candidates_conversation_status", "conversation_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("telegram_conversations.id", ondelete="CASCADE"), index=True
+    )
+    source_message_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("telegram_inbox_messages.id", ondelete="SET NULL"), nullable=True
+    )
+    product_id: Mapped[str] = mapped_column(String(32), index=True)
+    variant_id: Mapped[str] = mapped_column(String(32), index=True)
+    sku: Mapped[str] = mapped_column(String(80), default="")
+    product_name: Mapped[str] = mapped_column(String(255), default="")
+    option_values: Mapped[dict] = mapped_column(JSONB, default=dict)
+    image_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    confirmation_source: Mapped[Optional[str]] = mapped_column(String(12), nullable=True)
+    callback_token: Mapped[str] = mapped_column(String(24))
+    confirmation_message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    order_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("orders.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class Wishlist(TimestampMixin, Base):
     __tablename__ = "wishlists"
 
@@ -342,6 +437,9 @@ class Order(TimestampMixin, Base):
     order_source: Mapped[str] = mapped_column(String(30), default="checkout")
     fulfillment_mode: Mapped[str] = mapped_column(String(20), default="pre_order")
     preorder_estimate_days: Mapped[int] = mapped_column(Integer, default=21)
+    telegram_conversation_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("telegram_conversations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"

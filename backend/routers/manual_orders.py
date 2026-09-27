@@ -41,6 +41,7 @@ from db.models import (
     PaymentDestination,
     Product,
     ProductVariant,
+    TelegramConversation,
     TelegramCartInquiry,
     User,
     utcnow,
@@ -58,6 +59,7 @@ from payment_destinations import (
     payment_choice_keyboard,
 )
 from telegram_inquiries import TelegramDeliveryError, bot_request
+from telegram_inbox_service import record_outgoing_message
 
 router = APIRouter(prefix="/api/v1", tags=["manual-orders"])
 require_admin = require_roles("admin")
@@ -203,30 +205,42 @@ def _stage_payload(stage: OrderFulfillmentStage) -> dict:
     }
 
 
+async def _telegram_target_for_order(session: AsyncSession, order_id: str):
+    inquiry = await session.scalar(
+        select(TelegramCartInquiry).where(TelegramCartInquiry.order_id == order_id)
+    )
+    if inquiry and inquiry.telegram_connection_id and inquiry.telegram_chat_id:
+        return inquiry.telegram_connection_id, inquiry.telegram_chat_id, inquiry.locale
+    order = await session.get(Order, order_id)
+    if order and order.telegram_conversation_id:
+        conversation = await session.get(TelegramConversation, order.telegram_conversation_id)
+        if conversation:
+            return conversation.connection_id, conversation.chat_id, conversation.locale
+    return None
+
+
 async def _notify_order(
-    inquiry_id: Optional[str], text: str, session: AsyncSession
+    order_id: Optional[str], text: str, session: AsyncSession
 ) -> None:
     """Best-effort Telegram notification; never rolls back an order mutation."""
-    if not inquiry_id or not TELEGRAM_BOT_TOKEN:
+    if not order_id or not TELEGRAM_BOT_TOKEN:
         return
-    inquiry = await session.scalar(
-        select(TelegramCartInquiry).where(TelegramCartInquiry.id == inquiry_id)
-    )
-    if (
-        not inquiry
-        or not inquiry.telegram_connection_id
-        or not inquiry.telegram_chat_id
-    ):
+    target = await _telegram_target_for_order(session, order_id)
+    if not target:
         return
+    connection_id, chat_id, _locale = target
     try:
-        await bot_request(
+        result = await bot_request(
             TELEGRAM_BOT_TOKEN,
             "sendMessage",
             {
-                "business_connection_id": inquiry.telegram_connection_id,
-                "chat_id": inquiry.telegram_chat_id,
+                "business_connection_id": connection_id,
+                "chat_id": chat_id,
                 "text": text[:3900],
             },
+        )
+        await record_outgoing_message(
+            session, connection_id, chat_id, result, text[:3900]
         )
     except Exception:
         # Notification failure is observable through the audit trail/API but
@@ -246,9 +260,7 @@ async def _send_payment_prompt(order_number: str, session: AsyncSession) -> None
     )
     if not payment:
         return
-    inquiry = await session.scalar(
-        select(TelegramCartInquiry).where(TelegramCartInquiry.order_id == order.id)
-    )
+    target = await _telegram_target_for_order(session, order.id)
     destinations = (
         await session.execute(
             select(PaymentDestination)
@@ -262,15 +274,14 @@ async def _send_payment_prompt(order_number: str, session: AsyncSession) -> None
         await session.commit()
         return
     if (
-        not inquiry
-        or not inquiry.telegram_connection_id
-        or not inquiry.telegram_chat_id
+        not target
         or not TELEGRAM_BOT_TOKEN
     ):
         payment.telegram_payment_status = "unavailable"
         payment.telegram_payment_error = "telegram_chat_unavailable"
         await session.commit()
         return
+    connection_id, chat_id, locale = target
 
     token = secrets.token_urlsafe(12)
     payment.telegram_selection_token = token
@@ -293,18 +304,18 @@ async def _send_payment_prompt(order_number: str, session: AsyncSession) -> None
         else f"{FRONTEND_URL}/orders/{order.order_number}"
     )
     text = payment_prompt_text(
-        order, int(count or 0), inquiry.locale, tracking_link
+        order, int(count or 0), locale, tracking_link
     )
     try:
         result = await bot_request(
             TELEGRAM_BOT_TOKEN,
             "sendMessage",
             {
-                "business_connection_id": inquiry.telegram_connection_id,
-                "chat_id": inquiry.telegram_chat_id,
+                "business_connection_id": connection_id,
+                "chat_id": chat_id,
                 "text": text[:3900],
                 "reply_markup": payment_choice_keyboard(
-                    destinations, token, inquiry.locale
+                    destinations, token, locale
                 ),
             },
         )
@@ -326,6 +337,9 @@ async def _send_payment_prompt(order_number: str, session: AsyncSession) -> None
     payment.telegram_payment_status = "sent"
     payment.telegram_payment_error = None
     await session.commit()
+    await record_outgoing_message(
+        session, connection_id, chat_id, result, text[:3900]
+    )
 
 
 async def _inquiry_id_for_order(session: AsyncSession, order_id: str) -> Optional[str]:
@@ -1045,7 +1059,7 @@ async def confirm_manual_payment(
     )
     await session.commit()
     await _notify_order(
-        await _inquiry_id_for_order(session, order.id),
+        order.id,
         f"Pembayaran order {order.order_number} telah dikonfirmasi. Pesanan sedang diproses.",
         session,
     )
@@ -1092,7 +1106,7 @@ async def reject_manual_payment(
     )
     await session.commit()
     await _notify_order(
-        await _inquiry_id_for_order(session, order.id),
+        order.id,
         f"Bukti pembayaran order {order.order_number} belum dapat diverifikasi. Alasan: {payload.reason}",
         session,
     )
@@ -1168,7 +1182,7 @@ async def update_manual_fulfillment(
         "delivered": "Barang diterima customer",
     }
     await _notify_order(
-        await _inquiry_id_for_order(session, order.id),
+        order.id,
         f"Update order {order.order_number}: {labels[payload.stage]}.",
         session,
     )

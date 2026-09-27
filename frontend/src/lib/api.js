@@ -254,6 +254,32 @@ export const createAdminOrderFromInquiry = (reference, data, idempotencyKey) =>
   api.post(`/v1/admin/telegram-inquiries/${reference}/orders`, data, {
     headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
   }).then((r) => r.data);
+export const getAdminTelegramInbox = (params) =>
+  api.get("/v1/admin/telegram-inbox", { params }).then((r) => r.data);
+export const getAdminTelegramConversation = (id) =>
+  api.get(`/v1/admin/telegram-inbox/${id}`).then((r) => r.data);
+export const updateAdminTelegramConversation = (id, data) =>
+  api.patch(`/v1/admin/telegram-inbox/${id}`, data).then((r) => r.data);
+export const sendAdminTelegramText = (id, text) =>
+  api.post(`/v1/admin/telegram-inbox/${id}/messages`, { text }).then((r) => r.data);
+export const sendAdminTelegramPhoto = (id, file, caption = "") => {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("caption", caption);
+  return api.post(`/v1/admin/telegram-inbox/${id}/photos`, fd, {
+    headers: { "Content-Type": undefined },
+  }).then((r) => r.data);
+};
+export const searchAdminTelegramProducts = (params) =>
+  api.get("/v1/admin/telegram-inbox/products/search", { params }).then((r) => r.data);
+export const sendAdminTelegramCandidate = (id, data) =>
+  api.post(`/v1/admin/telegram-inbox/${id}/candidates`, data).then((r) => r.data);
+export const reviewAdminTelegramCandidate = (conversationId, candidateId, status) =>
+  api.patch(`/v1/admin/telegram-inbox/${conversationId}/candidates/${candidateId}`, { status }).then((r) => r.data);
+export const createAdminTelegramOrder = (id, data, idempotencyKey) =>
+  api.post(`/v1/admin/telegram-inbox/${id}/orders`, data, {
+    headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+  }).then((r) => r.data);
 export const uploadAdminPaymentEvidence = (orderNumber, file) => {
   const fd = new FormData();
   fd.append("file", file);

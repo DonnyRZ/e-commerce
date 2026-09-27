@@ -254,6 +254,29 @@ async def bot_request(
     return data.get("result") or {}
 
 
+async def bot_request_multipart(
+    token: str,
+    method: str,
+    payload: dict,
+    files: dict,
+    *,
+    timeout_seconds: float = 30.0,
+) -> dict:
+    """Send a Telegram Bot API multipart request without exposing its URL."""
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(timeout_seconds)
+        ) as client:
+            response = await client.post(url, data=payload, files=files)
+        data = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise TimeoutError("telegram_delivery_outcome_unknown") from exc
+    if response.is_error or not isinstance(data, dict) or not data.get("ok"):
+        raise TelegramDeliveryError("telegram_api_rejected_request")
+    return data.get("result") or {}
+
+
 async def telegram_webhook_is_ready(token: str, webhook_url: str) -> bool:
     """Check webhook destination/subscriptions without exposing Bot API errors."""
     try:
@@ -272,7 +295,13 @@ async def telegram_webhook_is_ready(token: str, webhook_url: str) -> bool:
     )
     return bool(
         info.get("url") == webhook_url
-        and {"business_connection", "business_message", "callback_query"}.issubset(allowed)
+        and {
+            "business_connection",
+            "business_message",
+            "edited_business_message",
+            "deleted_business_messages",
+            "callback_query",
+        }.issubset(allowed)
         and int(info.get("pending_update_count") or 0) < 100
         and not recent_error
     )

@@ -39,6 +39,10 @@ from db.models import (
     PaymentDestination,
     TelegramBusinessConnection,
     TelegramCartInquiry,
+    TelegramConversation,
+    TelegramInboxMessage,
+    TelegramProductCandidate,
+    TelegramProductCandidate,
     TelegramUpdateReceipt,
     utcnow,
 )
@@ -62,12 +66,16 @@ from payment_destinations import (
     payment_locale,
     payment_prompt_text,
 )
+from telegram_inbox_service import capture_business_message, capture_deleted_messages
 
 router = APIRouter(prefix="/api/v1/telegram", tags=["telegram-inquiries"])
 logger = logging.getLogger("muslimah_cantik.telegram")
 REFERENCE_RE = re.compile(r"\bSC-[A-F0-9]{32}\b", re.IGNORECASE)
 PAYMENT_CALLBACK_RE = re.compile(
     r"^(?P<action>bank|back):(?P<token>[A-Za-z0-9_-]{16,24})(?::(?P<key>[a-fA-F0-9]{8}))?(?::(?P<locale>id|en|uz|ru))?$"
+)
+PRODUCT_CANDIDATE_CALLBACK_RE = re.compile(
+    r"^CAT:(?P<token>[A-Za-z0-9_-]{16,24}):(?P<choice>yes|no)$"
 )
 _memory_windows: dict[str, tuple[float, int]] = {}
 _memory_lock = asyncio.Lock()
@@ -133,6 +141,33 @@ async def _expire_old_snapshots(session: AsyncSession) -> None:
     await session.execute(
         delete(TelegramUpdateReceipt).where(
             TelegramUpdateReceipt.received_at < now - timedelta(days=30)
+        )
+    )
+    inactive_cutoff = now - timedelta(days=90)
+    has_order = select(Order.id).where(
+        Order.telegram_conversation_id == TelegramConversation.id
+    ).exists()
+    # Preserve order-linked conversation and confirmation snapshots, while
+    # removing the private transcript after the same inactivity window.
+    ordered_conversations = select(TelegramConversation.id).where(
+        TelegramConversation.last_message_at < inactive_cutoff,
+        has_order,
+    )
+    await session.execute(
+        delete(TelegramInboxMessage).where(
+            TelegramInboxMessage.conversation_id.in_(ordered_conversations)
+        )
+    )
+    await session.execute(
+        delete(TelegramProductCandidate).where(
+            TelegramProductCandidate.conversation_id.in_(ordered_conversations),
+            TelegramProductCandidate.status != "ordered",
+        )
+    )
+    await session.execute(
+        delete(TelegramConversation).where(
+            TelegramConversation.last_message_at < inactive_cutoff,
+            ~has_order,
         )
     )
     await session.commit()
@@ -548,7 +583,12 @@ async def _edit_payment_message(
 
 
 async def _refresh_payment_prompt(
-    session: AsyncSession, payment: Payment, order: Order, inquiry: TelegramCartInquiry
+    session: AsyncSession,
+    payment: Payment,
+    order: Order,
+    connection_id: str,
+    chat_id: int,
+    locale: str,
 ) -> None:
     destinations = (
         await session.execute(
@@ -568,17 +608,17 @@ async def _refresh_payment_prompt(
         else f"{FRONTEND_URL}/orders/{order.order_number}"
     )
     text = (
-        payment_prompt_text(order, int(item_count or 0), inquiry.locale, tracking_link)
+        payment_prompt_text(order, int(item_count or 0), locale, tracking_link)
         if destinations
-        else answer_locale_error(inquiry.locale, "no_destinations")
+        else answer_locale_error(locale, "no_destinations")
     )
     await _edit_payment_message(
-        inquiry.telegram_connection_id,
-        inquiry.telegram_chat_id,
+        connection_id,
+        chat_id,
         payment.telegram_payment_message_id,
         text,
         payment_choice_keyboard(
-            destinations, payment.telegram_selection_token, inquiry.locale
+            destinations, payment.telegram_selection_token, locale
         ),
     )
 
@@ -632,14 +672,28 @@ async def _handle_payment_callback(
     inquiry = await session.scalar(
         select(TelegramCartInquiry).where(TelegramCartInquiry.order_id == payment.order_id)
     )
+    conversation = (
+        await session.get(TelegramConversation, order.telegram_conversation_id)
+        if order and order.telegram_conversation_id
+        else None
+    )
+    target_connection_id = (
+        inquiry.telegram_connection_id
+        if inquiry and inquiry.telegram_connection_id
+        else conversation.connection_id if conversation else None
+    )
+    target_chat_id = (
+        inquiry.telegram_chat_id
+        if inquiry and inquiry.telegram_chat_id
+        else conversation.chat_id if conversation else None
+    )
+    target_locale = inquiry.locale if inquiry else conversation.locale if conversation else "id"
     if (
         not order
-        or not inquiry
-        or not inquiry.telegram_connection_id
-        or inquiry.telegram_chat_id != chat_id
+        or not target_connection_id
+        or target_chat_id != chat_id
         or (
-            message.get("business_connection_id")
-            and message["business_connection_id"] != inquiry.telegram_connection_id
+            message.get("business_connection_id") != target_connection_id
         )
         or (
             payment.telegram_payment_message_id is not None
@@ -651,14 +705,14 @@ async def _handle_payment_callback(
         )
         return
 
-    locale = payment_locale(inquiry.locale)
+    locale = payment_locale(target_locale)
     if order.status != "pending_payment" or payment.status != "pending":
         await _answer_payment_callback(
             callback_query, answer_locale_error(locale, "locked"), show_alert=True
         )
         try:
             await _edit_payment_message(
-                inquiry.telegram_connection_id,
+                target_connection_id,
                 chat_id,
                 message_id,
                 answer_locale_error(locale, "locked"),
@@ -688,7 +742,9 @@ async def _handle_payment_callback(
                 answer_locale_error(locale, "unavailable"),
                 show_alert=True,
             )
-            await _refresh_payment_prompt(session, payment, order, inquiry)
+            await _refresh_payment_prompt(
+                session, payment, order, target_connection_id, chat_id, target_locale
+            )
             return
         snapshot = {
             "bank_name": destination.bank_name,
@@ -703,7 +759,7 @@ async def _handle_payment_callback(
             callback_query, answer_locale_error(locale, "selected")
         )
         await _edit_payment_message(
-            inquiry.telegram_connection_id,
+            target_connection_id,
             chat_id,
             message_id,
             payment_detail_text(order, snapshot, locale),
@@ -718,7 +774,96 @@ async def _handle_payment_callback(
     payment.destination_snapshot = None
     await session.commit()
     await _answer_payment_callback(callback_query)
-    await _refresh_payment_prompt(session, payment, order, inquiry)
+    await _refresh_payment_prompt(
+        session, payment, order, target_connection_id, chat_id, target_locale
+    )
+
+
+async def _handle_product_candidate_callback(
+    session: AsyncSession, callback_query: dict
+) -> bool:
+    data = callback_query.get("data")
+    match = PRODUCT_CANDIDATE_CALLBACK_RE.fullmatch(data) if isinstance(data, str) else None
+    if not match:
+        return False
+    candidate = await session.scalar(
+        select(TelegramProductCandidate)
+        .where(TelegramProductCandidate.callback_token == match.group("token"))
+        .with_for_update()
+    )
+    message = callback_query.get("message")
+    message = message if isinstance(message, dict) else {}
+    chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
+    sender = callback_query.get("from") if isinstance(callback_query.get("from"), dict) else {}
+    conversation = (
+        await session.get(TelegramConversation, candidate.conversation_id)
+        if candidate
+        else None
+    )
+    connection = (
+        await session.get(TelegramBusinessConnection, conversation.connection_id)
+        if conversation
+        else None
+    )
+    message_id = message.get("message_id")
+    valid = bool(
+        candidate
+        and conversation
+        and connection
+        and connection.is_enabled
+        and connection.can_reply
+        and connection.can_read_messages
+        and chat.get("type") == "private"
+        and chat.get("id") == conversation.chat_id
+        and isinstance(sender.get("id"), int)
+        and sender.get("id") == conversation.chat_id
+        and message.get("business_connection_id") == conversation.connection_id
+        and isinstance(message_id, int)
+        and (
+            candidate.confirmation_message_id is None
+            or candidate.confirmation_message_id == message_id
+        )
+    )
+    if not valid:
+        await _answer_payment_callback(callback_query, "Pilihan ini tidak valid atau sudah kedaluwarsa.", show_alert=True)
+        return True
+    if candidate.status != "pending" or candidate.created_at < utcnow() - timedelta(days=30):
+        await _answer_payment_callback(callback_query, "Pilihan ini sudah tidak aktif. Admin akan membantu Anda.", show_alert=True)
+        return True
+
+    candidate.confirmation_message_id = message_id
+    candidate.confirmation_source = "customer"
+    candidate.status = "confirmed" if match.group("choice") == "yes" else "rejected"
+    candidate.confirmed_at = utcnow() if candidate.status == "confirmed" else None
+    conversation.status = "ready_for_order" if candidate.status == "confirmed" else "needs_admin"
+    conversation.last_customer_message_at = utcnow()
+    conversation.last_message_at = conversation.last_customer_message_at
+    await session.commit()
+    locale = conversation.locale if conversation.locale in {"id", "en", "uz", "ru"} else "id"
+    replies = {
+        "id": ("Terima kasih, produk sudah dikonfirmasi.", "✅ Produk dikonfirmasi. Admin akan menyiapkan pesanan Anda.", "Baik, admin akan mencari produk yang sesuai."),
+        "en": ("Thank you, the product is confirmed.", "✅ Product confirmed. Our admin will prepare your order.", "Understood. Our admin will look for a better match."),
+        "uz": ("Rahmat, mahsulot tasdiqlandi.", "✅ Mahsulot tasdiqlandi. Admin buyurtmangizni tayyorlaydi.", "Tushunarli. Admin mos mahsulotni qidiradi."),
+        "ru": ("Спасибо, товар подтверждён.", "✅ Товар подтверждён. Администратор подготовит ваш заказ.", "Хорошо, администратор подберёт другой товар."),
+    }
+    acknowledged, result_text, rejected_text = replies[locale]
+    if candidate.status == "rejected":
+        acknowledged = rejected_text
+        result_text = rejected_text
+    await _answer_payment_callback(callback_query, acknowledged)
+    method = "editMessageCaption" if message.get("photo") else "editMessageText"
+    payload = {
+        "business_connection_id": conversation.connection_id,
+        "chat_id": conversation.chat_id,
+        "message_id": message_id,
+        "reply_markup": {"inline_keyboard": []},
+    }
+    payload["caption" if method == "editMessageCaption" else "text"] = result_text
+    try:
+        await bot_request(TELEGRAM_BOT_TOKEN, method, payload)
+    except (TelegramDeliveryError, TimeoutError):
+        pass
+    return True
 
 
 @router.post("/webhook")
@@ -753,12 +898,23 @@ async def telegram_webhook(
         connection_update = payload.get("business_connection")
         if isinstance(connection_update, dict):
             await _store_connection(session, connection_update)
-        business_message = payload.get("business_message") or payload.get("edited_business_message")
-        if TELEGRAM_INQUIRIES_ENABLED and isinstance(business_message, dict):
-            await _handle_business_message(session, business_message, update_id)
+        business_message = payload.get("business_message")
+        if isinstance(business_message, dict):
+            await capture_business_message(session, business_message, update_id)
+            if TELEGRAM_INQUIRIES_ENABLED:
+                await _handle_business_message(session, business_message, update_id)
+        edited_business_message = payload.get("edited_business_message")
+        if isinstance(edited_business_message, dict):
+            await capture_business_message(session, edited_business_message, update_id, edited=True)
+            if TELEGRAM_INQUIRIES_ENABLED:
+                await _handle_business_message(session, edited_business_message, update_id)
+        deleted_business_messages = payload.get("deleted_business_messages")
+        if isinstance(deleted_business_messages, dict):
+            await capture_deleted_messages(session, deleted_business_messages)
         callback_query = payload.get("callback_query")
         if isinstance(callback_query, dict):
-            await _handle_payment_callback(session, callback_query)
+            if not await _handle_product_candidate_callback(session, callback_query):
+                await _handle_payment_callback(session, callback_query)
         receipt = await session.get(TelegramUpdateReceipt, update_id)
         if receipt:
             receipt.status = "processed"

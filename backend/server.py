@@ -20,7 +20,6 @@ from config import (
     ENFORCE_HTTPS,
     LOG_LEVEL,
     RATE_LIMIT_BACKEND,
-    TELEGRAM_INQUIRIES_ENABLED,
     TRUSTED_HOSTS,
     validate_runtime_config,
 )
@@ -40,6 +39,7 @@ from routers.cms_admin import router as cms_admin_router
 from routers.cms_public import router as cms_public_router
 from routers.telegram import router as telegram_router
 from routers.telegram import telegram_inquiry_cleanup_loop
+from routers.telegram_inbox import router as telegram_inbox_router
 
 
 class JsonFormatter(logging.Formatter):
@@ -74,11 +74,8 @@ async def lifespan(_app: FastAPI):
     # Production must fail before accepting traffic when its runtime
     # configuration is unsafe.
     validate_runtime_config(strict=APP_ENV == "production")
-    cleanup_task = (
-        asyncio.create_task(telegram_inquiry_cleanup_loop())
-        if TELEGRAM_INQUIRIES_ENABLED
-        else None
-    )
+    # Telegram inbox retention is independent from storefront cart inquiries.
+    cleanup_task = asyncio.create_task(telegram_inquiry_cleanup_loop())
     try:
         yield
     finally:
@@ -199,6 +196,7 @@ app.include_router(admin_router)
 app.include_router(cms_admin_router)
 app.include_router(cms_public_router)
 app.include_router(telegram_router)
+app.include_router(telegram_inbox_router)
 
 
 @app.middleware("http")
