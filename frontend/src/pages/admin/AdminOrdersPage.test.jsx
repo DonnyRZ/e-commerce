@@ -39,12 +39,13 @@ const mockWorkflowResponse = {
   page_size: 20,
 };
 let mockQueryOptions;
+let mockIsPlaceholderData = false;
 const mockQueryClient = { invalidateQueries: jest.fn(), removeQueries: jest.fn() };
 
 jest.mock("@tanstack/react-query", () => ({
   useQuery: (options) => {
     mockQueryOptions = options;
-    return { data: mockWorkflowResponse, isLoading: false };
+    return { data: mockWorkflowResponse, isLoading: false, isFetching: false, isPlaceholderData: mockIsPlaceholderData };
   },
   useQueryClient: () => mockQueryClient,
 }));
@@ -98,6 +99,7 @@ beforeEach(() => {
   mockWorkflowResponse.counts = { payment: 2 };
   mockWorkflowResponse.total = 2;
   mockQueryOptions = null;
+  mockIsPlaceholderData = false;
   mockSetSearchParams.mockReset();
   mockQueryClient.invalidateQueries.mockReset();
   mockQueryClient.removeQueries.mockReset();
@@ -126,8 +128,9 @@ test("groups payment stages into one filter and shows each order's current payme
   expect(filterButtons.some((button) => button.textContent.includes("Menunggu pembayaran"))).toBe(false);
   expect(filterButtons.some((button) => button.textContent.includes("Pembayaran diverifikasi"))).toBe(false);
   expect(mockQueryOptions.queryKey[1].stage).toBe("payment");
-  expect(mockQueryOptions.staleTime).toBe(0);
-  expect(mockQueryOptions.refetchOnMount).toBe("always");
+  expect(mockQueryOptions.staleTime).toBe(15000);
+  expect(mockQueryOptions.placeholderData(mockWorkflowResponse)).toBe(mockWorkflowResponse);
+  expect(mockQueryOptions.refetchOnMount).toBeUndefined();
 
   const overview = container.querySelector('[data-testid="workflow-overview"]');
   expect(overview.querySelectorAll("li")).toHaveLength(6);
@@ -149,6 +152,47 @@ test("groups payment stages into one filter and shows each order's current payme
   const primaryAction = firstOrderCard.querySelector("a");
   expect(archiveButton.compareDocumentPosition(primaryAction) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(deleteButton.compareDocumentPosition(primaryAction) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("shows the delivered count and completed orders in the Selesai filter", async () => {
+  mockSearchParams.set("stage", "delivered");
+  mockWorkflowResponse.items = [{
+    kind: "order",
+    order_number: "MC-DONE-1",
+    stage: "delivered",
+    status: "delivered",
+    created_at: "2026-09-27T12:00:00Z",
+    customer: { name: "Customer Selesai", city: "Tashkent" },
+    item_count: 1,
+    grand_total: 639200,
+    currency: "UZS",
+    next_action: "view_order",
+  }];
+  mockWorkflowResponse.counts = { delivered: 1 };
+  mockWorkflowResponse.total = 1;
+  await act(async () => root.render(<AdminOrdersPage />));
+
+  const completedFilter = [...container.querySelectorAll('[aria-label="Filter tahap order"] button')]
+    .find((button) => button.textContent.startsWith("Selesai"));
+  expect(completedFilter.textContent).toBe("Selesai1");
+  expect(completedFilter.getAttribute("aria-pressed")).toBe("true");
+  expect(container.querySelector('[data-testid="workflow-card-MC-DONE-1"]')).not.toBeNull();
+});
+
+test("keeps filter controls stable and prevents stale cards from being used during a filter transition", async () => {
+  mockSearchParams.set("stage", "supplier_shipping");
+  mockIsPlaceholderData = true;
+  await act(async () => root.render(<AdminOrdersPage />));
+
+  const results = container.querySelector('[data-testid="workflow-results"]');
+  const overlay = container.querySelector('[data-testid="workflow-loading-overlay"]');
+  const paymentFilter = [...container.querySelectorAll('[aria-label="Filter tahap order"] button')]
+    .find((button) => button.textContent.startsWith("Pembayaran"));
+  expect(results.getAttribute("aria-busy")).toBe("true");
+  expect(overlay.textContent).toContain("Memuat tahap Supplier mengirim");
+  expect(results.querySelector(".pointer-events-none")).not.toBeNull();
+  expect(paymentFilter.querySelector("span").className).toContain("w-8");
+  expect(paymentFilter.textContent).toBe("Pembayaran2");
 });
 
 test("archives directly from the order card beside its primary action", async () => {

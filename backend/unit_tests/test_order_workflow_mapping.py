@@ -47,6 +47,7 @@ class OrderWorkflowMappingTests(unittest.TestCase):
             {"order_number": "SUP-LEGACY", "status": "processing", "stage": _workflow_stage("processing")},
             {"order_number": "CUS-MANUAL", "status": "customer_shipping", "stage": _workflow_stage("customer_shipping")},
             {"order_number": "CUS-LEGACY", "status": "shipped", "stage": _workflow_stage("shipped")},
+            {"order_number": "RECEIVED", "status": "received_by_admin", "stage": _workflow_stage("received_by_admin")},
             {"order_number": "DONE", "status": "delivered", "stage": _workflow_stage("delivered")},
         ]
 
@@ -72,6 +73,8 @@ class OrderWorkflowMappingTests(unittest.TestCase):
         self.assertEqual(counts["customer_shipping"], 2)
         self.assertEqual(counts["payment"], 2)
         self.assertEqual(counts["inquiry"], 4)
+        self.assertEqual(counts["received_by_admin"], 1)
+        self.assertEqual(counts["delivered"], 1)
         self.assertEqual(counts["paid"], 1)
         self.assertEqual(counts["payment_review"], 1)
 

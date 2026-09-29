@@ -213,7 +213,8 @@ def _workflow_stage(status: str) -> str:
 def _workflow_counts(status_counts: dict[str, int], inquiry_count: int) -> dict[str, int]:
     """Map grouped database counts onto the six visible workflow steps."""
     counts = {key: int(status_counts.get(key, 0)) for key in WORKFLOW_STAGES}
-    counts.update({key: 0 for key in WORKFLOW_FILTER_STAGES})
+    for key in WORKFLOW_FILTER_STAGES:
+        counts.setdefault(key, int(status_counts.get(key, 0)))
     counts["inquiry"] = inquiry_count
     counts["payment"] = counts["pending_payment"] + counts["payment_review"]
     counts["supplier_shipping"] = sum(

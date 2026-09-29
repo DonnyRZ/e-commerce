@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowRight, RotateCcw, Search, Trash2 } from "lucide-react";
+import { Archive, ArrowRight, LoaderCircle, RotateCcw, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { archiveAdminOrder, getAdminOrderWorkflow, permanentlyDeleteAdminOrder, permanentlyDeleteAdminTelegramInquiry, restoreAdminOrder } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -120,17 +120,18 @@ export default function AdminOrdersPage() {
   const [q, setQ] = useState(params.get("q") || "");
   const page = Math.max(1, Number.parseInt(params.get("page") || "1", 10) || 1);
   const apiParams = { scope: filter === "actionable" ? "actionable" : "all", stage: !["all", "actionable"].includes(filter) ? filter : undefined, q: params.get("q") || undefined, page, page_size: 20 };
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, isPlaceholderData } = useQuery({
     queryKey: ["admin-order-workflow", apiParams],
     queryFn: () => getAdminOrderWorkflow(apiParams),
-    staleTime: 0,
-    refetchOnMount: "always",
+    staleTime: 15_000,
+    placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: true,
     refetchInterval: filter === "all" ? false : 30_000,
     refetchIntervalInBackground: false,
   });
   const items = data?.items || [];
   const totalPages = Math.max(1, Math.ceil((data?.total || 0) / (data?.page_size || 20)));
+  const selectedFilterLabel = FILTERS.find(([value]) => value === filter)?.[1] || "order";
   const returnTo = `/orders${params.toString() ? `?${params.toString()}` : ""}`;
   useEffect(() => {
     if (!isLoading && data && page > totalPages) {
@@ -144,11 +145,18 @@ export default function AdminOrdersPage() {
 
   return (
     <div data-testid="admin-orders-page">
-      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#CD9B3A]">Sales</p><h1 className="mt-2 text-2xl font-semibold tracking-tight text-[#02422C]">Order Workflow</h1><p className="mt-2 max-w-2xl text-sm text-neutral-500">Kelola pesanan dari inquiry sampai selesai. Customer membayar sekali; admin mencocokkan mutasi bank sebelum order diteruskan ke supplier.</p></div><div className="rounded-full bg-[#FDF7E9] px-4 py-2 text-xs text-[#02422C]" aria-live="polite">{isFetching ? "Memperbarui daftar…" : "Satu order, satu langkah aktif"}</div></div>
+      <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#CD9B3A]">Sales</p><h1 className="mt-2 text-2xl font-semibold tracking-tight text-[#02422C]">Order Workflow</h1><p className="mt-2 max-w-2xl text-sm text-neutral-500">Kelola pesanan dari inquiry sampai selesai. Customer membayar sekali; admin mencocokkan mutasi bank sebelum order diteruskan ke supplier.</p></div><div className="flex min-h-9 min-w-[220px] items-center justify-center gap-2 rounded-full bg-[#FDF7E9] px-4 py-2 text-xs text-[#02422C]" aria-live="polite">{isFetching ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}<span>{isFetching ? "Memperbarui daftar…" : "Satu order, satu langkah aktif"}</span></div></div>
       <OrderProgress currentStage={null} className="mt-6 hidden rounded border border-[#CD9B3A]/30 bg-[#FDF7E9] p-4 lg:block" testId="workflow-overview" />
-      <div className="mt-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"><div className="flex flex-wrap gap-2" role="group" aria-label="Filter tahap order">{FILTERS.map(([value, label]) => <button key={value} type="button" onClick={() => setFilter(value)} className={`rounded-full px-4 py-2 text-xs font-semibold ${filter === value ? "bg-[#02422C] text-white" : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"}`} aria-pressed={filter === value}>{label}{data?.counts?.[value] !== undefined ? <span className="ml-2 opacity-70">{data.counts[value]}</span> : null}</button>)}</div><form className="relative shrink-0" onSubmit={submitSearch}><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" aria-hidden="true" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari order atau inquiry" className="h-10 w-full border border-neutral-300 bg-white pl-9 pr-3 text-sm outline-none focus:border-[#02422C] lg:w-64" data-testid="orders-search" /></form></div>
+      <div className="mt-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"><div className="flex flex-wrap gap-2" role="group" aria-label="Filter tahap order">{FILTERS.map(([value, label]) => <button key={value} type="button" onClick={() => setFilter(value)} className={`rounded-full px-4 py-2 text-xs font-semibold ${filter === value ? "bg-[#02422C] text-white" : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"}`} aria-pressed={filter === value}>{label}<span className="ml-2 inline-flex w-8 justify-center text-center tabular-nums opacity-70">{data?.counts?.[value] ?? "—"}</span></button>)}</div><form className="relative shrink-0" onSubmit={submitSearch}><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" aria-hidden="true" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari order atau inquiry" className="h-10 w-full border border-neutral-300 bg-white pl-9 pr-3 text-sm outline-none focus:border-[#02422C] lg:w-64" data-testid="orders-search" /></form></div>
       {filter === "payment" ? <p className="mt-3 rounded border border-[#CD9B3A]/30 bg-[#FDF7E9] px-4 py-3 text-xs text-[#02422C]" data-testid="payment-workflow-hint">Satu transfer per order. Bukti disimpan untuk audit; admin mengonfirmasi setelah cocok dengan mutasi rekening.</p> : null}
-      <div className="mt-5 space-y-4">{isLoading ? Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-44 w-full" />) : null}{!isLoading && !items.length ? <div className="rounded border border-dashed border-neutral-300 bg-white p-12 text-center text-sm text-neutral-500" data-testid="orders-empty">Tidak ada item pada tahap ini.</div> : null}{!isLoading ? items.map((item) => <WorkflowCard key={item.kind === "inquiry" ? item.reference : item.order_number} item={item} returnTo={returnTo} workflowFilter={filter} />) : null}</div>
+      <div className="relative mt-5 min-h-44" data-testid="workflow-results" aria-busy={isPlaceholderData ? "true" : "false"}>
+        <div className={`space-y-4 ${isPlaceholderData ? "pointer-events-none select-none opacity-30" : ""}`}>
+          {isLoading ? Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-44 w-full" />) : null}
+          {!isLoading && !items.length ? <div className="rounded border border-dashed border-neutral-300 bg-white p-12 text-center text-sm text-neutral-500" data-testid="orders-empty">Tidak ada item pada tahap ini.</div> : null}
+          {!isLoading ? items.map((item) => <WorkflowCard key={item.kind === "inquiry" ? item.reference : item.order_number} item={item} returnTo={returnTo} workflowFilter={filter} />) : null}
+        </div>
+        {isPlaceholderData ? <div className="absolute inset-0 flex items-start justify-center rounded bg-white/75 pt-10 backdrop-blur-[1px]" role="status" data-testid="workflow-loading-overlay"><span className="inline-flex items-center gap-2 rounded-full border border-neutral-200 bg-white px-4 py-2 text-sm text-neutral-600 shadow-sm"><LoaderCircle className="h-4 w-4 animate-spin text-[#02422C]" aria-hidden="true" />Memuat tahap {selectedFilterLabel}…</span></div> : null}
+      </div>
       <div className="mt-5 flex items-center justify-between text-sm"><span className="text-neutral-500" data-testid="orders-total">{data?.total || 0} item</span><div className="flex items-center gap-2"><button type="button" disabled={page <= 1} onClick={() => { const next = new URLSearchParams(params); next.set("page", String(page - 1)); setParams(next); }} className="h-9 border border-neutral-300 px-3 text-xs disabled:opacity-40">Sebelumnya</button><span className="text-xs text-neutral-500">{page} / {totalPages}</span><button type="button" disabled={page >= totalPages} onClick={() => { const next = new URLSearchParams(params); next.set("page", String(page + 1)); setParams(next); }} className="h-9 border border-neutral-300 px-3 text-xs disabled:opacity-40">Berikutnya</button></div></div>
     </div>
   );
