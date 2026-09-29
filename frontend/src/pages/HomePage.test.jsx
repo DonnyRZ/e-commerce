@@ -62,11 +62,11 @@ afterEach(async () => {
   container.remove();
 });
 
-test("shows the uploaded department image with its coming-soon badge when no products exist", async () => {
+test("shows the uploaded department image without a coming-soon badge when no products exist", async () => {
   await act(async () => root.render(<HomePage />));
 
   const image = container.querySelector('[data-testid="department-card-batik"] img');
   expect(image).not.toBeNull();
   expect(image.getAttribute("src")).toContain("/api/v1/cms/media/file/asset-123");
-  expect(container.querySelector('[data-testid="department-card-batik"]').textContent).toContain("Segera hadir");
+  expect(container.querySelector('[data-testid="department-card-batik"]').textContent).not.toContain("Segera hadir");
 });

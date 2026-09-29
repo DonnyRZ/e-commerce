@@ -20,10 +20,7 @@ export default function CategoryCard({ category, name, onNavigate, href, testIdP
           alt={name}
           loading="lazy"
           className="h-full w-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
-        /> : <div className="flex h-full w-full items-center justify-center bg-white px-4 text-center">
-          <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{category.comingSoonLabel || "Coming soon"}</span>
-        </div>}
-        {category.comingSoon ? <span className="absolute inset-x-0 bottom-0 bg-white/92 px-2 py-2 text-center text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">{category.comingSoonLabel || "Coming soon"}</span> : null}
+        /> : <div aria-hidden="true" className="h-full w-full bg-neutral-50" />}
       </div>
       <p className="mt-2 text-sm font-medium leading-snug group-hover:underline">
         {name}

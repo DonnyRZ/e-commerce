@@ -67,17 +67,12 @@ export default function HomePage() {
   const cmsFailed = cmsBundleQuery.isError;
   const departments = (catalogQuery.data || []).filter((node) => node.kind === "department" && node.is_active !== false).sort((a, b) => a.sort_order - b.sort_order);
   const departmentVisuals = Object.fromEntries((cmsBundle?.department_visuals || []).map((visual) => [visual.slug, visual]));
-  const hasProductsInNode = (node) => Number(node.product_count || 0) > 0 || (node.children || []).some((child) => hasProductsInNode(child));
-  const catalogReady = catalogQuery.isSuccess;
-  const comingSoonLabel = locale === "id" ? "Segera hadir" : locale === "uz" ? "Tez orada" : locale === "ru" ? "Скоро" : "Coming soon";
   const departmentCards = departments.map((department) => ({
     ...department,
     image: mediaUrl(departmentVisuals[department.slug]?.image_url)
       || mediaUrl(department.image_url)
       || DEPARTMENT_VISUALS[department.slug]
       || "",
-    comingSoon: catalogReady && !hasProductsInNode(department),
-    comingSoonLabel,
     name: pickLocalized(department.translations, locale),
   }));
   const sections = useMemo(() => cmsBundle?.sections || [], [cmsBundle?.sections]);
