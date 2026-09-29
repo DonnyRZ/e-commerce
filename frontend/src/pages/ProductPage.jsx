@@ -68,7 +68,10 @@ export default function ProductPage() {
           const optionValues = Object.fromEntries(
             Object.entries(rawOptions)
               .filter(([, value]) => ["string", "number", "boolean"].includes(typeof value))
-              .map(([key, value]) => [key, String(value).trim()])
+              .map(([key, value]) => [
+                key.trim().toLowerCase() === "size" ? "size" : key,
+                String(value).trim(),
+              ])
               .filter(([, value]) => value)
           );
           return { ...variant, option_values: optionValues };
@@ -87,6 +90,8 @@ export default function ProductPage() {
     return [...dims.entries()].map(([key, set]) => ({ key, values: [...set] }));
   }, [variants]);
 
+  const requiresExplicitSizeChoice = Boolean(product?.size_selection_required);
+
   useEffect(() => {
     setSelected({});
     setImageIndex(0);
@@ -96,9 +101,11 @@ export default function ProductPage() {
   useEffect(() => {
     if (!variants.length || Object.keys(selected).length) return;
     const first = variants[0];
-    setSelected({ ...first.option_values });
+    const initialOptions = { ...first.option_values };
+    if (requiresExplicitSizeChoice) delete initialOptions.size;
+    setSelected(initialOptions);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variants]);
+  }, [variants, requiresExplicitSizeChoice]);
 
   useEffect(() => {
     if (product) {
@@ -115,7 +122,8 @@ export default function ProductPage() {
         )
     );
 
-  const allSelected = dimensions.every((d) => selected[d.key]);
+  const allSelected = dimensions.every((d) => selected[d.key]) &&
+    (!requiresExplicitSizeChoice || Boolean(selected.size));
   const selectedVariant = allSelected
     ? variants.find((v) => dimensions.every((d) => v.option_values[d.key] === selected[d.key]))
     : null;
@@ -128,7 +136,21 @@ export default function ProductPage() {
       );
       if (exact) return next;
       const fallback = variants.find((v) => v.option_values[dimKey] === value);
-      return fallback ? { ...fallback.option_values } : next;
+      if (!fallback) return next;
+      const fallbackOptions = { ...fallback.option_values };
+      if (requiresExplicitSizeChoice && dimKey !== "size") {
+        const priorSizeVariant = prev.size && variants.find((variant) =>
+          variant.option_values[dimKey] === value &&
+          variant.option_values.size === prev.size &&
+          dimensions.every((dimension) =>
+            dimension.key === dimKey || dimension.key === "size" ||
+            !prev[dimension.key] || variant.option_values[dimension.key] === prev[dimension.key]
+          )
+        );
+        if (priorSizeVariant) return { ...priorSizeVariant.option_values };
+        delete fallbackOptions.size;
+      }
+      return fallbackOptions;
     });
   };
 

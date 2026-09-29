@@ -5,6 +5,7 @@ import { createTelegramCartInquiry } from "@/lib/api";
 
 let mockReceiptStatus = "pending";
 const mockRefetchCart = jest.fn();
+let mockCartItem = { id: "a", quantity: 1, unit_price: 100, translations: {}, option_values: {} };
 jest.mock("@tanstack/react-query", () => ({ useQuery: (options) => options.queryKey[0] === "telegram-inquiry-status"
   ? { isSuccess: true, data: { available: true, store_username: "store" } }
   : { data: { status: options.queryKey[0] === "telegram-receipt" ? mockReceiptStatus : "pending" } } }));
@@ -12,7 +13,7 @@ jest.mock("react-router-dom", () => ({ Link: ({ children }) => <span>{children}<
 jest.mock("@/i18n", () => ({ useI18n: () => ({ locale: "id", t: (key) => key }) }));
 jest.mock("@/lib/AuthContext", () => ({ useAuth: () => ({}) }));
 jest.mock("@/lib/ShopContext", () => ({ useShop: () => ({
-  cart: { id: "cart", item_count: 1, subtotal: 100, items: [{ id: "a", quantity: 1, unit_price: 100, translations: {}, option_values: {} }] },
+  cart: { id: "cart", item_count: 1, subtotal: 100, items: [mockCartItem] },
   cartMutationsBlocked: false, guestCartMode: true, refetchCart: mockRefetchCart,
 }) }));
 jest.mock("@/lib/api", () => ({ createTelegramCartInquiry: jest.fn(), getTelegramInquiryStatus: jest.fn(), getTelegramCartInquiry: jest.fn() }));
@@ -27,6 +28,7 @@ beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
   sessionStorage.clear();
   mockReceiptStatus = "pending";
+  mockCartItem = { id: "a", quantity: 1, unit_price: 100, translations: {}, option_values: {} };
   mockRefetchCart.mockReset();
   Object.defineProperty(window, "crypto", { configurable: true, value: { randomUUID: () => "test-idempotency-key-123" } });
   createTelegramCartInquiry.mockReset();
@@ -70,4 +72,22 @@ test("refreshes cart only after Telegram confirms delivery", async () => {
   expect(mockRefetchCart).toHaveBeenCalledTimes(1);
   await act(async () => root.render(<CartPage />));
   expect(mockRefetchCart).toHaveBeenCalledTimes(1);
+});
+
+test("keeps a cart's retired size processable but prevents increasing its quantity", async () => {
+  mockCartItem = {
+    id: "legacy-size",
+    quantity: 2,
+    unit_price: 100,
+    translations: {},
+    option_values: { size: "S" },
+    availability: "pre_order",
+    size_available_for_new_orders: false,
+    can_increase_quantity: false,
+  };
+  await act(async () => root.render(<CartPage />));
+  expect(container.querySelector('[data-testid="cart-legacy-size-legacy-size"]')?.textContent).toContain("cart.sizeNoLongerAvailable");
+  expect(container.querySelector('[data-testid="cart-qty-plus-legacy-size"]').disabled).toBe(true);
+  expect(container.querySelector('[data-testid="cart-qty-minus-legacy-size"]').disabled).toBe(false);
+  expect(button().disabled).toBe(false);
 });

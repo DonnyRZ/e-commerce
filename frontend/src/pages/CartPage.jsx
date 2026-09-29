@@ -221,6 +221,11 @@ export default function CartPage() {
                         <p data-testid={`cart-preorder-${item.id}`} className="mt-1 text-xs font-medium text-primary">
                           {t("preorder.label")}
                         </p>
+                        {item.availability === "pre_order" && item.size_available_for_new_orders === false ? (
+                          <p data-testid={`cart-legacy-size-${item.id}`} className="mt-1 text-xs text-muted-foreground">
+                            {t("cart.sizeNoLongerAvailable")}
+                          </p>
+                        ) : null}
                       </div>
                       <button
                         type="button"
@@ -252,7 +257,7 @@ export default function CartPage() {
                           type="button"
                           data-testid={`cart-qty-plus-${item.id}`}
                           aria-label="Increase quantity"
-                          disabled={item.quantity >= 99 || cartMutationsBlocked || openingTelegram}
+                          disabled={item.quantity >= 99 || item.can_increase_quantity === false || cartMutationsBlocked || openingTelegram}
                           onClick={() => handleQty(item, item.quantity + 1)}
                           className="inline-flex h-9 w-9 items-center justify-center disabled:opacity-30"
                         >

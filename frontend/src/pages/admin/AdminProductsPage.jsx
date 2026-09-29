@@ -1,9 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, Trash2 } from "lucide-react";
+import { Check, Eye, Plus, Ruler, Search, Settings2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { deleteAdminProduct, getAdminProducts, updateAdminProduct } from "@/lib/api";
+import {
+  applyAdminProductSizePresets,
+  deleteAdminProduct,
+  getAdminProductSizePresets,
+  getAdminProducts,
+  previewAdminProductSizePresets,
+  saveAdminProductSizePresets,
+  updateAdminProduct,
+} from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusPill, adminDeleteError, fmtMoney, inputClass } from "./adminUtils";
 
@@ -12,10 +20,27 @@ export default function AdminProductsPage() {
   const [q, setQ] = useState(params.get("q") || "");
   const [deletingId, setDeletingId] = useState(null);
   const [updatingStatusId, setUpdatingStatusId] = useState(null);
+  const [clothingSizes, setClothingSizes] = useState("");
+  const [footwearSizes, setFootwearSizes] = useState("");
+  const [sizePreview, setSizePreview] = useState(null);
+  const [savingSizePresets, setSavingSizePresets] = useState(false);
+  const [previewingSizePresets, setPreviewingSizePresets] = useState(false);
+  const [applyingSizePresets, setApplyingSizePresets] = useState(false);
   const queryClient = useQueryClient();
   const page = parseInt(params.get("page") || "1", 10);
   const status = params.get("status") || "";
   const inventory = params.get("inventory") || "";
+
+  const sizePresetsQuery = useQuery({
+    queryKey: ["admin-product-size-presets"],
+    queryFn: getAdminProductSizePresets,
+  });
+
+  useEffect(() => {
+    if (!sizePresetsQuery.data) return;
+    setClothingSizes(sizePresetsQuery.data.clothing_sizes.join(", "));
+    setFootwearSizes(sizePresetsQuery.data.footwear_sizes.join(", "));
+  }, [sizePresetsQuery.data]);
 
   const { data, isLoading } = useQuery({
     queryKey: ["admin-products", { q: params.get("q") || "", status, inventory, page }],
@@ -35,6 +60,75 @@ export default function AdminProductsPage() {
   const total = data?.total || 0;
   const pageSize = data?.page_size || 20;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const parseSizes = (value) => value.split(/[,;\n]+/).map((item) => item.trim()).filter(Boolean);
+  const savedPresets = sizePresetsQuery.data;
+  const presetsDirty = Boolean(savedPresets) && (
+    parseSizes(clothingSizes).join("|") !== savedPresets.clothing_sizes.join("|") ||
+    parseSizes(footwearSizes).join("|") !== savedPresets.footwear_sizes.join("|")
+  );
+
+  const saveSizePresets = async () => {
+    const clothing = parseSizes(clothingSizes);
+    const footwear = parseSizes(footwearSizes);
+    if (!clothing.length || !footwear.length) {
+      toast.error("Isi minimal satu ukuran untuk pakaian dan alas kaki.");
+      return;
+    }
+    setSavingSizePresets(true);
+    try {
+      const result = await saveAdminProductSizePresets({
+        clothing_sizes: clothing,
+        footwear_sizes: footwear,
+      });
+      queryClient.setQueryData(["admin-product-size-presets"], result);
+      setSizePreview(null);
+      toast.success("Preset ukuran tersimpan. Toko tetap memakai preset yang terakhir diterapkan sampai proses penerapan selesai.");
+    } catch (err) {
+      const code = err?.response?.data?.detail?.error || err?.response?.data?.detail;
+      toast.error(code === "invalid_size_preset" ? "Ukuran harus unik, tidak kosong, maksimal 32 karakter, dan paling banyak 24 ukuran." : "Preset ukuran gagal disimpan.");
+    } finally {
+      setSavingSizePresets(false);
+    }
+  };
+
+  const previewSizePresets = async () => {
+    setPreviewingSizePresets(true);
+    try {
+      setSizePreview(await previewAdminProductSizePresets());
+    } catch {
+      toast.error("Pratinjau ukuran gagal dimuat. Coba lagi.");
+    } finally {
+      setPreviewingSizePresets(false);
+    }
+  };
+
+  const applySizePresets = async () => {
+    if (!sizePreview || applyingSizePresets) return;
+    const confirmed = window.confirm(
+      `Terapkan ukuran ke ${sizePreview.product_count} produk? ${sizePreview.variants_to_add} varian baru akan dibuat. Stok varian baru 0; varian dan order lama tidak dihapus.`
+    );
+    if (!confirmed) return;
+    setApplyingSizePresets(true);
+    try {
+      const result = await applyAdminProductSizePresets(sizePreview.preview_digest);
+      queryClient.setQueryData(["admin-product-size-presets"], result);
+      setSizePreview(null);
+      queryClient.invalidateQueries({ queryKey: ["admin-products"] });
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+      queryClient.invalidateQueries({ queryKey: ["product"] });
+      toast.success(`Preset diterapkan: ${result.variants_added} varian ditambahkan pada ${result.products_changed} produk.`);
+    } catch (err) {
+      const code = err?.response?.data?.detail?.error;
+      if (code === "size_preset_preview_stale") {
+        setSizePreview(null);
+        toast.error("Katalog berubah setelah pratinjau. Muat pratinjau baru sebelum menerapkan.");
+      } else {
+        toast.error("Preset tidak diterapkan. Tidak ada perubahan parsial yang disimpan.");
+      }
+    } finally {
+      setApplyingSizePresets(false);
+    }
+  };
 
   const removeProduct = async (product) => {
     if (deletingId || updatingStatusId || !window.confirm(`Delete product "${product.name}" permanently?`)) return;
@@ -89,6 +183,75 @@ export default function AdminProductsPage() {
           New Product
         </Link>
       </div>
+
+      <section className="mt-5 border border-neutral-200 bg-white p-4 sm:p-5" data-testid="product-size-presets">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 inline-flex h-9 w-9 items-center justify-center bg-[#eff6f3] text-[#145A46]"><Ruler className="h-4 w-4" aria-hidden="true" /></span>
+            <div>
+              <h2 className="text-sm font-semibold">Preset ukuran katalog</h2>
+              <p className="mt-1 max-w-3xl text-xs leading-5 text-neutral-500">CMS menyimpan ukuran; toko membaca ukuran dari varian produk. Pratinjau dulu sebelum menambah varian ke produk lama. Varian lama tidak dihapus.</p>
+            </div>
+          </div>
+          <span className="text-[11px] text-neutral-500">
+            Pakaian: {savedPresets?.applied_clothing_sizes ? "diterapkan" : "belum diterapkan"} · Alas kaki: {savedPresets?.applied_footwear_sizes ? "diterapkan" : "belum diterapkan"}
+          </span>
+        </div>
+
+        {sizePresetsQuery.isLoading ? (
+          <Skeleton className="mt-4 h-16 w-full" />
+        ) : sizePresetsQuery.isError ? (
+          <p className="mt-4 text-xs text-red-700">Preset ukuran gagal dimuat. Muat ulang halaman atau periksa akses admin.</p>
+        ) : (
+          <>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <label className="text-xs font-medium text-neutral-600">Pakaian
+                <input value={clothingSizes} onChange={(event) => { setClothingSizes(event.target.value); setSizePreview(null); }} disabled={savingSizePresets || previewingSizePresets || applyingSizePresets} className={`${inputClass} mt-1`} placeholder="Pisahkan tiap ukuran dengan koma" data-testid="size-preset-clothing" />
+              </label>
+              <label className="text-xs font-medium text-neutral-600">Alas kaki
+                <input value={footwearSizes} onChange={(event) => { setFootwearSizes(event.target.value); setSizePreview(null); }} disabled={savingSizePresets || previewingSizePresets || applyingSizePresets} className={`${inputClass} mt-1`} placeholder="Pisahkan tiap ukuran dengan koma" data-testid="size-preset-footwear" />
+              </label>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button type="button" onClick={saveSizePresets} disabled={!presetsDirty || savingSizePresets || previewingSizePresets || applyingSizePresets} className="inline-flex h-9 items-center gap-1.5 border border-neutral-300 px-3 text-xs font-semibold hover:border-[#145A46] disabled:cursor-not-allowed disabled:opacity-45" data-testid="size-presets-save">
+                <Check className="h-3.5 w-3.5" aria-hidden="true" />{savingSizePresets ? "Menyimpan…" : "Simpan preset"}
+              </button>
+              <button type="button" onClick={previewSizePresets} disabled={presetsDirty || savingSizePresets || previewingSizePresets || applyingSizePresets} className="inline-flex h-9 items-center gap-1.5 border border-neutral-300 px-3 text-xs font-semibold hover:border-[#145A46] disabled:cursor-not-allowed disabled:opacity-45" data-testid="size-presets-preview">
+                <Eye className="h-3.5 w-3.5" aria-hidden="true" />{previewingSizePresets ? "Memuat…" : "Pratinjau produk"}
+              </button>
+              {presetsDirty ? <span className="text-[11px] text-amber-700">Simpan perubahan sebelum membuat pratinjau.</span> : null}
+            </div>
+            {sizePreview ? (
+              <div className="mt-4 border border-amber-200 bg-amber-50/60 p-3" data-testid="size-presets-preview-result">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-neutral-800">Pratinjau penerapan</p>
+                    <p className="mt-1 text-xs text-neutral-600">{sizePreview.variants_to_add} varian baru untuk {sizePreview.products_changed} dari {sizePreview.product_count} produk. Varian baru memakai harga dasar dan stok 0.</p>
+                  </div>
+                  <button type="button" onClick={applySizePresets} disabled={presetsDirty || applyingSizePresets || previewingSizePresets} className="inline-flex h-9 items-center gap-1.5 bg-[#145A46] px-3 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50" data-testid="size-presets-apply">
+                    <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />{applyingSizePresets ? "Menerapkan…" : "Terapkan ukuran"}
+                  </button>
+                </div>
+                <div className="mt-3 max-h-48 space-y-1 overflow-auto border-t border-amber-200 pt-2">
+                  {sizePreview.products.filter((product) => product.variants_to_add > 0).map((product) => (
+                    <div key={product.id} className="flex items-start justify-between gap-3 text-xs text-neutral-700">
+                      <span className="min-w-0">
+                        <span className="block truncate">{product.name}</span>
+                        <span className="mt-0.5 block text-[10px] text-neutral-500">
+                          {product.variant_options.map((options) => Object.values(options).join(" / ")).join(", ")}
+                          {product.more_variants ? `, +${product.more_variants} lainnya` : ""}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-neutral-500">+{product.variants_to_add} varian</span>
+                    </div>
+                  ))}
+                  {sizePreview.variants_to_add === 0 ? <p className="text-xs text-neutral-600">Semua kombinasi ukuran sudah tersedia. Penerapan tetap akan mengaktifkan filter ukuran toko.</p> : null}
+                </div>
+              </div>
+            ) : null}
+          </>
+        )}
+      </section>
 
       <div className="mt-5 flex flex-wrap gap-3">
         <form

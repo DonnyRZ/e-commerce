@@ -32,6 +32,7 @@ from db.models import (
 )
 from db.session import get_session
 from media import media_item_url
+from product_sizes import load_size_preset_data, size_variant_is_visible
 from taxonomy import active_taxonomy_chain
 
 router = APIRouter(prefix="/api/v1", tags=["shop"])
@@ -134,6 +135,7 @@ async def _get_or_create_cart(
 async def _cart_payload(session: AsyncSession, cart: Optional[Cart]) -> dict:
     if not cart:
         return {"id": None, "items": [], "subtotal": 0, "currency": "UZS", "item_count": 0}
+    preset_data = await load_size_preset_data(session)
     rows = (
         await session.execute(
             select(CartItem).where(CartItem.cart_id == cart.id).order_by(CartItem.id)
@@ -174,6 +176,13 @@ async def _cart_payload(session: AsyncSession, cart: Optional[Cart]) -> dict:
         )
         category_is_public = bool(
             category and await active_taxonomy_chain(session, category)
+        )
+        size_available_for_new_orders = bool(
+            category
+            and variant
+            and size_variant_is_visible(
+                category.department, variant.option_values, preset_data
+            )
         )
         if (
             not quantity_is_valid
@@ -233,6 +242,12 @@ async def _cart_payload(session: AsyncSession, cart: Optional[Cart]) -> dict:
                 "availability": availability,
                 "ordering_mode": "pre_order",
                 "preorder_estimate_days": PREORDER_ESTIMATE_DAYS,
+                "size_available_for_new_orders": size_available_for_new_orders,
+                "can_increase_quantity": (
+                    size_available_for_new_orders
+                    and quantity < PREORDER_MAX_QUANTITY
+                    and availability == "pre_order"
+                ),
                 # Kept for legacy API clients; never use this to gate or
                 # describe customer ordering availability.
                 "is_demo": False,
@@ -318,6 +333,9 @@ async def add_cart_item(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
+    # Lock/read configuration before product rows. The bulk-apply endpoint
+    # uses the same lock order, preventing a preset rollout/cart-add deadlock.
+    preset_data = await load_size_preset_data(session, shared_lock=True)
     user = None if guest else await _optional_user(request, session)
     product = await session.get(Product, payload.product_id)
     if not product or product.status != "active":
@@ -368,6 +386,8 @@ async def add_cart_item(
         raise HTTPException(status_code=404, detail="product_not_found")
     if not variant or not variant.is_active:
         raise HTTPException(status_code=400, detail="invalid_variant")
+    if not size_variant_is_visible(category.department, variant.option_values, preset_data):
+        raise HTTPException(status_code=400, detail="variant_not_available_for_new_orders")
     existing = await session.scalar(
         select(CartItem).where(
             CartItem.cart_id == cart.id, CartItem.variant_id == variant.id
@@ -406,6 +426,7 @@ async def update_cart_item(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
+    preset_data = await load_size_preset_data(session, shared_lock=True)
     user = None if guest else await _optional_user(request, session)
     item = await _owned_cart_item(item_id, request, session, user, lock=True)
     product = await session.scalar(
@@ -447,6 +468,14 @@ async def update_cart_item(
         raise HTTPException(
             status_code=400,
             detail={"error": "quantity_limit", "maximum": PREORDER_MAX_QUANTITY},
+        )
+    if (
+        payload.quantity > item.quantity
+        and not size_variant_is_visible(category.department, variant.option_values, preset_data)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="variant_not_available_for_new_orders",
         )
     item.quantity = payload.quantity
     await session.commit()

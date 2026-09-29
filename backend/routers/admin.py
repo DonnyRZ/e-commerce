@@ -8,6 +8,8 @@ No payment secrets are ever exposed; payment events are sanitized.
 """
 
 from datetime import datetime, timezone
+import hashlib
+import json
 import re
 from typing import Literal, Optional
 
@@ -31,6 +33,7 @@ from db.models import (
     CartItem,
     CmsMediaAsset,
     InventoryReservation,
+    MarketplaceSettings,
     Order,
     OrderItem,
     Payment,
@@ -71,6 +74,16 @@ from routers.seller import (
 from checkout.service import _reserved_quantities
 from taxonomy import TAXONOMY_KINDS, descendant_ids_select, get_root_category
 from routers.manual_orders import ACTIONABLE_ORDER_STATUSES, WORKFLOW_STAGES
+from product_sizes import (
+    CLOTHING_DEPARTMENTS,
+    FOOTWEAR_DEPARTMENTS,
+    SIZE_PRESETS_SETTING_KEY,
+    configured_sizes_for_department,
+    load_size_preset_data,
+    size_variant_matches_config,
+    validate_size_values,
+    acquire_size_preset_lock,
+)
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
@@ -293,6 +306,387 @@ async def admin_dashboard(
 # ------------------------------ products -----------------------------------
 
 
+class ProductSizePresetIn(BaseModel):
+    clothing_sizes: list[str] = Field(min_length=1, max_length=24)
+    footwear_sizes: list[str] = Field(min_length=1, max_length=24)
+
+
+class ProductSizePresetApplyIn(BaseModel):
+    preview_digest: str = Field(min_length=64, max_length=64)
+
+
+def _size_preset_out(data: dict) -> dict:
+    return {
+        "clothing_sizes": data["clothing"],
+        "footwear_sizes": data["footwear"],
+        "applied_clothing_sizes": data["applied_clothing"],
+        "applied_footwear_sizes": data["applied_footwear"],
+    }
+
+
+def _validate_product_size_variants(
+    department: Optional[str], variants: list[dict], preset_data: dict
+) -> None:
+    configured = configured_sizes_for_department(department, preset_data)
+    if configured is None:
+        return
+    if any(
+        not size_variant_matches_config(department, options, preset_data)
+        for options in variants
+    ):
+        _bad_request(
+            "invalid_size_for_department",
+            {"department": department, "allowed_sizes": configured},
+        )
+
+
+async def _size_preset_target_rows(
+    session: AsyncSession, *, lock: bool = False
+) -> tuple[list[tuple[Product, str]], list[ProductVariant]]:
+    departments = sorted(CLOTHING_DEPARTMENTS | FOOTWEAR_DEPARTMENTS)
+    products_stmt = (
+        select(Product, Category.department)
+        .join(Category, Category.id == Product.category_id)
+        .where(Category.department.in_(departments))
+        .order_by(Product.id)
+    )
+    if lock:
+        products_stmt = products_stmt.with_for_update(of=Product)
+    products = list((await session.execute(products_stmt)).all())
+    product_ids = [product.id for product, _ in products]
+    variants: list[ProductVariant] = []
+    if product_ids:
+        variants_stmt = (
+            select(ProductVariant)
+            .where(ProductVariant.product_id.in_(product_ids))
+            .order_by(ProductVariant.product_id, ProductVariant.sku, ProductVariant.id)
+        )
+        if lock:
+            variants_stmt = variants_stmt.with_for_update()
+        variants = list((await session.execute(variants_stmt)).scalars().all())
+    return products, variants
+
+
+def _size_option_signature(options: dict) -> tuple:
+    return tuple(
+        sorted(
+            (str(key).strip().casefold(), str(value).strip().casefold())
+            for key, value in (options or {}).items()
+            if str(key).strip().casefold() != "size" and value is not None
+        )
+    )
+
+
+def _size_options_without_size(options: dict) -> dict:
+    return {
+        key: str(value).strip()
+        for key, value in (options or {}).items()
+        if str(key).strip().casefold() != "size" and value is not None
+    }
+
+
+def _unique_size_variant_sku(product_id: str, options: dict, used_skus: set[str]) -> str:
+    option_tokens = [
+        value for key, value in sorted(options.items())
+        if key.casefold() != "size"
+    ]
+    tokens = option_tokens + [str(options["size"])]
+    token = "-".join(
+        re.sub(r"[^A-Z0-9]+", "-", value.upper()).strip("-") or "OPT"
+        for value in tokens
+    )
+    base_sku = f"SIZE-{product_id[:10].upper()}-{token}"[:76].rstrip("-")
+    sku = base_sku
+    suffix = 2
+    while sku.casefold() in used_skus:
+        suffix_text = f"-{suffix}"
+        sku = f"{base_sku[:80 - len(suffix_text)]}{suffix_text}"
+        suffix += 1
+    used_skus.add(sku.casefold())
+    return sku
+
+
+def _size_preset_plan(
+    products: list[tuple[Product, str]],
+    variants: list[ProductVariant],
+    data: dict,
+) -> tuple[list[dict], str]:
+    by_product: dict[str, list[ProductVariant]] = {}
+    for variant in variants:
+        by_product.setdefault(variant.product_id, []).append(variant)
+
+    plan: list[dict] = []
+    snapshot_products = []
+    for product, department in products:
+        preset_name = "clothing" if department in CLOTHING_DEPARTMENTS else "footwear"
+        sizes = data[preset_name]
+        product_variants = by_product.get(product.id, [])
+        groups: dict[tuple, dict] = {}
+        existing_combinations: set[tuple[tuple, str]] = set()
+        for variant in product_variants:
+            options = variant.option_values or {}
+            signature = _size_option_signature(options)
+            group = groups.setdefault(signature, {
+                "options": _size_options_without_size(options),
+                "source": variant,
+            })
+            source = group["source"]
+            if (variant.is_active, variant.sku) > (source.is_active, source.sku):
+                group["source"] = variant
+            size_value = next(
+                (value for key, value in options.items() if str(key).strip().casefold() == "size"),
+                None,
+            )
+            if size_value is not None:
+                existing_combinations.add((signature, str(size_value).strip().casefold()))
+        if not groups:
+            groups[()] = {"options": {}, "source": None}
+
+        missing = []
+        for signature, group in groups.items():
+            for size in sizes:
+                if (signature, str(size).casefold()) in existing_combinations:
+                    continue
+                option_values = {**group["options"], "size": size}
+                source = group["source"]
+                missing.append({
+                    "option_values": option_values,
+                    "media_id": source.media_id if source else None,
+                    "image_url": source.image_url if source else None,
+                    # Do not accidentally re-enable a variant group which
+                    # the operator intentionally disabled. Products without
+                    # any source variant get active rows so they can be
+                    # configured and published later from the editor.
+                    "is_active": bool(source.is_active) if source else True,
+                })
+
+        if missing:
+            plan.append({
+                "product": product,
+                "department": department,
+                "sizes": sizes,
+                "missing": missing,
+            })
+
+        snapshot_products.append({
+            "id": product.id,
+            "department": department,
+            "base_price": product.base_price,
+            "status": product.status,
+            "variants": [
+                {
+                    "id": variant.id,
+                    "sku": variant.sku,
+                    "options": variant.option_values or {},
+                    "stock": variant.stock_quantity,
+                    "price": variant.price_override,
+                    "sale_price": variant.sale_price_override,
+                    "media_id": variant.media_id,
+                    "image_url": variant.image_url,
+                    "active": variant.is_active,
+                }
+                for variant in product_variants
+            ],
+        })
+
+    snapshot = {
+        "clothing": data["clothing"],
+        "footwear": data["footwear"],
+        "products": snapshot_products,
+    }
+    digest = hashlib.sha256(
+        json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return plan, digest
+
+
+def _size_preset_preview_payload(
+    products: list[tuple[Product, str]], plan: list[dict], digest: str, data: dict
+) -> dict:
+    rows = []
+    additions = 0
+    by_id = {entry["product"].id: entry for entry in plan}
+    for product, department in products:
+        entry = by_id.get(product.id)
+        count = len(entry["missing"]) if entry else 0
+        additions += count
+        rows.append({
+            "id": product.id,
+            "name": getattr(product, "_size_preset_name", None) or product.slug,
+            "department": department,
+            "variants_to_add": count,
+            "variant_options": [
+                item["option_values"] for item in entry["missing"][:12]
+            ] if entry else [],
+            "more_variants": max(0, count - 12),
+            "sizes": entry["sizes"] if entry else (
+                data["clothing"] if department in CLOTHING_DEPARTMENTS
+                else data["footwear"]
+            ),
+        })
+    return {
+        "preview_digest": digest,
+        "product_count": len(products),
+        "products_changed": sum(1 for row in rows if row["variants_to_add"]),
+        "variants_to_add": additions,
+        "products": rows,
+    }
+
+
+@router.get("/product-size-presets")
+async def admin_get_product_size_presets(
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    return _size_preset_out(await load_size_preset_data(session))
+
+
+@router.put("/product-size-presets")
+async def admin_save_product_size_presets(
+    payload: ProductSizePresetIn,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(csrf_protect),
+):
+    await acquire_size_preset_lock(session, shared=False)
+    try:
+        clothing = validate_size_values(payload.clothing_sizes)
+        footwear = validate_size_values(payload.footwear_sizes)
+    except ValueError:
+        _bad_request("invalid_size_preset")
+    setting = await session.scalar(
+        select(MarketplaceSettings)
+        .where(MarketplaceSettings.key == SIZE_PRESETS_SETTING_KEY)
+        .with_for_update()
+    )
+    normalized = await load_size_preset_data(session)
+    # A saved edit changes only the proposed configuration. Storefront
+    # visibility keeps using the last applied values until an administrator
+    # reviews a fresh preview and applies the new preset.
+    data = {
+        **normalized,
+        "clothing": clothing,
+        "footwear": footwear,
+    }
+    if setting:
+        setting.data = data
+    else:
+        setting = MarketplaceSettings(key=SIZE_PRESETS_SETTING_KEY, data=data)
+        session.add(setting)
+    await audit(
+        session,
+        user.id,
+        "admin.product_size_presets.save",
+        "marketplace_setting",
+        SIZE_PRESETS_SETTING_KEY,
+        {"clothing_sizes": clothing, "footwear_sizes": footwear},
+    )
+    await session.commit()
+    return _size_preset_out(data)
+
+
+@router.post("/product-size-presets/preview")
+async def admin_preview_product_size_presets(
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    data = await load_size_preset_data(session)
+    products, variants = await _size_preset_target_rows(session)
+    plan, digest = _size_preset_plan(products, variants, data)
+    product_ids = [product.id for product, _ in products]
+    translations = (
+        (await session.execute(
+            select(ProductTranslation).where(
+                ProductTranslation.product_id.in_(product_ids),
+                ProductTranslation.locale.in_(["en", "id"]),
+            )
+        )).scalars().all()
+        if product_ids else []
+    )
+    name_map = {}
+    for translation in translations:
+        name_map.setdefault(translation.product_id, {})[translation.locale] = translation.name
+    for product, _ in products:
+        product._size_preset_name = (
+            name_map.get(product.id, {}).get("en")
+            or name_map.get(product.id, {}).get("id")
+            or product.slug
+        )
+    return _size_preset_preview_payload(products, plan, digest, data)
+
+
+@router.post("/product-size-presets/apply")
+async def admin_apply_product_size_presets(
+    payload: ProductSizePresetApplyIn,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(csrf_protect),
+):
+    await acquire_size_preset_lock(session, shared=False)
+    setting = await session.scalar(
+        select(MarketplaceSettings)
+        .where(MarketplaceSettings.key == SIZE_PRESETS_SETTING_KEY)
+        .with_for_update()
+    )
+    normalized = await load_size_preset_data(session)
+    products, variants = await _size_preset_target_rows(session, lock=True)
+    plan, digest = _size_preset_plan(products, variants, normalized)
+    if digest != payload.preview_digest:
+        raise HTTPException(status_code=409, detail={"error": "size_preset_preview_stale"})
+
+    existing_skus = {
+        sku.casefold()
+        for sku in (await session.execute(select(ProductVariant.sku))).scalars().all()
+    }
+    added = 0
+    for entry in plan:
+        product = entry["product"]
+        for spec in entry["missing"]:
+            options = spec["option_values"]
+            sku = _unique_size_variant_sku(product.id, options, existing_skus)
+            session.add(ProductVariant(
+                product_id=product.id,
+                sku=sku,
+                option_values=options,
+                stock_quantity=0,
+                price_override=None,
+                sale_price_override=None,
+                media_id=spec["media_id"],
+                image_url=spec["image_url"],
+                is_active=spec["is_active"],
+            ))
+            added += 1
+
+    data = {
+        **normalized,
+        "applied_clothing": list(normalized["clothing"]),
+        "applied_footwear": list(normalized["footwear"]),
+    }
+    if setting:
+        setting.data = data
+    else:
+        setting = MarketplaceSettings(key=SIZE_PRESETS_SETTING_KEY, data=data)
+        session.add(setting)
+    await audit(
+        session,
+        user.id,
+        "admin.product_size_presets.apply",
+        "marketplace_setting",
+        SIZE_PRESETS_SETTING_KEY,
+        {"products_changed": len(plan), "variants_added": added},
+    )
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail={"error": "sku_exists"})
+    return {
+        **_size_preset_out(data),
+        "products_changed": len(plan),
+        "variants_added": added,
+    }
+
+
 @router.get("/products")
 async def admin_list_products(
     user: User = Depends(require_admin),
@@ -397,6 +791,7 @@ async def admin_create_product(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
+    preset_data = await load_size_preset_data(session, shared_lock=True)
     _validate_translations(payload.translations, require_en=True)
     _validate_product_type(payload.product_type)
     normalized_media = await _normalize_product_media(session, payload.media)
@@ -409,6 +804,12 @@ async def admin_create_product(
     normalized_options = [
         _normalize_option_values(variant.option_values) for variant in payload.variants
     ]
+    category = await session.get(Category, payload.category_id)
+    _validate_product_size_variants(
+        category.department if category else None,
+        normalized_options,
+        preset_data,
+    )
     for variant in payload.variants:
         _validate_variant_prices(
             variant.price_override, variant.sale_price_override, payload.base_price
@@ -481,6 +882,7 @@ async def admin_update_product(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
+    preset_data = await load_size_preset_data(session, shared_lock=True)
     product = await session.scalar(
         select(Product).where(Product.id == product_id).with_for_update()
     )
@@ -500,6 +902,20 @@ async def admin_update_product(
             session,
             data.get("category_id", product.category_id),
             data.get("product_type", product.product_type),
+        )
+    if data.get("category_id", product.category_id) != product.category_id:
+        target_category = await session.get(Category, data["category_id"])
+        current_options = (
+            await session.execute(
+                select(ProductVariant.option_values).where(
+                    ProductVariant.product_id == product.id
+                )
+            )
+        ).scalars().all()
+        _validate_product_size_variants(
+            target_category.department if target_category else None,
+            [options or {} for options in current_options],
+            preset_data,
         )
     if "media" in data:
         data["media"] = await _normalize_product_media(session, data["media"] or [])
@@ -563,6 +979,7 @@ async def admin_save_product_editor(
     product half-updated after the basics were already committed.
     """
 
+    preset_data = await load_size_preset_data(session, shared_lock=True)
     product = await session.scalar(
         select(Product)
         .where(Product.id == product_id)
@@ -610,6 +1027,20 @@ async def admin_save_product_editor(
     for variant_id in variant_ids:
         if variant_id not in existing_by_id:
             _bad_request("invalid_variant")
+    category = await session.get(Category, payload.category_id)
+    for submitted, option_values in zip(payload.variants, normalized_options):
+        existing = existing_by_id.get(submitted.id) if submitted.id else None
+        may_preserve_legacy = bool(
+            existing
+            and product.category_id == payload.category_id
+            and option_values == (existing.option_values or {})
+        )
+        if not may_preserve_legacy:
+            _validate_product_size_variants(
+                category.department if category else None,
+                [option_values],
+                preset_data,
+            )
     submitted_variant_ids = set(variant_ids)
     # The editor intentionally does not delete omitted persisted variants. If
     # one is retained implicitly, its existing price overrides must still be
@@ -778,17 +1209,24 @@ async def admin_create_variant(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
+    preset_data = await load_size_preset_data(session, shared_lock=True)
     product = await session.scalar(
         select(Product).where(Product.id == product_id).with_for_update()
     )
     if not product:
         raise HTTPException(status_code=404, detail="product_not_found")
+    category = await session.get(Category, product.category_id)
     sku = _normalize_sku(payload.sku)
     await _check_skus(session, [sku])
     _validate_variant_prices(
         payload.price_override, payload.sale_price_override, product.base_price
     )
     option_values = _normalize_option_values(payload.option_values)
+    _validate_product_size_variants(
+        category.department if category else None,
+        [option_values],
+        preset_data,
+    )
     variant_image_url = await _resolve_media_url(session, payload.media_id) if payload.media_id else payload.image_url
     if not payload.media_id:
         _validate_local_media_url(variant_image_url)
@@ -914,6 +1352,7 @@ async def admin_update_variant(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
+    preset_data = await load_size_preset_data(session, shared_lock=True)
     variant_product_id = await session.scalar(
         select(ProductVariant.product_id).where(ProductVariant.id == variant_id)
     )
@@ -951,6 +1390,13 @@ async def admin_update_variant(
         _validate_local_media_url(data["image_url"])
     if "option_values" in data:
         data["option_values"] = _normalize_option_values(data["option_values"])
+        if data["option_values"] != (variant.option_values or {}):
+            category = await session.get(Category, product.category_id)
+            _validate_product_size_variants(
+                category.department if category else None,
+                [data["option_values"]],
+                preset_data,
+            )
     for field in ("sku", "option_values", "price_override", "sale_price_override",
                   "media_id", "image_url", "is_active"):
         if field in data:

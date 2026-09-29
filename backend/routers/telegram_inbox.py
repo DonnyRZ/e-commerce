@@ -20,6 +20,7 @@ from auth import csrf_protect, require_roles
 from cms.service import audit
 from config import APP_ENV, FRONTEND_URL, TELEGRAM_BOT_TOKEN
 from db.models import (
+    Category,
     Order,
     OrderItem,
     Payment,
@@ -36,6 +37,7 @@ from db.models import (
 from db.session import get_session
 from telegram_inbox_service import candidate_copy, candidate_keyboard
 from telegram_inquiries import TelegramDeliveryError, bot_request, bot_request_multipart
+from product_sizes import load_size_preset_data, size_variant_is_visible
 
 router = APIRouter(prefix="/api/v1/admin/telegram-inbox", tags=["telegram-inbox"])
 require_admin = require_roles("admin")
@@ -470,6 +472,7 @@ async def search_products(
         )
     ).scalars().all()
     items = []
+    preset_data = await load_size_preset_data(session)
     for product in products:
         translations = (
             await session.execute(
@@ -485,6 +488,13 @@ async def search_products(
                 ).order_by(ProductVariant.sku).limit(50)
             )
         ).scalars().all()
+        category = await session.get(Category, product.category_id)
+        variants = [
+            variant for variant in variants
+            if category and size_variant_is_visible(
+                category.department, variant.option_values, preset_data
+            )
+        ]
         if not variants:
             continue
         items.append(
@@ -520,8 +530,12 @@ async def create_candidate(
 ):
     conversation = await _load_conversation(session, conversation_id)
     connection = await _reply_context(session, conversation)
+    # Serialize candidate selection against a preset rollout. Otherwise an
+    # admin could pick a legacy size just as the bulk apply hides it.
+    preset_data = await load_size_preset_data(session, shared_lock=True)
     product = await session.get(Product, payload.product_id)
     variant = await session.get(ProductVariant, payload.variant_id)
+    category = await session.get(Category, product.category_id) if product else None
     if (
         not product
         or product.status != "active"
@@ -529,6 +543,10 @@ async def create_candidate(
         or not variant
         or variant.product_id != product.id
         or not variant.is_active
+        or not category
+        or not size_variant_is_visible(
+            category.department, variant.option_values, preset_data
+        )
     ):
         raise _error(409, "catalog_item_unavailable")
     source_message = None
@@ -678,6 +696,9 @@ async def create_order_from_conversation(
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ):
     conversation = await _load_conversation(session, conversation_id)
+    # Keep the catalog visibility rule stable until this order transaction
+    # commits, using the same preset-first lock order as cart additions.
+    preset_data = await load_size_preset_data(session, shared_lock=True)
     if not payload.shipping_address.get("recipient_name") or not payload.shipping_address.get("phone"):
         raise _error(422, "shipping_recipient_required")
     if idempotency_key is not None and not 16 <= len(idempotency_key) <= 80:
@@ -712,6 +733,7 @@ async def create_order_from_conversation(
     for candidate in candidates:
         product = await session.get(Product, candidate.product_id)
         variant = await session.get(ProductVariant, candidate.variant_id)
+        category = await session.get(Category, product.category_id) if product else None
         if (
             not product
             or product.status != "active"
@@ -719,6 +741,10 @@ async def create_order_from_conversation(
             or not variant
             or variant.product_id != product.id
             or not variant.is_active
+            or not category
+            or not size_variant_is_visible(
+                category.department, variant.option_values, preset_data
+            )
         ):
             raise _error(409, "catalog_item_unavailable", sku=candidate.sku)
         unit_price = _price(product, variant)
