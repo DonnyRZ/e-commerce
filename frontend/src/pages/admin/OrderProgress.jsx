@@ -1,7 +1,7 @@
 import { Check } from "lucide-react";
 
 export const ORDER_STEPS = [
-  ["inquiry", "Inquiry"],
+  ["inquiry", "Pending Order"],
   ["payment", "Pembayaran"],
   ["supplier_shipping", "Supplier mengirim"],
   ["received_by_admin", "Diterima admin"],

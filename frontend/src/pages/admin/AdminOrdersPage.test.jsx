@@ -121,6 +121,8 @@ test("groups payment stages into one filter and shows each order's current payme
   await act(async () => root.render(<AdminOrdersPage />));
 
   const filterButtons = [...container.querySelectorAll('[aria-label="Filter tahap order"] button')];
+  expect(filterButtons.some((button) => button.textContent.startsWith("Pending Order"))).toBe(true);
+  expect(filterButtons.some((button) => button.textContent.startsWith("Inquiry"))).toBe(false);
   expect(filterButtons.map((button) => button.textContent)).toContain("Pembayaran2");
   expect(filterButtons.find((button) => button.textContent.startsWith("Pembayaran")).getAttribute("aria-pressed")).toBe("true");
   expect(filterButtons.some((button) => button.textContent.includes("Semua"))).toBe(false);
@@ -135,7 +137,7 @@ test("groups payment stages into one filter and shows each order's current payme
   const overview = container.querySelector('[data-testid="workflow-overview"]');
   expect(overview.querySelectorAll("li")).toHaveLength(6);
   expect([...overview.querySelectorAll("li")].map((step) => step.textContent.trim())).toEqual([
-    "1Inquiry",
+    "1Pending Order",
     "2Pembayaran",
     "3Supplier mengirim",
     "4Diterima admin",
