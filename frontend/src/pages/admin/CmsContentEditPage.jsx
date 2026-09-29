@@ -125,14 +125,14 @@ function MediaPicker({ onSelect, onClose }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div><p className="text-sm font-semibold text-[#17392C]">Pilih dari pustaka media</p><p className="mt-0.5 text-xs text-stone-500">Unggah sekali, gunakan ulang di seluruh CMS.</p></div>
         <div className="flex items-center gap-2">
-          <label className={`inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg bg-[#02422C] px-3 text-xs font-semibold text-white transition hover:bg-[#063723] ${uploading ? "pointer-events-none opacity-60" : ""}`} data-testid="media-picker-upload">
+          <label className={`inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-lg bg-[#02422C] px-3 text-xs font-semibold text-white transition hover:bg-[#063723] ${uploading ? "pointer-events-none opacity-60" : ""}`} data-testid="media-picker-upload">
             <ImagePlus className="h-3.5 w-3.5" aria-hidden="true" />{uploading ? "Mengunggah…" : "Unggah gambar"}
             <input type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" onChange={upload} disabled={uploading} />
           </label>
-          <button type="button" onClick={onClose} className="h-9 rounded-lg border border-[#DDD6C8] bg-white px-3 text-xs font-semibold text-stone-600 hover:bg-stone-50" data-testid="media-picker-close">Tutup</button>
+          <button type="button" onClick={onClose} className="min-h-11 rounded-lg border border-[#DDD6C8] bg-white px-3 text-xs font-semibold text-stone-600 hover:bg-stone-50" data-testid="media-picker-close">Tutup</button>
         </div>
       </div>
-      <input value={search} onChange={(event) => setSearch(event.target.value)} className="mt-4 h-10 w-full rounded-lg border border-[#E4DED2] bg-white px-3 text-sm outline-none focus:border-[#02422C]" placeholder="Cari nama file…" aria-label="Cari gambar" />
+      <input value={search} onChange={(event) => setSearch(event.target.value)} className="mt-4 h-11 w-full rounded-lg border border-[#E4DED2] bg-white px-3 text-sm outline-none focus:border-[#02422C]" placeholder="Cari nama file…" aria-label="Cari gambar" />
       {isError ? <div className="py-8 text-center text-sm text-stone-500">Pustaka media gagal dimuat. <button type="button" onClick={() => refetch()} className="font-semibold text-[#02422C] underline">Coba lagi</button></div> : null}
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {isLoading ? Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="aspect-square rounded-lg" />) : (data?.items || []).map((asset) => (
@@ -227,7 +227,7 @@ function CatalogProductPicker({ contentType, payload, setPayload }) {
           })}</ol> : <p className="mt-3 rounded-lg border border-dashed border-[#D9D0C0] px-3 py-4 text-center text-xs text-stone-500">Cari produk di bawah lalu pilih untuk menambahkannya.</p>}
         </div>
       </> : null}
-      <input value={search} onChange={(event) => setSearch(event.target.value)} className="mt-4 h-10 w-full rounded-lg border border-[#E4DED2] bg-white px-3 text-sm outline-none focus:border-[#02422C]" placeholder="Cari produk yang sudah ada…" aria-label="Cari produk katalog" data-testid="cms-catalog-search" />
+      <input value={search} onChange={(event) => setSearch(event.target.value)} className="mt-4 h-11 w-full rounded-lg border border-[#E4DED2] bg-white px-3 text-sm outline-none focus:border-[#02422C]" placeholder="Cari produk yang sudah ada…" aria-label="Cari produk katalog" data-testid="cms-catalog-search" />
       {query.isError ? <p className="py-6 text-center text-sm text-red-700">Produk katalog gagal dimuat. Coba lagi setelah memuat ulang halaman.</p> : <div className="mt-4 grid max-h-[28rem] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">{query.isLoading ? Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} className="h-24 rounded-lg" />) : (products || []).map((product) => { const selected = selectedIds.includes(product.id); return <button key={product.id} type="button" onClick={() => selectProduct(product)} className={`flex gap-3 rounded-lg border p-2 text-left transition ${selected ? "border-[#02422C] bg-[#F0F5EF] ring-1 ring-[#02422C]" : "border-[#E4DED2] bg-white hover:border-[#02422C]"}`} data-testid={`cms-catalog-product-${product.id}`}><ImageWithFallback src={mediaUrl(product.image_url)} alt={product.name} className="h-16 w-14 shrink-0 bg-stone-100 object-contain" /><span className="min-w-0"><span className="block truncate text-xs font-semibold text-[#17392C]">{product.name}</span><span className="mt-1 block text-[10px] uppercase tracking-wide text-stone-500">{product.brand || "Katalog"}</span><span className="mt-1 block text-xs text-[#02422C]">UZS {Number(product.base_price || 0).toLocaleString("en-US")}</span></span></button>; })}</div>}
       {selectedProducts.length ? <p className="mt-3 text-[11px] text-[#315347]">Pilihan disimpan sebagai referensi produk. Jika gambar produk diperbarui di Products, homepage ikut berubah otomatis.</p> : null}
     </FormSection>

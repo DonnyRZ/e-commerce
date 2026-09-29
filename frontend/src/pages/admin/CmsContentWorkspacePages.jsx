@@ -285,15 +285,15 @@ export function CmsStoriesWorkspace() {
       }
     >
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-[#E9E3D7] bg-white p-4 shadow-sm">
-        <label className="relative min-w-60 flex-1">
+        <label className="relative min-w-0 w-full flex-1 sm:min-w-60">
           <span className="sr-only">Cari judul atau topik</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400" aria-hidden="true" />
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Cari judul atau topik…" className="h-10 w-full rounded-lg border border-[#E4DED2] bg-white pl-9 pr-3 text-sm" />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Cari judul atau topik…" className="h-11 w-full rounded-lg border border-[#E4DED2] bg-white pl-9 pr-3 text-sm" />
         </label>
         <div className="flex rounded-lg bg-[#F5F3ED] p-1">
-          <button type="button" onClick={() => setFilter("all")} className={"rounded-md px-3 py-2 text-xs font-semibold " + (filter === "all" ? "bg-white text-[#02422C] shadow-sm" : "text-stone-500")}>Semua ({query.data?.total || 0})</button>
-          <button type="button" onClick={() => setFilter("published")} className={"rounded-md px-3 py-2 text-xs font-semibold " + (filter === "published" ? "bg-white text-[#02422C] shadow-sm" : "text-stone-500")}>Tayang</button>
-          <button type="button" onClick={() => setFilter("draft")} className={"rounded-md px-3 py-2 text-xs font-semibold " + (filter === "draft" ? "bg-white text-[#02422C] shadow-sm" : "text-stone-500")}>Draft</button>
+          <button type="button" onClick={() => setFilter("all")} className={"min-h-11 rounded-md px-3 text-xs font-semibold " + (filter === "all" ? "bg-white text-[#02422C] shadow-sm" : "text-stone-500")}>Semua ({query.data?.total || 0})</button>
+          <button type="button" onClick={() => setFilter("published")} className={"min-h-11 rounded-md px-3 text-xs font-semibold " + (filter === "published" ? "bg-white text-[#02422C] shadow-sm" : "text-stone-500")}>Tayang</button>
+          <button type="button" onClick={() => setFilter("draft")} className={"min-h-11 rounded-md px-3 text-xs font-semibold " + (filter === "draft" ? "bg-white text-[#02422C] shadow-sm" : "text-stone-500")}>Draft</button>
         </div>
       </div>
       {query.isLoading ? (

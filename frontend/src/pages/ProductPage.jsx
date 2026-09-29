@@ -450,7 +450,7 @@ export default function ProductPage() {
                       aria-pressed={isActive}
                       disabled={!exists}
                       onClick={() => selectOption(dim.key, value)}
-                      className={`h-9 w-9 rounded-full border-2 transition-colors ${
+                      className={`h-11 w-11 rounded-full border-2 transition-colors ${
                         isActive
                           ? "border-primary"
                           : exists
@@ -467,7 +467,7 @@ export default function ProductPage() {
                       aria-pressed={isActive}
                       disabled={!exists}
                       onClick={() => selectOption(dim.key, value)}
-                      className={`border px-4 py-2 text-sm font-medium transition-colors ${
+                      className={`min-h-11 border px-4 py-2 text-sm font-medium transition-colors ${
                         isActive
                           ? "border-primary bg-primary text-primary-foreground"
                           : exists

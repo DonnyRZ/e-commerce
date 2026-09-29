@@ -656,10 +656,10 @@ export default function AdminProductEditPage() {
                   <div className="absolute left-2 top-2 bg-white/95 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#145A46]">
                     {index === 0 ? "Primary" : index + 1}
                   </div>
-                  <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-1 bg-black/70 px-1.5 py-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
+                  <div className="absolute inset-x-0 bottom-0 flex flex-wrap items-center justify-between gap-1 bg-black/70 px-1.5 py-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
                     <label
                       htmlFor={`editor-image-replace-input-${index}`}
-                      className={`inline-flex h-7 flex-1 cursor-pointer items-center justify-center gap-1 rounded-sm px-1 text-[10px] font-semibold text-white hover:bg-white/15 ${replacingImageIndex === index ? "pointer-events-none opacity-60" : ""}`}
+                      className={`inline-flex h-10 w-full cursor-pointer items-center justify-center gap-1 rounded-sm px-1 text-[10px] font-semibold text-white hover:bg-white/15 sm:h-8 sm:w-auto sm:flex-1 ${replacingImageIndex === index ? "pointer-events-none opacity-60" : ""}`}
                       title="Replace image"
                       data-testid={`editor-image-replace-${index}`}
                     >
@@ -680,7 +680,7 @@ export default function AdminProductEditPage() {
                       onClick={() => moveProductImage(index, -1)}
                       disabled={index === 0}
                       aria-label="Move image left"
-                      className="inline-flex h-7 w-7 items-center justify-center text-white disabled:opacity-30"
+                      className="inline-flex h-10 w-10 items-center justify-center text-white disabled:opacity-30 sm:h-8 sm:w-8"
                       data-testid={`editor-image-move-left-${index}`}
                     >
                       <ChevronLeft className="h-4 w-4" aria-hidden="true" />
@@ -689,7 +689,7 @@ export default function AdminProductEditPage() {
                       type="button"
                       onClick={() => removeProductImage(index)}
                       aria-label="Remove image"
-                      className="inline-flex h-7 w-7 items-center justify-center text-white hover:text-red-300"
+                      className="inline-flex h-10 w-10 items-center justify-center text-white hover:text-red-300 sm:h-8 sm:w-8"
                       data-testid={`editor-image-remove-${index}`}
                     >
                       <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -699,7 +699,7 @@ export default function AdminProductEditPage() {
                       onClick={() => moveProductImage(index, 1)}
                       disabled={index === form.media.length - 1}
                       aria-label="Move image right"
-                      className="inline-flex h-7 w-7 items-center justify-center text-white disabled:opacity-30"
+                      className="inline-flex h-10 w-10 items-center justify-center text-white disabled:opacity-30 sm:h-8 sm:w-8"
                       data-testid={`editor-image-move-right-${index}`}
                     >
                       <ChevronRight className="h-4 w-4" aria-hidden="true" />

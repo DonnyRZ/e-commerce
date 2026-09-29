@@ -195,7 +195,7 @@ export default function CartPage() {
               const name = pickLocalized(item.translations, locale);
               const options = Object.values(item.option_values || {}).join(" / ");
               return (
-                <li key={item.id} data-testid={`cart-item-${item.id}`} className="flex gap-4 py-4">
+                <li key={item.id} data-testid={`cart-item-${item.id}`} className="flex min-w-0 gap-3 py-4 sm:gap-4">
                   <Link to={`/product/${item.slug}`} className="shrink-0">
                     <ImageWithFallback
                       src={item.image_url}
@@ -204,16 +204,16 @@ export default function CartPage() {
                       className="aspect-[3/4] w-20 bg-secondary object-cover sm:w-24"
                     />
                   </Link>
-                  <div className="flex flex-1 flex-col">
+                  <div className="flex min-w-0 flex-1 flex-col">
                     <div className="flex items-start justify-between gap-3">
-                      <div>
+                      <div className="min-w-0">
                         <Link
                           to={`/product/${item.slug}`}
-                          className="text-sm font-medium leading-snug hover:underline"
+                          className="break-words text-sm font-medium leading-snug hover:underline"
                         >
                           {name}
                         </Link>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
+                        <p className="mt-0.5 break-all text-xs text-muted-foreground">
                           {options}
                           {options ? " · " : ""}
                           {item.sku}
@@ -233,7 +233,7 @@ export default function CartPage() {
                         aria-label={t("cart.remove")}
                         disabled={cartMutationsBlocked || openingTelegram}
                         onClick={() => handleRemove(item.id)}
-                        className="text-muted-foreground transition-colors hover:text-destructive"
+                        className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-destructive"
                       >
                         <Trash2 className="h-4 w-4" aria-hidden="true" />
                       </button>

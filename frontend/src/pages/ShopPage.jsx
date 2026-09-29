@@ -162,18 +162,20 @@ export default function ShopPage() {
       </p>
       <h1 className="mt-2 text-2xl font-semibold tracking-tight lg:text-3xl">{title}</h1>
 
-      <div className="mt-4 flex items-center justify-between border-y border-border py-3">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-y border-border py-3">
         <p data-testid="plp-results" className="text-sm">
           {data ? t("plp.results", { count: data.total }) : t("common.loading")}
         </p>
-        <div className="flex items-center gap-4">
-          <label className="hidden items-center gap-2 text-sm sm:flex">
+        <div className="ml-auto flex items-center gap-3 sm:gap-4">
+          <label className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground sm:gap-2 sm:text-sm">
             <ArrowUpDown className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+            <span className="sr-only sm:not-sr-only">{t("plp.sortBy")}</span>
             <select
               data-testid="plp-sort"
+              aria-label={t("plp.sortBy")}
               value={params.sort || "featured"}
               onChange={(e) => setParam("sort", e.target.value)}
-              className="cursor-pointer bg-transparent text-sm font-medium outline-none"
+              className="max-w-[160px] cursor-pointer bg-transparent text-xs font-medium text-foreground outline-none sm:max-w-none sm:text-sm"
             >
               {SORT_OPTIONS.map((s) => (
                 <option key={s} value={s}>
@@ -193,7 +195,7 @@ export default function ShopPage() {
                 {t("plp.filter")}
               </button>
             </SheetTrigger>
-            <SheetContent side="left" className="w-80 overflow-y-auto p-6" data-testid="filter-sheet">
+            <SheetContent side="left" className="w-[min(20rem,calc(100vw-1rem))] overflow-y-auto overscroll-contain p-5 sm:p-6" data-testid="filter-sheet">
               <SheetTitle className="sr-only">{t("plp.filters")}</SheetTitle>
               <FilterPanel
                 meta={filtersMeta}

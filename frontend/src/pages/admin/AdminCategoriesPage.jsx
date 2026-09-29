@@ -84,15 +84,15 @@ function MediaPicker({ onSelect, onClose }) {
 
   return (
     <div className="mt-3 border border-neutral-200 bg-neutral-50 p-3" data-testid="category-media-picker">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-semibold uppercase tracking-widest text-neutral-500">Asset Library</p>
         <div className="flex items-center gap-2">
-          <label className={`inline-flex h-8 cursor-pointer items-center gap-1 border border-neutral-300 bg-white px-3 text-xs font-semibold hover:border-[#145A46] ${uploading ? "opacity-50" : ""}`}>
+          <label className={`inline-flex min-h-11 cursor-pointer items-center gap-1 border border-neutral-300 bg-white px-3 text-xs font-semibold hover:border-[#145A46] ${uploading ? "opacity-50" : ""}`}>
             <ImagePlus className="h-3.5 w-3.5" aria-hidden="true" />
             {uploading ? "Uploading…" : "Upload"}
             <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={upload} disabled={uploading} />
           </label>
-          <button type="button" onClick={onClose} className="h-8 border border-neutral-300 bg-white px-3 text-xs">Close</button>
+          <button type="button" onClick={onClose} className="min-h-11 border border-neutral-300 bg-white px-3 text-xs">Close</button>
         </div>
       </div>
       <div className="mt-3 grid grid-cols-4 gap-2 sm:grid-cols-6">
@@ -113,7 +113,7 @@ function NodeActions({ node, onEdit, onToggle, onDelete }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button type="button" className="inline-flex h-9 w-9 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-100 hover:text-neutral-800" aria-label={`Actions for ${nodeName(node)}`} data-testid={`category-actions-${node.slug}`}>
+        <button type="button" className="inline-flex h-11 w-11 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-100 hover:text-neutral-800" aria-label={`Actions for ${nodeName(node)}`} data-testid={`category-actions-${node.slug}`}>
           <MoreHorizontal className="h-5 w-5" aria-hidden="true" />
         </button>
       </DropdownMenuTrigger>
@@ -327,7 +327,7 @@ export default function AdminCategoriesPage() {
           <h2 className="text-base font-semibold text-neutral-900">Categories</h2>
           <p className="mt-1 text-xs text-neutral-400">Product categories in this department</p>
         </div>
-        <button type="button" onClick={() => openNew("category", activeDepartment)} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[#145A46] px-3 text-xs font-semibold text-white hover:bg-[#0f4938]" data-testid="catalog-add-direct-category">
+        <button type="button" onClick={() => openNew("category", activeDepartment)} className="inline-flex min-h-11 items-center gap-1.5 rounded-md bg-[#145A46] px-3 text-xs font-semibold text-white hover:bg-[#0f4938]" data-testid="catalog-add-direct-category">
           <Plus className="h-4 w-4" aria-hidden="true" />
           Add category
         </button>
@@ -384,7 +384,7 @@ export default function AdminCategoriesPage() {
               })}
             </div>
             <div className="border-t border-neutral-100 p-3">
-              <button type="button" onClick={() => openNew("department")} className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md border border-neutral-300 text-xs font-semibold text-neutral-700 hover:border-[#145A46] hover:text-[#145A46]" data-testid="catalog-add-department">
+              <button type="button" onClick={() => openNew("department")} className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-md border border-neutral-300 text-xs font-semibold text-neutral-700 hover:border-[#145A46] hover:text-[#145A46]" data-testid="catalog-add-department">
                 <Plus className="h-4 w-4" aria-hidden="true" />
                 Add department
               </button>

@@ -49,7 +49,7 @@ test("inquiry uses the shared six-stage progress and shows the live payment summ
 
   const progress = container.querySelector('[aria-label="Tahapan order"]');
   expect(progress.querySelectorAll("li")).toHaveLength(6);
-  expect(progress.querySelector('li[aria-current="step"]').textContent).toContain("Inquiry");
+  expect(progress.querySelector('li[aria-current="step"]').textContent).toContain("Order Pending");
   expect(progress.textContent).toContain("Supplier mengirim");
   expect(progress.textContent).toContain("Diterima admin");
   expect(progress.textContent).toContain("Dikirim ke customer");

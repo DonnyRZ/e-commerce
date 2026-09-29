@@ -63,17 +63,17 @@ function MediaEditor({ asset, onClose }) {
 
   return (
     <div className="mt-5 rounded-xl border border-[#DCD4C5] bg-[#FDFBF6] p-5 shadow-sm" data-testid="media-editor">
-      <div className="flex items-center justify-between">
-        <div><h2 className="text-sm font-semibold text-[#17392C]">{asset.original_filename}</h2><p className="mt-0.5 text-[11px] text-stone-500">{asset.mime_type} · {fmtSize(asset.file_size)} · digunakan {asset.usage_count}×</p></div>
-        <button type="button" onClick={onClose} aria-label="Tutup detail media" data-testid="media-editor-close">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0"><h2 className="break-words text-sm font-semibold text-[#17392C]">{asset.original_filename}</h2><p className="mt-0.5 text-[11px] text-stone-500">{asset.mime_type} · {fmtSize(asset.file_size)} · digunakan {asset.usage_count}×</p></div>
+        <button type="button" className="inline-flex h-11 w-11 shrink-0 items-center justify-center" onClick={onClose} aria-label="Tutup detail media" data-testid="media-editor-close">
           <X className="h-4 w-4 text-neutral-400 hover:text-neutral-900" />
         </button>
       </div>
       <div className="mt-4 flex flex-wrap gap-5">
         <ImageWithFallback src={mediaUrl(asset.url)} alt="" className="h-32 w-32 border border-neutral-200 object-cover" />
-        <div className="min-w-64 flex-1 space-y-3">
+        <div className="min-w-0 flex-1 space-y-3">
           {LOCALES.map((loc) => (
-            <div key={loc} className="grid grid-cols-2 gap-3">
+            <div key={loc} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-[11px] font-medium text-neutral-600">Teks alternatif · {({ en: "English", id: "Indonesia", uz: "O'zbek", ru: "Русский" })[loc]}</label>
                 <input
@@ -94,11 +94,11 @@ function MediaEditor({ asset, onClose }) {
               </div>
             </div>
           ))}
-          <div className="flex items-center gap-3 pt-1">
-            <button onClick={save} disabled={busy} data-testid="media-save" className="h-10 rounded-lg bg-[#02422C] px-6 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50">
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button onClick={save} disabled={busy} data-testid="media-save" className="min-h-11 rounded-lg bg-[#02422C] px-4 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50 sm:px-6">
               Simpan detail
             </button>
-            <button onClick={remove} disabled={busy || asset.usage_count > 0} title={asset.usage_count > 0 ? "Lepaskan media dari semua konten sebelum menghapus." : "Hapus permanen"} data-testid="media-delete" className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-red-200 px-4 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40">
+            <button onClick={remove} disabled={busy || asset.usage_count > 0} title={asset.usage_count > 0 ? "Lepaskan media dari semua konten sebelum menghapus." : "Hapus permanen"} data-testid="media-delete" className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-red-200 px-3 text-sm font-medium text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-40 sm:px-4">
               <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
               Hapus media
             </button>
@@ -165,7 +165,7 @@ export default function CmsMediaPage() {
       {selected ? <MediaEditor asset={selected} onClose={() => setSelected(null)} /> : null}
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E9E3D7] bg-white p-3 shadow-sm">
-        <label className="flex min-w-60 flex-1 items-center gap-2 text-sm text-neutral-500">
+        <label className="flex min-w-0 w-full flex-1 items-center gap-2 text-sm text-neutral-500 sm:min-w-60 sm:w-auto">
           <Search className="h-4 w-4" aria-hidden="true" />
           <span className="sr-only">Cari media</span>
           <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className={`${inputClass} border-0 p-0 shadow-none focus:ring-0`} placeholder="Cari nama file…" data-testid="media-search" />
@@ -174,7 +174,7 @@ export default function CmsMediaPage() {
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5" data-testid="media-grid">
-        {isError ? <div className="col-span-full rounded-xl border border-red-200 bg-white px-5 py-12 text-center" data-testid="media-error"><p className="font-semibold text-red-900">Pustaka media gagal dimuat.</p><button type="button" onClick={() => refetch()} className="mt-3 rounded-lg bg-[#02422C] px-4 py-2 text-xs font-semibold text-white">Coba lagi</button></div> : isLoading
+        {isError ? <div className="col-span-full rounded-xl border border-red-200 bg-white px-5 py-12 text-center" data-testid="media-error"><p className="font-semibold text-red-900">Pustaka media gagal dimuat.</p><button type="button" onClick={() => refetch()} className="mt-3 min-h-11 rounded-lg bg-[#02422C] px-4 text-xs font-semibold text-white">Coba lagi</button></div> : isLoading
           ? Array.from({ length: 10 }).map((_, i) => <Skeleton key={i} className="aspect-square" />)
           : items.map((m) => (
               <div
@@ -201,9 +201,9 @@ export default function CmsMediaPage() {
       ) : null}
       {data?.total > pageSize ? (
         <div className="flex items-center justify-between text-sm">
-          <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className="inline-flex h-9 items-center gap-1 rounded-lg border border-[#DDD6C8] bg-white px-3 disabled:opacity-40" data-testid="media-page-prev"><ChevronLeft className="h-4 w-4" aria-hidden="true" />Sebelumnya</button>
+          <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-[#DDD6C8] bg-white px-3 disabled:opacity-40" data-testid="media-page-prev"><ChevronLeft className="h-4 w-4" aria-hidden="true" />Sebelumnya</button>
           <span className="text-xs text-stone-500">Halaman {page} dari {Math.ceil(data.total / pageSize)}</span>
-          <button type="button" onClick={() => setPage((p) => Math.min(Math.ceil(data.total / pageSize), p + 1))} disabled={page >= Math.ceil(data.total / pageSize)} className="inline-flex h-9 items-center gap-1 rounded-lg border border-[#DDD6C8] bg-white px-3 disabled:opacity-40" data-testid="media-page-next">Berikutnya<ChevronRight className="h-4 w-4" aria-hidden="true" /></button>
+          <button type="button" onClick={() => setPage((p) => Math.min(Math.ceil(data.total / pageSize), p + 1))} disabled={page >= Math.ceil(data.total / pageSize)} className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-[#DDD6C8] bg-white px-3 disabled:opacity-40" data-testid="media-page-next">Berikutnya<ChevronRight className="h-4 w-4" aria-hidden="true" /></button>
         </div>
       ) : null}
     </div>

@@ -110,7 +110,20 @@ export default function AdminDashboardPage() {
             {t("seller.dashboard.viewAll")} <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
           </Link>
         </div>
-        <div className="overflow-x-auto">
+        <div className="space-y-3 p-3 md:hidden" data-testid="dashboard-recent-orders-mobile">
+          {(d.recent_orders || []).map((o) => (
+            <article key={o.order_number} className="rounded-lg border border-neutral-200 p-3" data-testid={`recent-order-mobile-${o.order_number}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Link to={`/orders/${o.order_number}`} className="break-all font-semibold text-[#145A46] hover:underline" data-testid={`recent-order-mobile-link-${o.order_number}`}>{o.order_number}</Link>
+                <span className="text-xs font-semibold">{fmtMoney(o.grand_total, o.currency)}</span>
+              </div>
+              <p className="mt-1 text-xs text-neutral-500">{fmtDate(o.created_at)}</p>
+              <div className="mt-2 flex flex-wrap gap-2"><StatusPill value={o.status} /><StatusPill value={o.payment_state} /></div>
+            </article>
+          ))}
+          {!d.recent_orders?.length ? <p className="px-2 py-8 text-center text-sm text-neutral-500">{t("seller.dashboard.noRecentOrders")}</p> : null}
+        </div>
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[620px] text-sm">
             <thead>
               <tr className="border-b border-neutral-100 text-left text-xs uppercase tracking-wider text-neutral-400">

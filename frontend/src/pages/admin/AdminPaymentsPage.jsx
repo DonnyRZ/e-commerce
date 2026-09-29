@@ -33,7 +33,7 @@ function ReviewCard({ item, onSaved }) {
           </Link>
           <p className="mt-0.5 text-xs text-neutral-400">{fmtDate(item.created_at)} · txn {item.merchant_trans_id.slice(0, 12)}…</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <StatusPill value={item.payment_status} />
           <StatusPill value={item.order_status} />
           <span className="text-base font-semibold">{fmtMoney(item.amount, item.currency)}</span>
@@ -58,7 +58,7 @@ function ReviewCard({ item, onSaved }) {
       ) : null}
 
       <div className="mt-4 flex flex-wrap items-end gap-3">
-        <div className="min-w-64 flex-1">
+        <div className="w-full min-w-0 flex-1 sm:min-w-64">
           <label className="mb-1 block text-xs font-medium text-neutral-500">Review note</label>
           <textarea
             value={note}
@@ -74,7 +74,7 @@ function ReviewCard({ item, onSaved }) {
           onClick={saveNote}
           disabled={busy || !note.trim()}
           data-testid={`review-save-${item.payment_id}`}
-          className="h-10 bg-[#145A46] px-5 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+          className="min-h-11 bg-[#145A46] px-5 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
         >
           Save note
         </button>

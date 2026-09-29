@@ -26,7 +26,8 @@ export default function Header() {
   const [overlay, setOverlay] = useState({ open: false, dept: null });
   const [headerVisible, setHeaderVisible] = useState(true);
   const lastScrollY = useRef(0);
-  const upwardScrollDistance = useRef(0);
+  const scrollDirection = useRef(null);
+  const scrollDistance = useRef(0);
   const { data: catalogTree = [] } = useQuery({
     queryKey: ["catalog-tree"],
     queryFn: getCatalogTree,
@@ -45,15 +46,24 @@ export default function Header() {
       const previousScrollY = lastScrollY.current;
       const scrollDelta = currentScrollY - previousScrollY;
 
-      if (currentScrollY <= 0) {
-        upwardScrollDistance.current = 0;
+      if (currentScrollY <= 8) {
+        scrollDirection.current = null;
+        scrollDistance.current = 0;
         setHeaderVisible(true);
-      } else if (scrollDelta > 0) {
-        upwardScrollDistance.current = 0;
-        setHeaderVisible(true);
-      } else if (scrollDelta < 0) {
-        upwardScrollDistance.current += Math.abs(scrollDelta);
-        if (upwardScrollDistance.current >= 4) setHeaderVisible(false);
+      } else if (scrollDelta !== 0) {
+        const nextDirection = scrollDelta > 0 ? "down" : "up";
+        if (scrollDirection.current !== nextDirection) {
+          scrollDirection.current = nextDirection;
+          scrollDistance.current = Math.abs(scrollDelta);
+        } else {
+          scrollDistance.current += Math.abs(scrollDelta);
+        }
+
+        if (nextDirection === "down" && scrollDistance.current >= 16) {
+          setHeaderVisible(false);
+        } else if (nextDirection === "up" && scrollDistance.current >= 12) {
+          setHeaderVisible(true);
+        }
       }
 
       lastScrollY.current = currentScrollY;
@@ -124,7 +134,7 @@ export default function Header() {
                 data-testid="search-entry"
                 aria-label={t("header.searchPlaceholder")}
                 onClick={() => setOverlay({ open: true, dept: null })}
-                className="inline-flex h-9 w-9 items-center justify-center text-foreground transition-colors hover:text-primary"
+              className="inline-flex h-11 w-11 items-center justify-center text-foreground transition-colors hover:text-primary"
               >
                 <Search className="h-5 w-5" aria-hidden="true" />
               </button>
@@ -134,7 +144,7 @@ export default function Header() {
                   to={to}
                   data-testid={testId}
                   aria-label={t(key)}
-                  className={`relative ${testId === "cart-entry" ? "inline-flex" : "hidden sm:inline-flex"} h-9 w-9 items-center justify-center text-foreground transition-colors hover:text-primary`}
+                  className={`relative ${testId === "cart-entry" ? "inline-flex" : "hidden sm:inline-flex"} h-11 w-11 items-center justify-center text-foreground transition-colors hover:text-primary`}
                 >
                   <Icon className="h-5 w-5" aria-hidden="true" />
                   {counts[testId] > 0 ? (

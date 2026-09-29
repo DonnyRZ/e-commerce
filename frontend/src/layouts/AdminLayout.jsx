@@ -25,7 +25,7 @@ function NavItem({ to, icon: Icon, label, end, onClick, testId }) {
       onClick={onClick}
       data-testid={testId}
       className={({ isActive }) =>
-        `flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
+        `flex min-h-11 items-center gap-3 px-4 py-3 text-sm transition-colors ${
           isActive
             ? "border-r-2 border-[#145A46] bg-[#145A46]/5 font-semibold text-[#145A46]"
             : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
@@ -46,7 +46,7 @@ function CmsSubNavItem({ to, label, onClick, testId }) {
       onClick={onClick}
       data-testid={testId}
       className={({ isActive }) =>
-        `ml-8 flex items-center border-l px-4 py-2 text-xs transition-colors ${
+        `ml-8 flex min-h-10 items-center border-l px-4 py-2.5 text-xs transition-colors ${
           isActive
             ? "border-[#145A46] font-semibold text-[#145A46]"
             : "border-neutral-200 text-neutral-500 hover:border-neutral-400 hover:text-neutral-900"
@@ -82,7 +82,7 @@ export default function AdminLayout() {
   };
 
   const nav = (onClick) => (
-    <nav className="flex flex-col py-4">
+    <nav className="flex flex-col py-2">
       <NavItem to="/" end icon={LayoutDashboard} label="Dashboard" onClick={onClick} testId="admin-nav-dashboard" />
       <NavGroup label="Catalog" />
       <NavItem to="/products" icon={Package} label="Products" onClick={onClick} testId="admin-nav-products" />
@@ -107,9 +107,11 @@ export default function AdminLayout() {
     <div className="min-h-screen bg-neutral-50 text-neutral-900" data-testid="admin-layout">
       <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-neutral-200 bg-white px-4 lg:px-6">
         <button
-          className="lg:hidden"
+          className="inline-flex h-11 w-11 items-center justify-center lg:hidden"
           onClick={() => setDrawer(true)}
-          aria-label="menu"
+          aria-label="Buka menu navigasi CMS"
+          aria-expanded={drawer}
+          aria-controls="admin-mobile-drawer"
           data-testid="admin-menu-open"
         >
           <Menu className="h-5 w-5" />
@@ -130,7 +132,7 @@ export default function AdminLayout() {
             onClick={handleLogout}
             disabled={loggingOut}
             data-testid="admin-logout"
-            className="inline-flex h-8 items-center gap-1.5 border border-neutral-200 px-2.5 text-xs font-medium text-neutral-600 transition-colors hover:border-neutral-900 hover:text-neutral-900 disabled:cursor-wait disabled:opacity-50"
+            className="inline-flex h-10 items-center gap-1.5 border border-neutral-200 px-2.5 text-xs font-medium text-neutral-600 transition-colors hover:border-neutral-900 hover:text-neutral-900 disabled:cursor-wait disabled:opacity-50"
           >
             <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
             {loggingOut ? t("common.loading") : t("auth.logout")}
@@ -139,16 +141,16 @@ export default function AdminLayout() {
       </header>
 
       <div className="flex">
-        <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-56 shrink-0 border-r border-neutral-200 bg-white lg:block">
+        <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-56 shrink-0 overflow-y-auto overscroll-contain border-r border-neutral-200 bg-white lg:block">
           {nav()}
         </aside>
         {drawer ? (
           <div className="fixed inset-0 z-40 lg:hidden" data-testid="admin-drawer">
-            <div className="absolute inset-0 bg-black/30" onClick={() => setDrawer(false)} />
-            <aside className="absolute left-0 top-0 h-full w-64 bg-white shadow-lg">
-              <div className="flex h-14 items-center justify-between border-b border-neutral-200 px-4">
+            <button type="button" className="absolute inset-0 bg-black/30" onClick={() => setDrawer(false)} aria-label="Tutup menu navigasi CMS" />
+            <aside id="admin-mobile-drawer" aria-label="Navigasi CMS" className="absolute inset-y-0 left-0 flex h-dvh max-h-dvh w-64 flex-col overflow-y-auto overscroll-contain bg-white pb-[env(safe-area-inset-bottom)] shadow-lg">
+              <div className="sticky top-0 z-10 flex h-14 shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-4">
                 <span className="text-sm font-bold">Admin</span>
-                <button onClick={() => setDrawer(false)} aria-label="close" data-testid="admin-menu-close">
+                <button className="inline-flex h-11 w-11 items-center justify-center" onClick={() => setDrawer(false)} aria-label="Tutup menu" data-testid="admin-menu-close">
                   <X className="h-5 w-5" />
                 </button>
               </div>

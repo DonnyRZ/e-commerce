@@ -18,7 +18,8 @@ function CustomerDetail({ id }) {
         {data.preferred_locale} · joined {fmtDate(data.created_at)}
       </p>
       {data.orders?.length ? (
-        <table className="mt-3 w-full text-sm">
+        <Fragment>
+        <table className="mt-3 hidden w-full text-sm sm:table">
           <tbody>
             {data.orders.map((o) => (
               <tr key={o.order_number} className="border-b border-neutral-100" data-testid={`customer-order-${o.order_number}`}>
@@ -30,6 +31,15 @@ function CustomerDetail({ id }) {
             ))}
           </tbody>
         </table>
+        <div className="mt-3 space-y-2 sm:hidden" data-testid={`customer-orders-mobile-${id}`}>
+          {data.orders.map((o) => (
+            <div key={o.order_number} className="rounded border border-neutral-200 bg-white p-3 text-xs" data-testid={`customer-order-mobile-${o.order_number}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-semibold text-[#145A46]">{o.order_number}</span><StatusPill value={o.status} /></div>
+              <div className="mt-2 flex items-center justify-between gap-2 text-neutral-500"><span>{fmtDate(o.created_at)}</span><span className="font-semibold text-neutral-800">{fmtMoney(o.grand_total, o.currency)}</span></div>
+            </div>
+          ))}
+        </div>
+        </Fragment>
       ) : (
         <p className="mt-3 text-sm text-neutral-400">No orders yet.</p>
       )}
@@ -66,10 +76,30 @@ export default function AdminCustomersPage() {
         }}
       >
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" aria-hidden="true" />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by email or name…" data-testid="customers-search" className={`${inputClass} w-72 pl-9`} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by email or name…" data-testid="customers-search" className={`${inputClass} w-full max-w-md pl-9`} />
       </form>
 
-      <div className="mt-5 overflow-x-auto border border-neutral-200 bg-white">
+      <div className="mt-5 space-y-3 md:hidden" data-testid="customers-mobile-list">
+        {isLoading
+          ? Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-28 w-full rounded-lg" />)
+          : items.map((c) => (
+              <article key={c.id} className="rounded-lg border border-neutral-200 bg-white p-4" data-testid={`customer-mobile-card-${c.id}`}>
+                <button type="button" aria-expanded={openId === c.id} onClick={() => setOpenId(openId === c.id ? null : c.id)} className="block min-h-11 w-full text-left">
+                  <span className="flex items-start justify-between gap-3"><span className="min-w-0"><span className="block break-words font-semibold">{c.first_name} {c.last_name}</span><span className="mt-1 block break-all text-xs text-neutral-500">{c.email}</span></span><span className="shrink-0 text-xs font-medium text-[#145A46]">{openId === c.id ? "Tutup" : "Detail"}</span></span>
+                </button>
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-3 text-xs">
+                  <StatusPill value={c.is_active ? "active" : "inactive"} />
+                  <span className="uppercase text-neutral-500">{c.preferred_locale}</span>
+                  <span className="text-neutral-500">{c.order_count} order</span>
+                  <span className="ml-auto text-neutral-500">{fmtDate(c.created_at)}</span>
+                </div>
+                {openId === c.id ? <CustomerDetail id={c.id} /> : null}
+              </article>
+            ))}
+        {!isLoading && !items.length ? <div className="rounded-lg border border-neutral-200 bg-white px-4 py-10 text-center text-sm text-neutral-400" data-testid="customers-mobile-empty">No customers found.</div> : null}
+      </div>
+
+      <div className="mt-5 hidden overflow-x-auto border border-neutral-200 bg-white md:block">
         <table className="w-full min-w-[720px] text-sm">
           <thead>
             <tr className="border-b border-neutral-200 text-left text-xs uppercase tracking-wider text-neutral-400">
@@ -113,12 +143,12 @@ export default function AdminCustomersPage() {
         </table>
       </div>
 
-      <div className="mt-4 flex items-center justify-between text-sm">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
         <span className="text-neutral-500" data-testid="customers-total">{total} customers</span>
         <div className="flex gap-2">
-          <button disabled={page <= 1} onClick={() => setPage(page - 1)} data-testid="customers-prev" className="h-9 border border-neutral-300 px-4 text-xs font-medium disabled:opacity-40">Previous</button>
-          <span className="flex h-9 items-center px-2 text-xs text-neutral-500" data-testid="customers-page-indicator">Page {page} / {totalPages}</span>
-          <button disabled={page >= totalPages} onClick={() => setPage(page + 1)} data-testid="customers-next" className="h-9 border border-neutral-300 px-4 text-xs font-medium disabled:opacity-40">Next</button>
+          <button disabled={page <= 1} onClick={() => setPage(page - 1)} data-testid="customers-prev" className="min-h-11 whitespace-nowrap border border-neutral-300 px-3 text-[11px] font-medium disabled:opacity-40 sm:px-4 sm:text-xs">Previous</button>
+          <span className="flex min-h-11 items-center px-1 text-xs text-neutral-500 sm:px-2" data-testid="customers-page-indicator">Page {page} / {totalPages}</span>
+          <button disabled={page >= totalPages} onClick={() => setPage(page + 1)} data-testid="customers-next" className="min-h-11 whitespace-nowrap border border-neutral-300 px-3 text-[11px] font-medium disabled:opacity-40 sm:px-4 sm:text-xs">Next</button>
         </div>
       </div>
     </div>

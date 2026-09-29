@@ -51,12 +51,12 @@ export default function MobileNavigation() {
           size="icon"
           data-testid="mobile-menu-button"
           aria-label={t("header.openMenu")}
-          className="lg:hidden"
+          className="h-11 w-11 lg:hidden"
         >
           <Menu className="h-5 w-5" aria-hidden="true" />
         </Button>
       </SheetTrigger>
-      <SheetContent side="left" className="w-72 overflow-y-auto p-0" data-testid="mobile-menu">
+      <SheetContent side="left" className="w-[min(20rem,calc(100vw-1rem))] overflow-y-auto overscroll-contain p-0" data-testid="mobile-menu">
         <SheetTitle className="sr-only">{t("brand.name")}</SheetTitle>
         <div className="flex items-center justify-between border-b px-4 py-3">
           <BrandLogo size="sm" to="/" testId="mobile-brand-logo" priority />

@@ -205,18 +205,18 @@ export default function AccountPage() {
 
   return (
     <div data-testid="account-page" className="py-8 lg:py-12">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight lg:text-3xl">
             {t("auth.account")}
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">{user.email}</p>
+          <p className="mt-1 break-all text-sm text-muted-foreground">{user.email}</p>
         </div>
         <button
           type="button"
           data-testid="account-logout"
           onClick={logout}
-          className="border border-border px-5 py-2 text-sm font-medium transition-colors hover:border-foreground"
+          className="inline-flex min-h-11 items-center border border-border px-5 text-sm font-medium transition-colors hover:border-foreground"
         >
           {t("auth.logout")}
         </button>
@@ -295,7 +295,7 @@ export default function AccountPage() {
         </section>
 
         <section data-testid="account-addresses" className="border border-border p-5">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold uppercase tracking-wide">
               {t("auth.addresses")}
             </h2>
@@ -304,7 +304,7 @@ export default function AccountPage() {
                 type="button"
                 data-testid="address-add"
                 onClick={() => setShowAddressForm(true)}
-                className="text-sm font-medium underline-offset-4 hover:underline"
+                className="inline-flex min-h-11 items-center text-sm font-medium underline-offset-4 hover:underline"
               >
                 {t("auth.addAddress")}
               </button>
@@ -322,8 +322,8 @@ export default function AccountPage() {
                   data-testid={`address-item-${a.id}`}
                   className="border border-border p-3 text-sm"
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="min-w-0 break-words font-medium">
                       {a.label}
                       {a.is_default ? (
                         <span
@@ -334,7 +334,7 @@ export default function AccountPage() {
                         </span>
                       ) : null}
                     </span>
-                    <div className="flex gap-3 text-xs">
+                    <div className="flex flex-wrap gap-2 text-xs">
                       <button
                         type="button"
                         data-testid={`address-edit-${a.id}`}
@@ -343,7 +343,7 @@ export default function AccountPage() {
                           setEditingAddressOwnerId(user.id);
                           setShowAddressForm(false);
                         }}
-                        className="underline-offset-4 hover:underline"
+                        className="inline-flex min-h-11 items-center px-2 underline-offset-4 hover:underline"
                       >
                         {t("common.edit")}
                       </button>
@@ -351,7 +351,7 @@ export default function AccountPage() {
                         type="button"
                         data-testid={`address-delete-${a.id}`}
                         onClick={() => addressDelete.mutate(a.id)}
-                        className="text-destructive underline-offset-4 hover:underline"
+                        className="inline-flex min-h-11 items-center px-2 text-destructive underline-offset-4 hover:underline"
                       >
                         {t("common.delete")}
                       </button>

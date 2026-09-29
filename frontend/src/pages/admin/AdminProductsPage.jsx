@@ -253,9 +253,9 @@ export default function AdminProductsPage() {
         )}
       </section>
 
-      <div className="mt-5 flex flex-wrap gap-3">
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:flex sm:flex-wrap">
         <form
-          className="relative"
+          className="relative col-span-2 w-full sm:col-span-1 sm:w-64"
           onSubmit={(e) => {
             e.preventDefault();
             setFilter("q", q.trim());
@@ -267,16 +267,16 @@ export default function AdminProductsPage() {
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search products…"
             data-testid="products-search"
-            className={`${inputClass} w-64 pl-9`}
+            className={`${inputClass} w-full pl-9`}
           />
         </form>
-        <select value={status} onChange={(e) => setFilter("status", e.target.value)} className={`${inputClass} w-44`} data-testid="products-status-filter">
+        <select value={status} onChange={(e) => setFilter("status", e.target.value)} className={`${inputClass} w-full sm:w-44`} data-testid="products-status-filter">
           <option value="">All statuses</option>
           <option value="active">Active</option>
           <option value="draft">Draft</option>
           <option value="inactive">Inactive</option>
         </select>
-        <select value={inventory} onChange={(e) => setFilter("inventory", e.target.value)} className={`${inputClass} w-44`} data-testid="products-inventory-filter">
+        <select value={inventory} onChange={(e) => setFilter("inventory", e.target.value)} className={`${inputClass} w-full sm:w-44`} data-testid="products-inventory-filter">
           <option value="">All inventory</option>
           <option value="in_stock">In stock</option>
           <option value="low_stock">Low stock</option>
@@ -284,7 +284,41 @@ export default function AdminProductsPage() {
         </select>
       </div>
 
-      <div className="mt-5 overflow-x-auto border border-neutral-200 bg-white">
+      <div className="mt-5 space-y-3 md:hidden" data-testid="products-mobile-list">
+        {isLoading
+          ? Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-40 w-full rounded-lg" />)
+          : items.map((p) => (
+              <article key={p.id} className="rounded-lg border border-neutral-200 bg-white p-4" data-testid={`product-mobile-card-${p.slug}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <Link to={`/products/${p.id}`} className="break-words font-semibold text-[#145A46] hover:underline" data-testid={`product-edit-mobile-${p.slug}`}>{p.name}</Link>
+                    <p className="mt-1 break-all text-xs text-neutral-400">{p.slug}</p>
+                    <p className="mt-1 text-xs text-neutral-600">{p.brand || "—"}</p>
+                  </div>
+                  <span className="shrink-0 text-right text-sm font-semibold text-neutral-900">{fmtMoney(p.base_price)}</span>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-3 text-xs">
+                  <StatusPill value={p.status} />
+                  <span className="text-neutral-500">{p.variant_count} varian</span>
+                  <span className="text-neutral-500">Stok {p.total_stock}</span>
+                  <StatusPill value={p.stock_state} />
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  { ["active", "inactive"].includes(p.status) ? (
+                    <button type="button" onClick={() => toggleProductStatus(p)} disabled={deletingId === p.id || updatingStatusId === p.id} className={`inline-flex min-h-11 items-center px-3 text-xs font-semibold hover:bg-neutral-50 disabled:opacity-50 ${p.status === "active" ? "border border-amber-200 text-amber-800" : "border border-[#145A46]/30 text-[#145A46]"}`} data-testid={`product-toggle-status-mobile-${p.slug}`}>
+                      {updatingStatusId === p.id ? "Saving…" : p.status === "active" ? "Deactivate" : "Activate"}
+                    </button>
+                  ) : null}
+                  <button type="button" onClick={() => removeProduct(p)} disabled={deletingId === p.id || updatingStatusId === p.id} className="inline-flex min-h-11 items-center gap-1.5 border border-red-200 px-3 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50" data-testid={`product-delete-mobile-${p.slug}`}>
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />{deletingId === p.id ? "Deleting…" : "Delete"}
+                  </button>
+                </div>
+              </article>
+            ))}
+        {!isLoading && !items.length ? <div className="rounded-lg border border-neutral-200 bg-white px-4 py-10 text-center text-sm text-neutral-400" data-testid="products-mobile-empty">No products found.</div> : null}
+      </div>
+
+      <div className="mt-5 hidden overflow-x-auto border border-neutral-200 bg-white md:block">
         <table className="w-full min-w-[760px] text-sm">
           <thead>
             <tr className="border-b border-neutral-200 text-left text-xs uppercase tracking-wider text-neutral-400">
@@ -352,14 +386,14 @@ export default function AdminProductsPage() {
         </table>
       </div>
 
-      <div className="mt-4 flex items-center justify-between text-sm">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm">
         <span className="text-neutral-500" data-testid="products-total">{total} products</span>
         <div className="flex gap-2">
           <button
             disabled={page <= 1}
             onClick={() => setFilter("page", String(page - 1))}
             data-testid="products-prev"
-            className="h-9 border border-neutral-300 px-4 text-xs font-medium disabled:opacity-40"
+            className="min-h-11 whitespace-nowrap border border-neutral-300 px-3 text-[11px] font-medium disabled:opacity-40 sm:px-4 sm:text-xs"
           >
             Previous
           </button>
@@ -370,7 +404,7 @@ export default function AdminProductsPage() {
             disabled={page >= totalPages}
             onClick={() => setFilter("page", String(page + 1))}
             data-testid="products-next"
-            className="h-9 border border-neutral-300 px-4 text-xs font-medium disabled:opacity-40"
+            className="min-h-11 whitespace-nowrap border border-neutral-300 px-3 text-[11px] font-medium disabled:opacity-40 sm:px-4 sm:text-xs"
           >
             Next
           </button>
