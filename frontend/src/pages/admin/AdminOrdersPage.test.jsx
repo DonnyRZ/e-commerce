@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import AdminOrdersPage from "./AdminOrdersPage";
-import { archiveAdminOrder, permanentlyDeleteAdminOrder, restoreAdminOrder } from "@/lib/api";
+import { archiveAdminOrder, permanentlyDeleteAdminOrder, permanentlyDeleteAdminTelegramInquiry, restoreAdminOrder } from "@/lib/api";
 
 const mockSearchParams = new URLSearchParams("?stage=payment_review");
 const mockSetSearchParams = jest.fn();
@@ -56,6 +56,7 @@ jest.mock("@/lib/api", () => ({
   archiveAdminOrder: jest.fn(),
   getAdminOrderWorkflow: jest.fn(),
   permanentlyDeleteAdminOrder: jest.fn(),
+  permanentlyDeleteAdminTelegramInquiry: jest.fn(),
   restoreAdminOrder: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
@@ -103,6 +104,7 @@ beforeEach(() => {
   archiveAdminOrder.mockReset();
   restoreAdminOrder.mockReset();
   permanentlyDeleteAdminOrder.mockReset();
+  permanentlyDeleteAdminTelegramInquiry.mockReset();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -180,6 +182,44 @@ test("permanent deletion requires an exact order-number confirmation", async () 
   expect(prompt).toHaveBeenCalledWith(expect.stringContaining("MC-WAITING-1"));
   expect(permanentlyDeleteAdminOrder).toHaveBeenCalledWith("MC-WAITING-1");
   expect(mockQueryClient.removeQueries).toHaveBeenCalledWith({ queryKey: ["admin-order", "MC-WAITING-1"] });
+  confirm.mockRestore();
+  prompt.mockRestore();
+});
+
+test("inquiry cards offer permanent deletion only and explain Telegram messages remain", async () => {
+  const confirm = jest.spyOn(window, "confirm").mockReturnValue(true);
+  const prompt = jest.spyOn(window, "prompt").mockReturnValue("SC-ABC123");
+  permanentlyDeleteAdminTelegramInquiry.mockResolvedValue({ deleted: true });
+  mockSearchParams.set("stage", "inquiry");
+  mockWorkflowResponse.items = [{
+    kind: "inquiry",
+    reference: "SC-ABC123",
+    stage: "inquiry",
+    status: "sent",
+    created_at: "2026-09-27T12:00:00Z",
+    customer: { name: "Customer E" },
+    item_count: 1,
+    subtotal: 50000,
+    currency: "UZS",
+    next_action: "review_inquiry",
+  }];
+  mockWorkflowResponse.counts = { inquiry: 1 };
+  mockWorkflowResponse.total = 1;
+  await act(async () => root.render(<AdminOrdersPage />));
+
+  const card = container.querySelector('[data-testid="workflow-card-SC-ABC123"]');
+  expect(card.querySelector('[data-testid="archive-order-SC-ABC123"]')).toBeNull();
+  expect(card.querySelector('[data-testid="delete-inquiry-SC-ABC123"]')).not.toBeNull();
+
+  await act(async () => {
+    card.querySelector('[data-testid="delete-inquiry-SC-ABC123"]').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  expect(confirm).toHaveBeenCalledWith(expect.stringContaining("pesan Telegram yang sudah terkirim tidak ikut terhapus"));
+  expect(prompt).toHaveBeenCalledWith("Ketik referensi inquiry ini untuk melanjutkan: SC-ABC123");
+  expect(permanentlyDeleteAdminTelegramInquiry).toHaveBeenCalledWith("SC-ABC123");
+  expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["admin-order-workflow"] });
   confirm.mockRestore();
   prompt.mockRestore();
 });

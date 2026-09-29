@@ -21,6 +21,7 @@ from routers.manual_orders import (
     archive_admin_order,
     list_order_workflow,
     permanently_delete_admin_order,
+    permanently_delete_admin_telegram_inquiry,
     restore_admin_order,
 )
 
@@ -324,6 +325,72 @@ class OrderLifecycleEndpointTests(unittest.IsolatedAsyncioTestCase):
         delete_file.assert_called_once_with("evidence-1.png")
         session.add.assert_called_once()
         session.commit.assert_awaited_once()
+
+
+class TelegramInquiryDeletionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_permanent_delete_removes_only_the_inquiry_and_audits(self):
+        inquiry = SimpleNamespace(
+            id="inquiry-1",
+            reference="SC-DELETE-1",
+            order_id=None,
+            status="sent",
+            snapshot={"items": [{"sku": "SKU-1"}], "subtotal": 500, "currency": "UZS"},
+        )
+        session = SimpleNamespace(
+            scalar=AsyncMock(return_value=inquiry),
+            delete=AsyncMock(),
+            commit=AsyncMock(),
+        )
+
+        with patch("routers.manual_orders.audit", new_callable=AsyncMock) as audit_log:
+            result = await permanently_delete_admin_telegram_inquiry(
+                "SC-DELETE-1", SimpleNamespace(id="admin-1"), session, None
+            )
+
+        self.assertEqual(
+            result,
+            {"reference": "SC-DELETE-1", "deleted": True, "scope": "cms"},
+        )
+        session.delete.assert_awaited_once_with(inquiry)
+        session.commit.assert_awaited_once()
+        audit_log.assert_awaited_once()
+        statement = str(session.scalar.await_args.args[0]).upper()
+        self.assertIn("FOR UPDATE", statement)
+
+    async def test_permanent_delete_refuses_an_inquiry_already_linked_to_an_order(self):
+        inquiry = SimpleNamespace(reference="SC-CONVERTED-1", order_id="order-1")
+        session = SimpleNamespace(scalar=AsyncMock(return_value=inquiry), delete=AsyncMock(), commit=AsyncMock())
+
+        with self.assertRaises(HTTPException) as caught:
+            await permanently_delete_admin_telegram_inquiry(
+                "SC-CONVERTED-1", SimpleNamespace(id="admin-1"), session, None
+            )
+
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertEqual(caught.exception.detail["error"], "inquiry_already_converted")
+        session.delete.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
+    async def test_permanent_delete_waits_while_telegram_is_sending(self):
+        import time
+
+        inquiry = SimpleNamespace(
+            reference="SC-SENDING-1",
+            order_id=None,
+            status="sending",
+            snapshot={"_delivery": {"started": time.time()}},
+        )
+        session = SimpleNamespace(scalar=AsyncMock(return_value=inquiry), delete=AsyncMock(), commit=AsyncMock())
+
+        with self.assertRaises(HTTPException) as caught:
+            await permanently_delete_admin_telegram_inquiry(
+                "SC-SENDING-1", SimpleNamespace(id="admin-1"), session, None
+            )
+
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertEqual(caught.exception.detail["error"], "inquiry_delivery_in_progress")
+        session.delete.assert_not_awaited()
+        session.commit.assert_not_awaited()
 
 
 if __name__ == "__main__":

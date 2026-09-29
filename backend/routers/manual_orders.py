@@ -12,6 +12,7 @@ import hashlib
 import logging
 import mimetypes
 import secrets
+import time
 import uuid
 from datetime import timedelta
 from typing import Any, Literal, Optional
@@ -732,6 +733,50 @@ async def get_telegram_inquiry(
         "currency": snapshot.get("currency", "UZS"),
         "snapshot": snapshot,
     }
+
+
+@router.delete("/admin/telegram-inquiries/{reference}")
+async def permanently_delete_admin_telegram_inquiry(
+    reference: str,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(csrf_protect),
+):
+    inquiry = await session.scalar(
+        select(TelegramCartInquiry)
+        .where(TelegramCartInquiry.reference == reference)
+        .with_for_update()
+    )
+    if not inquiry:
+        raise _error(404, "inquiry_not_found")
+    if inquiry.order_id:
+        raise _error(409, "inquiry_already_converted")
+
+    snapshot = inquiry.snapshot if isinstance(inquiry.snapshot, dict) else {}
+    delivery = snapshot.get("_delivery") if isinstance(snapshot.get("_delivery"), dict) else {}
+    try:
+        delivery_age = time.time() - float(delivery.get("started", 0))
+    except (TypeError, ValueError):
+        delivery_age = float("inf")
+    if inquiry.status == "sending" and delivery_age < 300:
+        raise _error(409, "inquiry_delivery_in_progress")
+
+    await audit(
+        session,
+        user.id,
+        "admin.telegram_inquiry.permanent_delete",
+        "telegram_inquiry",
+        inquiry.reference,
+        {
+            "status": inquiry.status,
+            "item_count": len(snapshot.get("items") or []),
+            "subtotal": snapshot.get("subtotal"),
+            "currency": snapshot.get("currency", "UZS"),
+        },
+    )
+    await session.delete(inquiry)
+    await session.commit()
+    return {"reference": inquiry.reference, "deleted": True, "scope": "cms"}
 
 
 @router.get("/admin/order-workflow")

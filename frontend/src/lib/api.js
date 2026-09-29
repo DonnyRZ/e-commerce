@@ -250,6 +250,8 @@ export const restoreAdminOrder = (orderNumber) =>
   api.post(`/v1/admin/orders/${orderNumber}/restore`).then((r) => r.data);
 export const permanentlyDeleteAdminOrder = (orderNumber) =>
   api.delete(`/v1/admin/orders/${orderNumber}`).then((r) => r.data);
+export const permanentlyDeleteAdminTelegramInquiry = (reference) =>
+  api.delete(`/v1/admin/telegram-inquiries/${encodeURIComponent(reference)}`).then((r) => r.data);
 export const getAdminTelegramInquiries = (params) =>
   api.get("/v1/admin/telegram-inquiries", { params }).then((r) => r.data);
 export const getAdminTelegramInquiry = (reference) =>

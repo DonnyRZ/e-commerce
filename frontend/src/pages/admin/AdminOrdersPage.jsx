@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowRight, RotateCcw, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { archiveAdminOrder, getAdminOrderWorkflow, permanentlyDeleteAdminOrder, restoreAdminOrder } from "@/lib/api";
+import { archiveAdminOrder, getAdminOrderWorkflow, permanentlyDeleteAdminOrder, permanentlyDeleteAdminTelegramInquiry, restoreAdminOrder } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fmtDate, fmtMoney, StatusPill } from "./adminUtils";
 import { ORDER_STEPS, OrderProgress, normalizeOrderStage } from "./OrderProgress";
@@ -53,10 +53,14 @@ function WorkflowCard({ item, returnTo, workflowFilter }) {
     if (busyAction) return;
     if (action === "archive" && !window.confirm("Arsipkan order ini? Order akan hilang dari tahapan aktif dan bisa dipulihkan dari filter Diarsipkan.")) return;
     if (action === "delete") {
-      if (!window.confirm(`Hapus permanen order ${title}? Data pembayaran, bukti transfer, item, dan riwayat pengiriman akan dihapus. Tindakan ini tidak bisa dibatalkan.`)) return;
-      const typedOrderNumber = window.prompt(`Ketik nomor order ini untuk melanjutkan: ${title}`);
-      if (typedOrderNumber !== title) {
-        if (typedOrderNumber !== null) toast.error("Nomor order tidak cocok. Order tetap aman.");
+      const description = isInquiry
+        ? `Hapus permanen inquiry ${title} dari CMS? Snapshot keranjang akan dihapus, tetapi pesan Telegram yang sudah terkirim tidak ikut terhapus.`
+        : `Hapus permanen order ${title}? Data pembayaran, bukti transfer, item, dan riwayat pengiriman akan dihapus. Tindakan ini tidak bisa dibatalkan.`;
+      if (!window.confirm(description)) return;
+      const confirmationLabel = isInquiry ? "referensi inquiry" : "nomor order";
+      const typedIdentifier = window.prompt(`Ketik ${confirmationLabel} ini untuk melanjutkan: ${title}`);
+      if (typedIdentifier !== title) {
+        if (typedIdentifier !== null) toast.error("Referensi tidak cocok. Data tetap aman.");
         return;
       }
     }
@@ -66,18 +70,27 @@ function WorkflowCard({ item, returnTo, workflowFilter }) {
       if (action === "archive") await archiveAdminOrder(title);
       if (action === "restore") await restoreAdminOrder(title);
       if (action === "delete") {
-        await permanentlyDeleteAdminOrder(title);
-        queryClient.removeQueries({ queryKey: ["admin-order", title] });
+        if (isInquiry) {
+          await permanentlyDeleteAdminTelegramInquiry(title);
+          queryClient.removeQueries({ queryKey: ["admin-telegram-inquiry", title] });
+        } else {
+          await permanentlyDeleteAdminOrder(title);
+          queryClient.removeQueries({ queryKey: ["admin-order", title] });
+        }
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["admin-order-workflow"] }),
         queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] }),
       ]);
-      toast.success(action === "archive" ? "Order diarsipkan. Bisa dipulihkan dari filter Diarsipkan." : action === "restore" ? "Order dipulihkan ke tahap sebelumnya." : "Order dihapus permanen.");
+      toast.success(action === "archive" ? "Order diarsipkan. Bisa dipulihkan dari filter Diarsipkan." : action === "restore" ? "Order dipulihkan ke tahap sebelumnya." : isInquiry ? "Inquiry dihapus permanen dari CMS." : "Order dihapus permanen.");
     } catch (error) {
       const detail = error?.response?.data?.detail;
       const code = typeof detail === "string" ? detail : detail?.error;
-      toast.error(code === "payment_notification_in_progress"
+      toast.error(code === "inquiry_already_converted"
+        ? "Inquiry sudah menjadi order dan tidak dapat dihapus dari sini."
+        : code === "inquiry_delivery_in_progress"
+          ? "Pesan inquiry sedang diproses Telegram. Coba lagi sebentar."
+          : code === "payment_notification_in_progress"
         ? "Pilihan pembayaran masih dikirim ke Telegram. Coba lagi sesaat."
         : "Aksi order gagal. Periksa koneksi lalu coba lagi.");
     } finally {
@@ -95,7 +108,7 @@ function WorkflowCard({ item, returnTo, workflowFilter }) {
         <div className="text-right"><p className="text-lg font-semibold text-[#02422C]">{fmtMoney(item.grand_total ?? item.subtotal, item.currency)}</p><p className="mt-1 text-xs text-neutral-500">{item.item_count} item</p></div>
       </div>
       <StepProgress current={item.stage} />
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-100 pt-4"><span className="text-xs text-neutral-500">{isInquiry ? "Keranjang menunggu dibuatkan order" : item.evidence_count > 0 && isPaymentStage ? "Bukti tersimpan · cocokkan mutasi rekening" : `Status: ${currentStageLabel}`}</span><div className="ml-auto flex flex-wrap items-center justify-end gap-2">{!isInquiry ? <>{item.archived_at ? <button type="button" onClick={() => runOrderAction("restore")} disabled={Boolean(busyAction)} className="inline-flex h-10 items-center gap-1.5 border border-[#02422C]/40 px-3 text-xs font-semibold text-[#02422C] hover:bg-[#F1F7F4] disabled:opacity-50" data-testid={`restore-order-${title}`}><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />Pulihkan</button> : <button type="button" onClick={() => runOrderAction("archive")} disabled={Boolean(busyAction)} className="inline-flex h-10 items-center gap-1.5 border border-neutral-300 px-3 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50" data-testid={`archive-order-${title}`}><Archive className="h-3.5 w-3.5" aria-hidden="true" />Arsipkan</button>}<button type="button" onClick={() => runOrderAction("delete")} disabled={Boolean(busyAction)} className="inline-flex h-10 items-center gap-1.5 border border-red-200 px-3 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50" title="Hapus permanen" aria-label={`Hapus permanen order ${title}`} data-testid={`delete-order-${title}`}><Trash2 className="h-3.5 w-3.5" aria-hidden="true" />Hapus</button></> : null}<Link onClick={(event) => { if (busyAction) event.preventDefault(); }} aria-disabled={Boolean(busyAction)} to={href} state={{ returnTo, workflowFilter }} className={`inline-flex h-10 items-center gap-2 bg-[#02422C] px-4 text-sm font-semibold text-white hover:bg-[#145A46] ${busyAction ? "pointer-events-none opacity-60" : ""}`}>{busyAction ? "Memproses…" : ACTION_LABELS[item.next_action] || "Lanjutkan"}<ArrowRight className="h-4 w-4" aria-hidden="true" /></Link></div></div>
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-100 pt-4"><span className="text-xs text-neutral-500">{isInquiry ? "Keranjang menunggu dibuatkan order" : item.evidence_count > 0 && isPaymentStage ? "Bukti tersimpan · cocokkan mutasi rekening" : `Status: ${currentStageLabel}`}</span><div className="ml-auto flex flex-wrap items-center justify-end gap-2">{isInquiry ? <button type="button" onClick={() => runOrderAction("delete")} disabled={Boolean(busyAction)} className="inline-flex h-10 items-center gap-1.5 border border-red-200 px-3 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50" title="Hapus inquiry permanen" aria-label={`Hapus permanen inquiry ${title}`} data-testid={`delete-inquiry-${title}`}><Trash2 className="h-3.5 w-3.5" aria-hidden="true" />Hapus</button> : <>{item.archived_at ? <button type="button" onClick={() => runOrderAction("restore")} disabled={Boolean(busyAction)} className="inline-flex h-10 items-center gap-1.5 border border-[#02422C]/40 px-3 text-xs font-semibold text-[#02422C] hover:bg-[#F1F7F4] disabled:opacity-50" data-testid={`restore-order-${title}`}><RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />Pulihkan</button> : <button type="button" onClick={() => runOrderAction("archive")} disabled={Boolean(busyAction)} className="inline-flex h-10 items-center gap-1.5 border border-neutral-300 px-3 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50" data-testid={`archive-order-${title}`}><Archive className="h-3.5 w-3.5" aria-hidden="true" />Arsipkan</button>}<button type="button" onClick={() => runOrderAction("delete")} disabled={Boolean(busyAction)} className="inline-flex h-10 items-center gap-1.5 border border-red-200 px-3 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50" title="Hapus permanen" aria-label={`Hapus permanen order ${title}`} data-testid={`delete-order-${title}`}><Trash2 className="h-3.5 w-3.5" aria-hidden="true" />Hapus</button></>}<Link onClick={(event) => { if (busyAction) event.preventDefault(); }} aria-disabled={Boolean(busyAction)} to={href} state={{ returnTo, workflowFilter }} className={`inline-flex h-10 items-center gap-2 bg-[#02422C] px-4 text-sm font-semibold text-white hover:bg-[#145A46] ${busyAction ? "pointer-events-none opacity-60" : ""}`}>{busyAction ? "Memproses…" : ACTION_LABELS[item.next_action] || "Lanjutkan"}<ArrowRight className="h-4 w-4" aria-hidden="true" /></Link></div></div>
     </article>
   );
 }
