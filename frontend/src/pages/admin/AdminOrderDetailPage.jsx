@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, ChevronDown, Clock3, FileText, Landmark, MapPin, Package, RotateCw, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
 import { confirmAdminPayment, getAdminOrder, retryAdminPaymentNotification, updateAdminOrderStatus, updateAdminFulfillment, uploadAdminPaymentEvidence } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
-import { OrderProgress, ORDER_STEPS } from "./OrderProgress";
+import { OrderProgress, ORDER_STEPS, normalizeOrderStage } from "./OrderProgress";
 import { StatusPill, fmtDate, fmtMoney } from "./adminUtils";
 
 const MAX_EVIDENCE_BYTES = 8 * 1024 * 1024;
@@ -36,7 +36,7 @@ function Accordion({ icon: Icon, title, subtitle, children, testId }) {
   );
 }
 
-function TelegramPaymentPanel({ payment, orderNumber, busy, onRetry }) {
+function TelegramPaymentPanel({ payment, busy, onRetry }) {
   const notification = payment?.telegram_notification || {};
   const sendingIsStale = notification.status === "sending"
     && notification.updated_at
@@ -61,16 +61,16 @@ function TelegramPaymentPanel({ payment, orderNumber, busy, onRetry }) {
   };
 
   return (
-    <section className="rounded border border-neutral-200 bg-white p-4" data-testid="telegram-payment-notification">
+    <section className="rounded border border-neutral-200 bg-white p-3" data-testid="telegram-payment-notification">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#F1F7F4] text-[#02422C]"><Landmark className="h-4 w-4" aria-hidden="true" /></span>
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#F1F7F4] text-[#02422C]"><Landmark className="h-4 w-4" aria-hidden="true" /></span>
           <div className="min-w-0"><h3 className="text-sm font-semibold text-[#02422C]">Pilihan bank di Telegram</h3><p className="mt-1 text-xs text-neutral-600" data-testid="telegram-payment-status">{sendingIsStale ? "Pengiriman tertahan · hasil belum pasti" : statusLabels[status] || status}</p></div>
         </div>
         {canRetry ? <button type="button" onClick={retry} disabled={busy} className="inline-flex h-9 shrink-0 items-center gap-2 border border-neutral-300 px-3 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50" data-testid="retry-telegram-payment"><RotateCw className="h-3.5 w-3.5" aria-hidden="true" /> Kirim ulang</button> : null}
       </div>
       {payment?.destination ? (
-        <div className="mt-4 grid gap-2 border-t border-neutral-100 pt-3 text-xs sm:grid-cols-2" data-testid="selected-payment-destination">
+        <div className="mt-3 grid gap-x-4 gap-y-1 border-t border-neutral-100 pt-3 text-xs sm:grid-cols-2" data-testid="selected-payment-destination">
           <p><span className="text-neutral-500">Bank dipilih: </span><strong className="text-neutral-800">{payment.destination.bank_name}</strong></p>
           <p><span className="text-neutral-500">Nomor: </span><strong className="font-mono text-neutral-800">{payment.destination.masked_account_number}</strong></p>
           <p><span className="text-neutral-500">Jenis: </span><span className="text-neutral-700">{payment.destination.destination_type === "card" ? "Kartu" : "Rekening bank"}</span></p>
@@ -80,7 +80,6 @@ function TelegramPaymentPanel({ payment, orderNumber, busy, onRetry }) {
       {notification.error === "no_active_destinations" ? <p className="mt-3 border-l-2 border-amber-500 pl-3 text-xs text-amber-900">Aktifkan minimal satu rekening di Settings → Metode transfer, lalu kirim ulang.</p> : null}
       {notification.error === "telegram_chat_unavailable" ? <p className="mt-3 border-l-2 border-amber-500 pl-3 text-xs text-amber-900">Inquiry ini tidak memiliki chat Telegram yang dapat dihubungi.</p> : null}
       {status === "unknown" || sendingIsStale ? <p className="mt-3 text-[11px] leading-5 text-neutral-500">Hasil sebelumnya belum pasti. Pastikan pesan belum masuk sebelum mengirim ulang.</p> : null}
-      {notification.message_id ? <p className="mt-3 text-[11px] text-neutral-400">Pesan Telegram #{notification.message_id} · Order {orderNumber}</p> : null}
     </section>
   );
 }
@@ -91,7 +90,7 @@ function EvidencePreview({ evidence, localUrl, title }) {
   const url = localUrl || evidence.download_url;
   return (
     <div className="overflow-hidden rounded border border-neutral-200 bg-neutral-50" data-testid="payment-evidence-preview">
-      {isImage ? <img src={url} alt={title} className="max-h-64 w-full object-contain" /> : <div className="flex items-center gap-3 p-4 text-sm text-neutral-600"><FileText className="h-5 w-5 shrink-0" aria-hidden="true" /><span>Dokumen PDF siap disimpan untuk arsip.</span></div>}
+      {isImage ? <img src={url} alt={title} className="h-36 w-full object-contain" /> : <div className="flex items-center gap-3 p-3 text-sm text-neutral-600"><FileText className="h-5 w-5 shrink-0" aria-hidden="true" /><span>Dokumen PDF siap disimpan untuk arsip.</span></div>}
       <p className="border-t border-neutral-200 px-3 py-2 text-[11px] text-neutral-500">{evidence.original_filename || evidence.name} · {evidence.mime_type || evidence.type} · {((evidence.file_size ?? evidence.size) / 1024).toFixed(0)} KB</p>
     </div>
   );
@@ -110,30 +109,30 @@ function PaymentEvidenceUpload({
   onUpload,
 }) {
   return (
-    <section className="rounded border border-dashed border-[#CD9B3A]/60 bg-white p-4" data-testid="payment-evidence-archive">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div><h3 className="text-sm font-semibold text-[#02422C]">Bukti transfer customer · arsip audit</h3><p className="mt-1 text-xs leading-5 text-neutral-600">Simpan bukti yang dikirim customer. Upload ini tidak mengonfirmasi pembayaran atau mengubah tahap order.</p></div>
+    <section className="rounded border border-dashed border-[#CD9B3A]/60 bg-white p-3 sm:p-4" data-testid="payment-evidence-archive">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div><h3 className="text-sm font-semibold text-[#02422C]">Bukti transfer</h3><p className="mt-0.5 text-xs text-neutral-500">Arsip saja · upload tidak mengonfirmasi pembayaran.</p></div>
         {evidenceCount > 0 ? <span className="rounded-full bg-[#F1F7F4] px-2.5 py-1 text-[11px] font-medium text-[#02422C]">{evidenceCount} file tersimpan</span> : null}
       </div>
       {latestEvidence ? (
-        <div className="mt-4 space-y-2">
+        <div className="mt-3 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs"><p className="font-medium text-neutral-700">Bukti terakhir tersimpan</p><a className="font-semibold text-[#145A46] hover:underline" href={latestEvidence.download_url} target="_blank" rel="noreferrer">Buka file</a></div>
           <EvidencePreview evidence={latestEvidence} title="Bukti transfer customer tersimpan" />
         </div>
-      ) : <p className="mt-4 rounded bg-neutral-50 px-3 py-2 text-xs text-neutral-600">Belum ada bukti tersimpan. Simpan bukti sebelum mengonfirmasi pembayaran.</p>}
-      <label className="mt-4 block text-xs font-medium text-neutral-700">Tambah bukti atau simpan pengganti
+      ) : <p className="mt-3 rounded bg-neutral-50 px-3 py-2 text-xs text-neutral-600">Belum ada bukti tersimpan.</p>}
+      <label className="mt-3 block text-xs font-medium text-neutral-700">Tambah / ganti bukti
         <input
           ref={fileRef}
           type="file"
           accept="image/jpeg,image/png,image/webp,application/pdf"
-          className="mt-2 block w-full text-xs file:mr-3 file:h-9 file:border-0 file:bg-neutral-100 file:px-3 file:text-xs file:font-semibold file:text-neutral-700 hover:file:bg-neutral-200"
+          className="mt-1.5 block w-full text-xs file:mr-3 file:h-8 file:border-0 file:bg-neutral-100 file:px-3 file:text-xs file:font-semibold file:text-neutral-700 hover:file:bg-neutral-200"
           onChange={(event) => onSelect(event.target.files?.[0] || null)}
           disabled={busy}
           data-testid="payment-evidence-input"
         />
       </label>
       {selectedEvidence ? (
-        <div className="mt-4 space-y-3" data-testid="selected-payment-evidence">
+        <div className="mt-3 space-y-3" data-testid="selected-payment-evidence">
           <EvidencePreview evidence={selectedEvidence} localUrl={localPreviewUrl} title="Pratinjau bukti transfer yang dipilih" />
           {uploadProgress !== null ? (
             <div>
@@ -172,30 +171,27 @@ function PaymentStage({
   const canConfirm = Boolean(latestEvidence) && ["pending", "pending_review"].includes(payment?.status);
 
   return (
-    <section className="rounded border border-[#CD9B3A]/50 bg-[#FDF7E9] p-5 sm:p-6" data-testid="active-payment-stage">
-      <div className="flex items-start gap-3">
-        <Clock3 className="mt-1 h-6 w-6 shrink-0 text-[#CD9B3A]" aria-hidden="true" />
+    <section className="rounded border border-[#CD9B3A]/50 bg-[#FDF7E9] p-4 sm:p-5" data-testid="active-payment-stage">
+      <div className="flex items-start gap-2.5">
+        <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-[#CD9B3A]" aria-hidden="true" />
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-[#CD9B3A]">Langkah 2 dari 6</p>
-          <h2 className="mt-1 text-lg font-semibold text-[#02422C]">Pembayaran · {legacyReview || latestEvidence ? "menunggu konfirmasi admin" : "menunggu transfer"}</h2>
-          <p className="mt-2 text-sm leading-6 text-neutral-600">Customer membayar satu kali sesuai total final dan mengirim bukti melalui Telegram. Admin cocokkan mutasi rekening secara manual; bukti di CMS hanya untuk arsip.</p>
-          {legacyReview ? <p className="mt-3 rounded border border-[#CD9B3A]/30 bg-white px-3 py-2 text-xs text-neutral-600">Order ini dibuat sebelum alur pembayaran disederhanakan. Tetap dapat dikonfirmasi di halaman yang sama.</p> : null}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <h2 className="text-base font-semibold text-[#02422C]">Pembayaran</h2>
+            <span className="text-xs text-neutral-500">· {legacyReview || latestEvidence ? "Menunggu konfirmasi" : "Menunggu transfer"}</span>
+            <span className="text-[11px] text-neutral-400">Langkah 2/6</span>
+            {legacyReview ? <span className="rounded-full bg-white px-2 py-0.5 text-[10px] text-neutral-500">Order lama</span> : null}
+          </div>
+          <p className="mt-1 text-xs text-neutral-600">Transfer satu kali · simpan bukti · cocokkan mutasi.</p>
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <div className="rounded border border-[#CD9B3A]/30 bg-white p-4">
-          <p className="text-xs uppercase tracking-wide text-neutral-500">Total transfer · satu kali</p>
-          <p className="mt-2 text-2xl font-semibold text-[#02422C]">{fmtMoney(payment?.amount || order.grand_total, order.currency)}</p>
-        </div>
-        <div className="rounded border border-[#CD9B3A]/30 bg-white p-4">
-          <p className="text-xs uppercase tracking-wide text-neutral-500">Referensi order</p>
-          <p className="mt-2 break-all font-mono text-sm font-semibold text-[#02422C]">{orderNumber}</p>
-        </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded border border-[#CD9B3A]/30 bg-white px-3 py-2.5">
+        <div><p className="text-[11px] text-neutral-500">Total transfer</p><p className="text-xl font-semibold text-[#02422C]">{fmtMoney(payment?.amount || order.grand_total, order.currency)}</p></div>
+        <p className="text-xs text-neutral-500">Order <span className="font-mono font-semibold text-[#02422C]">{orderNumber}</span></p>
       </div>
 
-      <div className="mt-4 space-y-4">
-        <TelegramPaymentPanel payment={payment} orderNumber={orderNumber} busy={busy} onRetry={onRetryNotification} />
+      <div className="mt-3 space-y-3">
+        <TelegramPaymentPanel payment={payment} busy={busy} onRetry={onRetryNotification} />
         <PaymentEvidenceUpload
           fileRef={fileRef}
           selectedEvidence={selectedEvidence}
@@ -210,20 +206,20 @@ function PaymentStage({
         />
       </div>
 
-      <div className="mt-5 flex flex-col items-stretch gap-3 border-t border-[#CD9B3A]/30 pt-4 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-xs leading-5 text-neutral-600">Pastikan dana benar-benar masuk pada mutasi rekening sebelum menekan tombol konfirmasi.</p>
-        <button type="button" disabled={busy || !canConfirm} onClick={onConfirm} className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 bg-[#02422C] px-4 text-sm font-semibold text-white hover:bg-[#145A46] disabled:cursor-not-allowed disabled:opacity-50" data-testid="confirm-payment-and-continue">
+      <div className="mt-3 flex flex-col items-stretch gap-2 border-t border-[#CD9B3A]/30 pt-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="text-xs text-neutral-600"><p>Pastikan dana masuk di mutasi rekening.</p>{!latestEvidence ? <p className="mt-0.5 text-[11px] text-neutral-500">Simpan bukti untuk mengaktifkan konfirmasi.</p> : null}</div>
+        <button type="button" disabled={busy || !canConfirm} onClick={onConfirm} className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 bg-[#02422C] px-3.5 text-sm font-semibold text-white hover:bg-[#145A46] disabled:cursor-not-allowed disabled:opacity-50" data-testid="confirm-payment-and-continue">
           <ShieldCheck className="h-4 w-4" aria-hidden="true" />
-          {busy ? "Menyimpan…" : "Konfirmasi pembayaran & lanjutkan ke supplier"}
+          {busy ? "Menyimpan…" : "Konfirmasi & lanjutkan ke supplier"}
         </button>
       </div>
-      {!latestEvidence ? <p className="mt-2 text-right text-[11px] text-neutral-500">Tombol konfirmasi aktif setelah bukti tersimpan.</p> : null}
     </section>
   );
 }
 
 export default function AdminOrderDetailPage() {
   const { orderNumber } = useParams();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const fileRef = useRef(null);
   const [busy, setBusy] = useState(false);
@@ -264,6 +260,9 @@ export default function AdminOrderDetailPage() {
     setBusy(true);
     try {
       const result = await action();
+      if (result?.order_number === orderNumber && result.status) {
+        queryClient.setQueryData(["admin-order", orderNumber], (current) => current ? { ...current, ...result } : current);
+      }
       toast.success(success);
       refresh();
       return result;
@@ -346,15 +345,31 @@ export default function AdminOrderDetailPage() {
   const payment = order.payment;
   const address = order.shipping_address || {};
   const isManual = order.order_source === "telegram_manual";
+  const isArchived = Boolean(order.archived_at);
   const isPaymentStage = isManual && ["pending_payment", "payment_review"].includes(order.status);
+  const routeState = location.state || {};
+  const requestedReturnTo = routeState.returnTo;
+  let workflowReturnTo = requestedReturnTo === "/orders" || requestedReturnTo?.startsWith("/orders?")
+    ? requestedReturnTo
+    : "/orders";
+  const currentWorkflowStage = normalizeOrderStage(order.status);
+  if (routeState.workflowFilter && !["all", "archived"].includes(routeState.workflowFilter) && currentWorkflowStage !== routeState.workflowFilter) {
+    const [path, search = ""] = workflowReturnTo.split("?", 2);
+    const returnParams = new URLSearchParams(search);
+    returnParams.set("stage", currentWorkflowStage);
+    returnParams.delete("page");
+    workflowReturnTo = `${path}?${returnParams.toString()}`;
+  }
 
   return (
     <div className="mx-auto max-w-7xl" data-testid="admin-order-detail">
-      <Link to="/orders" className="inline-flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-900"><ArrowLeft className="h-4 w-4" aria-hidden="true" /> Kembali ke workflow</Link>
+      <Link to={workflowReturnTo} className="inline-flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-900"><ArrowLeft className="h-4 w-4" aria-hidden="true" /> Kembali ke workflow</Link>
       <header className="mt-5 flex flex-wrap items-start justify-between gap-4">
         <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#CD9B3A]">Order detail</p><h1 className="mt-2 text-2xl font-semibold tracking-tight text-[#02422C]">{order.order_number}</h1><p className="mt-1 text-sm text-neutral-500">{fmtDate(order.created_at)} · {order.email || "Guest Telegram"}</p></div>
-        <div className="flex flex-wrap items-center gap-2">{isManual ? <StatusPill value={MANUAL_STATUS_LABELS[order.status] || order.status} tone={["pending_payment", "payment_review"].includes(order.status) ? "amber" : order.status === "delivered" ? "emerald" : "blue"} /> : <><StatusPill value={order.status} /><StatusPill value={order.payment_state} /></>}{!isManual && legacyNext ? <button type="button" disabled={busy} onClick={() => run(() => updateAdminOrderStatus(orderNumber, legacyNext), `Order dipindahkan ke ${legacyNext}.`, `Pindahkan order ke ${legacyNext}?`)} className="h-10 bg-[#02422C] px-4 text-sm font-semibold text-white disabled:opacity-50">Tandai {legacyNext}</button> : null}</div>
+        <div className="flex flex-wrap items-center gap-2">{isManual ? <StatusPill value={MANUAL_STATUS_LABELS[order.status] || order.status} tone={["pending_payment", "payment_review"].includes(order.status) ? "amber" : order.status === "delivered" ? "emerald" : "blue"} /> : <><StatusPill value={order.status} /><StatusPill value={order.payment_state} /></>}{isArchived ? <StatusPill value="Diarsipkan" tone="amber" /> : null}{!isManual && legacyNext && !isArchived ? <button type="button" disabled={busy} onClick={() => run(() => updateAdminOrderStatus(orderNumber, legacyNext), `Order dipindahkan ke ${legacyNext}.`, `Pindahkan order ke ${legacyNext}?`)} className="h-10 bg-[#02422C] px-4 text-sm font-semibold text-white disabled:opacity-50">Tandai {legacyNext}</button> : null}</div>
       </header>
+
+      {isArchived ? <p className="mt-4 rounded border border-[#CD9B3A]/40 bg-[#FDF7E9] px-4 py-3 text-sm text-[#62450D]" data-testid="archived-order-notice">Order ini diarsipkan dan tidak muncul di tahapan aktif. Data tetap tersimpan; pulihkan dari kartu order di filter Diarsipkan untuk melanjutkan perubahan.</p> : null}
 
       {isManual ? <OrderProgress currentStage={order.status} className="mt-6 rounded border border-[#CD9B3A]/30 bg-[#FDF7E9] p-4" testId="order-progress" /> : null}
 
@@ -364,7 +379,7 @@ export default function AdminOrderDetailPage() {
             order={order}
             payment={payment}
             orderNumber={orderNumber}
-            busy={busy}
+            busy={busy || isArchived}
             fileRef={fileRef}
             selectedEvidence={selectedEvidence}
             localPreviewUrl={localPreviewUrl}
@@ -392,10 +407,10 @@ export default function AdminOrderDetailPage() {
             <p className="mt-1 text-sm text-neutral-600">Order hanya diteruskan setelah pembayaran dikonfirmasi. Tracking dan catatan bersifat opsional.</p>
             {nextStage ? (
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                <input className="h-10 border border-neutral-300 bg-white px-3 text-sm" placeholder="Carrier (opsional)" id="fulfillment-carrier" />
-                <input className="h-10 border border-neutral-300 bg-white px-3 text-sm" placeholder="Nomor resi (opsional)" id="fulfillment-tracking" />
-                <input className="h-10 border border-neutral-300 bg-white px-3 text-sm sm:col-span-2" placeholder="Catatan internal (opsional)" id="fulfillment-note" />
-                <button type="button" disabled={busy} onClick={() => { const carrier = document.getElementById("fulfillment-carrier")?.value; const tracking_number = document.getElementById("fulfillment-tracking")?.value; const note = document.getElementById("fulfillment-note")?.value; run(() => updateAdminFulfillment(orderNumber, { stage: nextStage, carrier: carrier || undefined, tracking_number: tracking_number || undefined, note: note || undefined }), NEXT_LABEL[nextStage], `Simpan tahap ${NEXT_LABEL[nextStage]}?`); }} className="h-10 bg-[#02422C] px-4 text-sm font-semibold text-white disabled:opacity-50 sm:w-fit">{busy ? "Menyimpan…" : NEXT_LABEL[nextStage]}</button>
+                <input disabled={busy || isArchived} className="h-10 border border-neutral-300 bg-white px-3 text-sm disabled:bg-neutral-100" placeholder="Carrier (opsional)" id="fulfillment-carrier" />
+                <input disabled={busy || isArchived} className="h-10 border border-neutral-300 bg-white px-3 text-sm disabled:bg-neutral-100" placeholder="Nomor resi (opsional)" id="fulfillment-tracking" />
+                <input disabled={busy || isArchived} className="h-10 border border-neutral-300 bg-white px-3 text-sm disabled:bg-neutral-100 sm:col-span-2" placeholder="Catatan internal (opsional)" id="fulfillment-note" />
+                <button type="button" disabled={busy || isArchived} onClick={() => { const carrier = document.getElementById("fulfillment-carrier")?.value; const tracking_number = document.getElementById("fulfillment-tracking")?.value; const note = document.getElementById("fulfillment-note")?.value; run(() => updateAdminFulfillment(orderNumber, { stage: nextStage, carrier: carrier || undefined, tracking_number: tracking_number || undefined, note: note || undefined }), NEXT_LABEL[nextStage], `Simpan tahap ${NEXT_LABEL[nextStage]}?`); }} className="h-10 bg-[#02422C] px-4 text-sm font-semibold text-white disabled:opacity-50 sm:w-fit">{busy ? "Menyimpan…" : NEXT_LABEL[nextStage]}</button>
               </div>
             ) : null}
             <div className="mt-5 space-y-2">{(order.fulfillment || []).map((item) => <div key={item.stage} className="flex flex-wrap justify-between gap-2 border-t border-[#02422C]/10 pt-3 text-xs"><span className="font-medium text-[#02422C]">{ORDER_STEPS.find(([key]) => key === item.stage)?.[1] || item.stage}</span><span className="text-neutral-600">{item.tracking_number || "Tanpa resi"} · {fmtDate(item.shipped_at || item.received_at)}</span></div>)}</div>
@@ -403,7 +418,7 @@ export default function AdminOrderDetailPage() {
         ) : null}
 
         {isManual && order.status === "delivered" ? <section className="rounded border border-[#02422C]/30 bg-[#F1F7F4] p-6" data-testid="active-delivered"><div className="flex items-start gap-4"><Check className="mt-1 h-6 w-6 shrink-0 text-[#02422C]" aria-hidden="true" /><div><h2 className="text-lg font-semibold text-[#02422C]">Order selesai</h2><p className="mt-2 text-sm text-neutral-600">Barang sudah ditandai diterima customer.</p></div></div></section> : null}
-        {!isManual ? <section className="rounded border border-neutral-200 bg-white p-5"><h2 className="font-semibold text-[#02422C]">Order historis</h2><p className="mt-2 text-sm text-neutral-600">Order ini menggunakan lifecycle lama. Aksi yang tersedia tetap dibatasi oleh status pembayaran dan transisi backend.</p>{legacyNext ? <button type="button" disabled={busy} onClick={() => run(() => updateAdminOrderStatus(orderNumber, legacyNext), `Order dipindahkan ke ${legacyNext}.`, `Pindahkan order ke ${legacyNext}?`)} className="mt-4 h-10 bg-[#02422C] px-4 text-sm font-semibold text-white disabled:opacity-50">Tandai {legacyNext}</button> : null}</section> : null}
+        {!isManual ? <section className="rounded border border-neutral-200 bg-white p-5"><h2 className="font-semibold text-[#02422C]">Order historis</h2><p className="mt-2 text-sm text-neutral-600">Order ini menggunakan lifecycle lama. Aksi yang tersedia tetap dibatasi oleh status pembayaran dan transisi backend.</p>{legacyNext && !isArchived ? <button type="button" disabled={busy} onClick={() => run(() => updateAdminOrderStatus(orderNumber, legacyNext), `Order dipindahkan ke ${legacyNext}.`, `Pindahkan order ke ${legacyNext}?`)} className="mt-4 h-10 bg-[#02422C] px-4 text-sm font-semibold text-white disabled:opacity-50">Tandai {legacyNext}</button> : null}</section> : null}
 
         <div className="space-y-3">
           <Accordion icon={Package} title="Ringkasan item" subtitle={`${order.items?.length || 0} item · Total ${fmtMoney(order.grand_total, order.currency)}`} testId="order-items">

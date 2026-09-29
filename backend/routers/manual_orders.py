@@ -19,7 +19,7 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import csrf_protect, require_roles
@@ -36,12 +36,16 @@ from config import (
 from db.models import (
     ManualPaymentEvidence,
     CmsAuditLog,
+    InventoryReservation,
     Order,
     OrderFulfillmentStage,
     OrderItem,
     Payment,
     PaymentDestination,
+    PaymentEvent,
+    SellerOrderFulfillment,
     TelegramPaymentNotificationOutbox,
+    TelegramProductCandidate,
     Product,
     ProductVariant,
     TelegramConversation,
@@ -86,6 +90,32 @@ WORKFLOW_STAGES = (
     "customer_shipping",
     "delivered",
 )
+WORKFLOW_FILTER_STAGES = (
+    "inquiry",
+    "payment",
+    "supplier_shipping",
+    "received_by_admin",
+    "customer_shipping",
+    "delivered",
+    "archived",
+)
+WORKFLOW_STAGE_ALIASES = {
+    "pending_payment": "payment",
+    "payment_review": "payment",
+    # `paid` is the persisted state immediately before supplier fulfillment;
+    # legacy fulfillment rows use processing/shipped for the same visible flow.
+    "paid": "supplier_shipping",
+    "processing": "supplier_shipping",
+    "shipped": "customer_shipping",
+}
+WORKFLOW_STAGE_STATUS_GROUPS = {
+    "inquiry": set(),
+    "payment": {"pending_payment", "payment_review"},
+    "supplier_shipping": {"paid", "processing", "supplier_shipping"},
+    "received_by_admin": {"received_by_admin"},
+    "customer_shipping": {"customer_shipping", "shipped"},
+    "delivered": {"delivered"},
+}
 ACTIONABLE_ORDER_STATUSES = {
     "pending_payment",
     "payment_review",
@@ -169,7 +199,41 @@ def _workflow_next_action(stage: str) -> str:
         "received_by_admin": "ship_customer",
         "customer_shipping": "mark_delivered",
         "delivered": "view_order",
+        "processing": "supplier_ship",
+        "shipped": "mark_delivered",
     }.get(stage, "view_order")
+
+
+def _workflow_stage(status: str) -> str:
+    """Map persisted/legacy order statuses onto the six visible workflow steps."""
+    return WORKFLOW_STAGE_ALIASES.get(status, status)
+
+
+def _workflow_counts(status_counts: dict[str, int], inquiry_count: int) -> dict[str, int]:
+    """Map grouped database counts onto the six visible workflow steps."""
+    counts = {key: int(status_counts.get(key, 0)) for key in WORKFLOW_STAGES}
+    counts.update({key: 0 for key in WORKFLOW_FILTER_STAGES})
+    counts["inquiry"] = inquiry_count
+    counts["payment"] = counts["pending_payment"] + counts["payment_review"]
+    counts["supplier_shipping"] = sum(
+        int(status_counts.get(status, 0))
+        for status in WORKFLOW_STAGE_STATUS_GROUPS["supplier_shipping"]
+    )
+    counts["customer_shipping"] = sum(
+        int(status_counts.get(status, 0))
+        for status in WORKFLOW_STAGE_STATUS_GROUPS["customer_shipping"]
+    )
+    return counts
+
+
+def _workflow_page(entries: list[dict], stage: Optional[str], page: int, page_size: int):
+    """Filter and paginate after counts can be calculated over all entries."""
+    matching = [entry for entry in entries if stage is None or entry.get("stage") == stage]
+    total = len(matching)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    effective_page = min(page, total_pages)
+    start = (effective_page - 1) * page_size
+    return matching[start:start + page_size], total, effective_page
 
 
 def _customer_name(user: Optional[User], address: dict) -> str:
@@ -447,12 +511,16 @@ def _evidence_payload(row: ManualPaymentEvidence) -> dict:
     }
 
 
-async def _load_admin_order(order_number: str, session: AsyncSession) -> Order:
+async def _load_admin_order(
+    order_number: str, session: AsyncSession, *, include_archived: bool = False
+) -> Order:
     order = await session.scalar(
         select(Order).where(Order.order_number == order_number).with_for_update()
     )
     if not order:
         raise _error(404, "order_not_found")
+    if not include_archived and order.archived_at is not None:
+        raise _error(409, "order_archived")
     return order
 
 
@@ -678,13 +746,15 @@ async def list_order_workflow(
 ):
     if scope not in {"all", "actionable"}:
         raise _error(422, "invalid_workflow_scope")
-    if stage and stage not in WORKFLOW_STAGES and stage != "payment":
+    if stage and stage not in set(WORKFLOW_STAGES) | set(WORKFLOW_STAGE_ALIASES) | {"payment", "archived"}:
         raise _error(422, "invalid_workflow_stage")
+    selected_stage = _workflow_stage(stage) if stage else None
 
     entries: list[dict] = []
     inquiry_query = select(TelegramCartInquiry).where(
         TelegramCartInquiry.order_id.is_(None),
         TelegramCartInquiry.status.in_(["pending", "sending", "sent", "unknown"]),
+        TelegramCartInquiry.expires_at > utcnow(),
     )
     if q:
         inquiry_query = inquiry_query.where(
@@ -695,56 +765,80 @@ async def list_order_workflow(
         .scalars()
         .all()
     )
+    active_inquiries = []
     for inquiry in inquiries:
-        if inquiry.expires_at <= utcnow():
-            continue
         snapshot = inquiry.snapshot or {}
         snapshot_items = snapshot.get("items") or []
         if not snapshot_items:
             continue
-        if stage and stage != "inquiry":
-            continue
-        linked_user = await session.get(User, inquiry.user_id) if inquiry.user_id else None
-        entries.append(
-            {
-                "kind": "inquiry",
-                "reference": inquiry.reference,
-                "stage": "inquiry",
-                "status": inquiry.status,
-                "created_at": inquiry.created_at,
-                "customer": {
-                    "name": _customer_name(linked_user, {}),
-                    "email": linked_user.email if linked_user else None,
-                    "city": None,
-                },
-                "item_count": len(snapshot_items),
-                "subtotal": snapshot.get("subtotal", 0),
-                "grand_total": snapshot.get("subtotal", 0),
-                "currency": snapshot.get("currency", "UZS"),
-                "next_action": _workflow_next_action("inquiry"),
-            }
-        )
+        active_inquiries.append((inquiry, snapshot, snapshot_items))
+        if selected_stage in {None, "inquiry"}:
+            linked_user = await session.get(User, inquiry.user_id) if inquiry.user_id else None
+            entries.append(
+                {
+                    "kind": "inquiry",
+                    "reference": inquiry.reference,
+                    "stage": "inquiry",
+                    "status": inquiry.status,
+                    "created_at": inquiry.created_at,
+                    "customer": {
+                        "name": _customer_name(linked_user, {}),
+                        "email": linked_user.email if linked_user else None,
+                        "city": None,
+                    },
+                    "item_count": len(snapshot_items),
+                    "subtotal": snapshot.get("subtotal", 0),
+                    "grand_total": snapshot.get("subtotal", 0),
+                    "currency": snapshot.get("currency", "UZS"),
+                    "next_action": _workflow_next_action("inquiry"),
+                }
+            )
 
-    order_query = select(Order)
+    search_filters = []
     if q:
         like = f"%{q}%"
-        order_query = order_query.where(
+        search_filters.append(
             or_(
                 Order.order_number.ilike(like),
                 Order.guest_email.ilike(like),
             )
         )
+
+    archived_count = await session.scalar(
+        select(func.count(Order.id)).where(
+            *search_filters, Order.archived_at.is_not(None)
+        )
+    )
+    active_order_filters = [*search_filters, Order.archived_at.is_(None)]
     if scope == "actionable":
-        order_query = order_query.where(Order.status.in_(ACTIONABLE_ORDER_STATUSES))
-    if stage:
-        if stage == "inquiry":
-            order_query = order_query.where(Order.id == "__no_order__")
-        elif stage == "payment":
-            order_query = order_query.where(
-                Order.status.in_(["pending_payment", "payment_review"])
-            )
-        else:
-            order_query = order_query.where(Order.status == stage)
+        active_order_filters.append(Order.status.in_(ACTIONABLE_ORDER_STATUSES))
+
+    grouped_status_rows = (
+        await session.execute(
+            select(Order.status, func.count(Order.id))
+            .where(*active_order_filters)
+            .group_by(Order.status)
+        )
+    ).all()
+    status_counts = {status: int(count or 0) for status, count in grouped_status_rows}
+    counts = _workflow_counts(status_counts, len(active_inquiries))
+    counts["archived"] = int(archived_count or 0)
+
+    archived_filter = (
+        Order.archived_at.is_not(None)
+        if selected_stage == "archived"
+        else Order.archived_at.is_(None)
+    )
+    order_filters = [*search_filters, archived_filter]
+    if scope == "actionable" and selected_stage != "archived":
+        order_filters.append(Order.status.in_(ACTIONABLE_ORDER_STATUSES))
+    order_query = select(Order).where(*order_filters)
+    if selected_stage == "inquiry":
+        order_query = order_query.where(Order.id == "__no_order__")
+    elif selected_stage and selected_stage != "archived":
+        order_query = order_query.where(
+            Order.status.in_(WORKFLOW_STAGE_STATUS_GROUPS[selected_stage])
+        )
     orders = (
         (await session.execute(order_query.order_by(Order.created_at.desc())))
         .scalars()
@@ -801,11 +895,11 @@ async def list_order_workflow(
         evidence_count = evidence_counts.get(payment.id, 0) if payment else 0
         address = order.shipping_address or {}
         linked_user = await session.get(User, order.user_id) if order.user_id else None
-        normalized_stage = order.status if order.status in WORKFLOW_STAGES else order.status
+        normalized_stage = _workflow_stage(order.status)
         next_action = (
             "confirm_payment"
             if order.status in {"pending_payment", "payment_review"} and evidence_count
-            else _workflow_next_action(normalized_stage)
+            else _workflow_next_action(order.status)
         )
         entries.append(
             {
@@ -814,6 +908,7 @@ async def list_order_workflow(
                 "order_source": order.order_source,
                 "stage": normalized_stage,
                 "status": order.status,
+                "archived_at": order.archived_at,
                 "payment_state": order.payment_state,
                 "created_at": order.created_at,
                 "customer": {
@@ -832,18 +927,14 @@ async def list_order_workflow(
         )
 
     entries.sort(key=lambda item: item["created_at"], reverse=True)
-    counts = {key: 0 for key in WORKFLOW_STAGES}
-    for entry in entries:
-        if entry["stage"] in counts:
-            counts[entry["stage"]] += 1
-    counts["payment"] = counts["pending_payment"] + counts["payment_review"]
-    total = len(entries)
-    start = (page - 1) * page_size
+    page_items, total, effective_page = _workflow_page(
+        entries, None, page, page_size
+    )
     return {
-        "items": entries[start:start + page_size],
+        "items": page_items,
         "counts": counts,
         "total": total,
-        "page": page,
+        "page": effective_page,
         "page_size": page_size,
     }
 
@@ -1426,6 +1517,7 @@ async def _admin_order_payload(session: AsyncSession, order: Order) -> dict:
         "order_number": order.order_number,
         "created_at": order.created_at,
         "status": order.status,
+        "archived_at": order.archived_at,
         "payment_state": order.payment_state,
         "order_source": order.order_source,
         "fulfillment_mode": order.fulfillment_mode,
@@ -1510,3 +1602,187 @@ async def get_manual_order_detail(
     if not order:
         raise _error(404, "order_not_found")
     return await _admin_order_payload(session, order)
+
+
+@router.post("/admin/orders/{order_number}/archive")
+async def archive_admin_order(
+    order_number: str,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(csrf_protect),
+):
+    order = await _load_admin_order(order_number, session, include_archived=True)
+    if order.archived_at is None:
+        order.archived_at = utcnow()
+        await audit(
+            session,
+            user.id,
+            "admin.order.archive",
+            "order",
+            order.order_number,
+            {"status": order.status, "payment_state": order.payment_state},
+        )
+        await session.commit()
+    return {
+        "order_number": order.order_number,
+        "archived": True,
+        "archived_at": order.archived_at,
+    }
+
+
+@router.post("/admin/orders/{order_number}/restore")
+async def restore_admin_order(
+    order_number: str,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(csrf_protect),
+):
+    order = await _load_admin_order(order_number, session, include_archived=True)
+    if order.archived_at is not None:
+        order.archived_at = None
+        await audit(
+            session,
+            user.id,
+            "admin.order.restore",
+            "order",
+            order.order_number,
+            {"status": order.status, "payment_state": order.payment_state},
+        )
+        await session.commit()
+    return {"order_number": order.order_number, "archived": False}
+
+
+@router.delete("/admin/orders/{order_number}")
+async def permanently_delete_admin_order(
+    order_number: str,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(csrf_protect),
+):
+    order = await _load_admin_order(order_number, session, include_archived=True)
+    payments = (
+        (
+            await session.execute(
+                select(Payment).where(Payment.order_id == order.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    payment_ids = [payment.id for payment in payments]
+    evidence = []
+    if payment_ids:
+        payment_notifications = (
+            (
+                await session.execute(
+                    select(TelegramPaymentNotificationOutbox)
+                    .where(TelegramPaymentNotificationOutbox.payment_id.in_(payment_ids))
+                    .with_for_update()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if any(row.status == "sending" for row in payment_notifications):
+            raise _error(409, "payment_notification_in_progress")
+        evidence = (
+            (
+                await session.execute(
+                    select(ManualPaymentEvidence).where(
+                        ManualPaymentEvidence.payment_id.in_(payment_ids)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    evidence_storage_keys = [item.storage_key for item in evidence]
+    await audit(
+        session,
+        user.id,
+        "admin.order.permanent_delete",
+        "order",
+        order.order_number,
+        {
+            "status": order.status,
+            "payment_state": order.payment_state,
+            "grand_total": order.grand_total,
+            "currency": order.currency,
+            "payment_count": len(payments),
+            "evidence_count": len(evidence),
+        },
+    )
+
+    # Keep chat transcripts and their confirmed-candidate history, but detach
+    # links to the order so they cannot point at a permanently deleted record.
+    await session.execute(
+        update(TelegramCartInquiry)
+        .where(TelegramCartInquiry.order_id == order.id)
+        .values(order_id=None, status="order_deleted")
+    )
+    await session.execute(
+        update(TelegramProductCandidate)
+        .where(TelegramProductCandidate.order_id == order.id)
+        .values(order_id=None, status="order_deleted")
+    )
+
+    if payment_ids:
+        await session.execute(
+            delete(ManualPaymentEvidence).where(
+                ManualPaymentEvidence.payment_id.in_(payment_ids)
+            )
+        )
+        await session.execute(
+            delete(PaymentEvent).where(PaymentEvent.payment_id.in_(payment_ids))
+        )
+        await session.execute(
+            delete(TelegramPaymentNotificationOutbox).where(
+                TelegramPaymentNotificationOutbox.payment_id.in_(payment_ids)
+            )
+        )
+        await session.execute(delete(Payment).where(Payment.id.in_(payment_ids)))
+
+    await session.execute(delete(OrderItem).where(OrderItem.order_id == order.id))
+    await session.execute(
+        delete(OrderFulfillmentStage).where(OrderFulfillmentStage.order_id == order.id)
+    )
+    reservation_ids = (
+        (
+            await session.execute(
+                select(InventoryReservation.id).where(
+                    InventoryReservation.order_id == order.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if reservation_ids:
+        await session.execute(
+            update(InventoryReservation)
+            .where(InventoryReservation.reacquired_from.in_(reservation_ids))
+            .values(reacquired_from=None)
+        )
+        await session.execute(
+            delete(InventoryReservation).where(
+                InventoryReservation.id.in_(reservation_ids)
+            )
+        )
+    await session.execute(
+        delete(SellerOrderFulfillment).where(
+            SellerOrderFulfillment.order_id == order.id
+        )
+    )
+    await session.execute(delete(Order).where(Order.id == order.id))
+    await session.commit()
+
+    for storage_key in evidence_storage_keys:
+        try:
+            delete_evidence_file(storage_key)
+        except Exception:
+            logger.exception(
+                "Could not remove payment evidence after permanent order deletion"
+            )
+
+    return {"order_number": order_number, "deleted": True}

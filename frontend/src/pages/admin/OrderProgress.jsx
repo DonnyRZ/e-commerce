@@ -11,7 +11,8 @@ export const ORDER_STEPS = [
 
 export function normalizeOrderStage(stage) {
   if (["pending_payment", "payment_review"].includes(stage)) return "payment";
-  if (stage === "paid") return "supplier_shipping";
+  if (["paid", "processing"].includes(stage)) return "supplier_shipping";
+  if (stage === "shipped") return "customer_shipping";
   return stage;
 }
 

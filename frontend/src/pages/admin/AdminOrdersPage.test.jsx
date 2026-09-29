@@ -1,6 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import AdminOrdersPage from "./AdminOrdersPage";
+import { archiveAdminOrder, permanentlyDeleteAdminOrder, restoreAdminOrder } from "@/lib/api";
 
 const mockSearchParams = new URLSearchParams("?stage=payment_review");
 const mockSetSearchParams = jest.fn();
@@ -38,26 +39,70 @@ const mockWorkflowResponse = {
   page_size: 20,
 };
 let mockQueryOptions;
+const mockQueryClient = { invalidateQueries: jest.fn(), removeQueries: jest.fn() };
 
 jest.mock("@tanstack/react-query", () => ({
   useQuery: (options) => {
     mockQueryOptions = options;
     return { data: mockWorkflowResponse, isLoading: false };
   },
+  useQueryClient: () => mockQueryClient,
 }));
 jest.mock("react-router-dom", () => ({
-  Link: ({ children, to }) => <a href={to}>{children}</a>,
+  Link: ({ children, to, state }) => <a href={to} data-return-to={state?.returnTo} data-workflow-filter={state?.workflowFilter}>{children}</a>,
   useSearchParams: () => [mockSearchParams, mockSetSearchParams],
 }), { virtual: true });
-jest.mock("@/lib/api", () => ({ getAdminOrderWorkflow: jest.fn() }));
+jest.mock("@/lib/api", () => ({
+  archiveAdminOrder: jest.fn(),
+  getAdminOrderWorkflow: jest.fn(),
+  permanentlyDeleteAdminOrder: jest.fn(),
+  restoreAdminOrder: jest.fn(),
+}));
+jest.mock("sonner", () => ({ toast: { success: jest.fn(), error: jest.fn() } }));
 
 let root;
 let container;
 
 beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
+  [...mockSearchParams.keys()].forEach((key) => mockSearchParams.delete(key));
+  mockSearchParams.set("stage", "payment_review");
+  mockWorkflowResponse.items = [
+    {
+      kind: "order",
+      order_number: "MC-WAITING-1",
+      stage: "payment",
+      status: "pending_payment",
+      created_at: "2026-09-27T10:00:00Z",
+      customer: { name: "Customer A", city: "Tashkent" },
+      item_count: 1,
+      grand_total: 100000,
+      currency: "UZS",
+      next_action: "wait_payment",
+    },
+    {
+      kind: "order",
+      order_number: "MC-REVIEW-1",
+      stage: "payment",
+      status: "payment_review",
+      created_at: "2026-09-27T11:00:00Z",
+      customer: { name: "Customer B", city: "Tashkent" },
+      item_count: 2,
+      grand_total: 200000,
+      currency: "UZS",
+      evidence_count: 1,
+      next_action: "confirm_payment",
+    },
+  ];
+  mockWorkflowResponse.counts = { payment: 2 };
+  mockWorkflowResponse.total = 2;
   mockQueryOptions = null;
   mockSetSearchParams.mockReset();
+  mockQueryClient.invalidateQueries.mockReset();
+  mockQueryClient.removeQueries.mockReset();
+  archiveAdminOrder.mockReset();
+  restoreAdminOrder.mockReset();
+  permanentlyDeleteAdminOrder.mockReset();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -71,12 +116,16 @@ afterEach(async () => {
 test("groups payment stages into one filter and shows each order's current payment task", async () => {
   await act(async () => root.render(<AdminOrdersPage />));
 
-  const filterButtons = [...container.querySelectorAll('[role="tablist"] button')];
+  const filterButtons = [...container.querySelectorAll('[aria-label="Filter tahap order"] button')];
   expect(filterButtons.map((button) => button.textContent)).toContain("Pembayaran2");
-  expect(filterButtons.find((button) => button.textContent.startsWith("Pembayaran")).getAttribute("aria-selected")).toBe("true");
+  expect(filterButtons.find((button) => button.textContent.startsWith("Pembayaran")).getAttribute("aria-pressed")).toBe("true");
+  expect(filterButtons.some((button) => button.textContent.includes("Semua"))).toBe(false);
+  expect(filterButtons.some((button) => button.textContent.includes("Perlu tindakan"))).toBe(false);
   expect(filterButtons.some((button) => button.textContent.includes("Menunggu pembayaran"))).toBe(false);
   expect(filterButtons.some((button) => button.textContent.includes("Pembayaran diverifikasi"))).toBe(false);
   expect(mockQueryOptions.queryKey[1].stage).toBe("payment");
+  expect(mockQueryOptions.staleTime).toBe(0);
+  expect(mockQueryOptions.refetchOnMount).toBe("always");
 
   const overview = container.querySelector('[data-testid="workflow-overview"]');
   expect(overview.querySelectorAll("li")).toHaveLength(6);
@@ -92,4 +141,125 @@ test("groups payment stages into one filter and shows each order's current payme
   expect(container.textContent).toContain("Bukti tersimpan · siap dikonfirmasi");
   expect(container.querySelectorAll('[aria-label="Order progress"]')).toHaveLength(2);
   expect(container.textContent).toContain("Satu transfer per order");
+  const firstOrderCard = container.querySelector('[data-testid="workflow-card-MC-WAITING-1"]');
+  const archiveButton = firstOrderCard.querySelector('[data-testid="archive-order-MC-WAITING-1"]');
+  const deleteButton = firstOrderCard.querySelector('[data-testid="delete-order-MC-WAITING-1"]');
+  const primaryAction = firstOrderCard.querySelector("a");
+  expect(archiveButton.compareDocumentPosition(primaryAction) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(deleteButton.compareDocumentPosition(primaryAction) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("archives directly from the order card beside its primary action", async () => {
+  const confirm = jest.spyOn(window, "confirm").mockReturnValue(true);
+  archiveAdminOrder.mockResolvedValue({ archived: true });
+  await act(async () => root.render(<AdminOrdersPage />));
+
+  const card = container.querySelector('[data-testid="workflow-card-MC-WAITING-1"]');
+  await act(async () => {
+    card.querySelector('[data-testid="archive-order-MC-WAITING-1"]').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  expect(archiveAdminOrder).toHaveBeenCalledWith("MC-WAITING-1");
+  expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["admin-order-workflow"] });
+  confirm.mockRestore();
+});
+
+test("permanent deletion requires an exact order-number confirmation", async () => {
+  const confirm = jest.spyOn(window, "confirm").mockReturnValue(true);
+  const prompt = jest.spyOn(window, "prompt").mockReturnValue("MC-WAITING-1");
+  permanentlyDeleteAdminOrder.mockResolvedValue({ deleted: true });
+  await act(async () => root.render(<AdminOrdersPage />));
+
+  const deleteButton = container.querySelector('[data-testid="delete-order-MC-WAITING-1"]');
+  await act(async () => {
+    deleteButton.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  expect(prompt).toHaveBeenCalledWith(expect.stringContaining("MC-WAITING-1"));
+  expect(permanentlyDeleteAdminOrder).toHaveBeenCalledWith("MC-WAITING-1");
+  expect(mockQueryClient.removeQueries).toHaveBeenCalledWith({ queryKey: ["admin-order", "MC-WAITING-1"] });
+  confirm.mockRestore();
+  prompt.mockRestore();
+});
+
+test("keeps paid legacy orders visible in the supplier stage and preserves the selected filter", async () => {
+  mockSearchParams.set("stage", "paid");
+  mockWorkflowResponse.items = [{
+    kind: "order",
+    order_number: "MC-PAID-1",
+    stage: "supplier_shipping",
+    status: "paid",
+    created_at: "2026-09-27T12:00:00Z",
+    customer: { name: "Customer C", city: "Tashkent" },
+    item_count: 1,
+    grand_total: 300000,
+    currency: "UZS",
+    next_action: "supplier_ship",
+  }];
+  mockWorkflowResponse.counts = { supplier_shipping: 1 };
+  mockWorkflowResponse.total = 1;
+  await act(async () => root.render(<AdminOrdersPage />));
+
+  expect(mockQueryOptions.queryKey[1].stage).toBe("supplier_shipping");
+  const supplierFilter = [...container.querySelectorAll('[aria-label="Filter tahap order"] button')]
+    .find((button) => button.textContent.startsWith("Supplier mengirim"));
+  expect(supplierFilter.getAttribute("aria-pressed")).toBe("true");
+  expect(container.querySelector('[data-testid="workflow-card-MC-PAID-1"]')).not.toBeNull();
+  expect(container.textContent).toContain("Siap ke supplier");
+
+  const detailLink = container.querySelector('[data-testid="workflow-card-MC-PAID-1"] a');
+  expect(detailLink.getAttribute("data-return-to")).toBe("/orders?stage=paid");
+  expect(detailLink.getAttribute("data-workflow-filter")).toBe("supplier_shipping");
+});
+
+test("repairs an out-of-range page after the selected stage loses an order", async () => {
+  mockSearchParams.set("stage", "supplier_shipping");
+  mockSearchParams.set("page", "8");
+  mockWorkflowResponse.items = [];
+  mockWorkflowResponse.counts = { supplier_shipping: 1 };
+  mockWorkflowResponse.total = 1;
+  await act(async () => root.render(<AdminOrdersPage />));
+
+  expect(mockSetSearchParams).toHaveBeenCalledTimes(1);
+  const [nextParams, options] = mockSetSearchParams.mock.calls[0];
+  expect(nextParams.get("page")).toBe("1");
+  expect(options).toEqual({ replace: true });
+});
+
+test("lists archived orders in their own filter without mixing them into active stages", async () => {
+  mockSearchParams.set("stage", "archived");
+  mockWorkflowResponse.items = [{
+    kind: "order",
+    order_number: "MC-ARCHIVED-1",
+    stage: "supplier_shipping",
+    status: "supplier_shipping",
+    archived_at: "2026-09-29T10:00:00Z",
+    created_at: "2026-09-27T12:00:00Z",
+    customer: { name: "Customer D", city: "Tashkent" },
+    item_count: 1,
+    grand_total: 300000,
+    currency: "UZS",
+    next_action: "view_order",
+  }];
+  mockWorkflowResponse.counts = { archived: 1, supplier_shipping: 3 };
+  mockWorkflowResponse.total = 1;
+  await act(async () => root.render(<AdminOrdersPage />));
+
+  expect(mockQueryOptions.queryKey[1].stage).toBe("archived");
+  const filters = [...container.querySelectorAll('[aria-label="Filter tahap order"] button')];
+  const archivedFilter = filters.find((button) => button.textContent.startsWith("Diarsipkan"));
+  expect(archivedFilter.getAttribute("aria-pressed")).toBe("true");
+  expect(archivedFilter.textContent).toBe("Diarsipkan1");
+  expect(container.querySelector('[data-testid="workflow-card-MC-ARCHIVED-1"]')).not.toBeNull();
+  expect(container.querySelector('[data-testid="workflow-card-MC-ARCHIVED-1"]').textContent).toContain("Diarsipkan");
+  expect(container.querySelector('[data-testid="restore-order-MC-ARCHIVED-1"]')).not.toBeNull();
+
+  restoreAdminOrder.mockResolvedValue({ archived: false });
+  await act(async () => {
+    container.querySelector('[data-testid="restore-order-MC-ARCHIVED-1"]').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(restoreAdminOrder).toHaveBeenCalledWith("MC-ARCHIVED-1");
 });

@@ -425,6 +425,9 @@ class Order(TimestampMixin, Base):
     currency: Mapped[str] = mapped_column(String(3), default="UZS")
     payment_state: Mapped[str] = mapped_column(String(20), default="unpaid")
     status: Mapped[str] = mapped_column(String(30), default="pending_payment", index=True)
+    archived_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     idempotency_key: Mapped[Optional[str]] = mapped_column(
         String(80), unique=True, nullable=True
     )

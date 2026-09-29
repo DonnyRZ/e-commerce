@@ -5,6 +5,7 @@ import { confirmAdminPayment, uploadAdminPaymentEvidence } from "@/lib/api";
 
 let mockOrder;
 let mockQueryClient;
+let mockLocationState;
 let resolveUpload;
 
 jest.mock("@tanstack/react-query", () => ({
@@ -13,6 +14,7 @@ jest.mock("@tanstack/react-query", () => ({
 }));
 jest.mock("react-router-dom", () => ({
   Link: ({ children, to }) => <a href={to}>{children}</a>,
+  useLocation: () => ({ state: mockLocationState }),
   useParams: () => ({ orderNumber: "MC-UX-1" }),
 }), { virtual: true });
 jest.mock("@/lib/api", () => ({
@@ -29,6 +31,7 @@ const pendingOrder = () => ({
   order_number: "MC-UX-1",
   order_source: "telegram_manual",
   status: "pending_payment",
+  archived_at: null,
   payment_state: "unpaid",
   created_at: "2026-09-28T10:00:00Z",
   grand_total: 580000,
@@ -57,8 +60,10 @@ let container;
 beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
   mockOrder = pendingOrder();
+  mockLocationState = null;
   mockQueryClient = {
     invalidateQueries: jest.fn(),
+    removeQueries: jest.fn(),
     setQueryData: jest.fn((_key, updater) => {
       mockOrder = typeof updater === "function" ? updater(mockOrder) : updater;
     }),
@@ -84,6 +89,8 @@ test("keeps six-stage payment view in place while evidence is stored for audit",
   expect(container.querySelector('[data-testid="active-payment-stage"]')).not.toBeNull();
   expect(container.querySelector('[data-testid="active-payment-review"]')).toBeNull();
   expect(container.querySelector('[data-testid="confirm-payment-and-continue"]').disabled).toBe(true);
+  expect(container.textContent).not.toContain("Referensi order");
+  expect(container.querySelector('[data-testid="payment-evidence-archive"]').textContent).toContain("upload tidak mengonfirmasi pembayaran");
 
   const evidence = {
     id: "evidence-1",
@@ -121,7 +128,7 @@ test("keeps six-stage payment view in place while evidence is stored for audit",
   expect(container.querySelector('[data-testid="active-payment-review"]')).toBeNull();
   expect(container.querySelector('[data-testid="order-progress"] li[aria-current="step"]').textContent).toContain("Pembayaran");
   expect(container.querySelector('[data-testid="confirm-payment-and-continue"]').disabled).toBe(false);
-  expect(container.textContent).toContain("Upload ini tidak mengonfirmasi pembayaran");
+  expect(container.textContent).toContain("upload tidak mengonfirmasi pembayaran");
 });
 
 test("confirmed payment advances the shared progress to supplier shipping", async () => {
@@ -132,4 +139,27 @@ test("confirmed payment advances the shared progress to supplier shipping", asyn
 
   expect(container.querySelector('[data-testid="order-progress"] li[aria-current="step"]').textContent).toContain("Supplier mengirim");
   expect(container.querySelector('[data-testid="active-fulfillment"]')).not.toBeNull();
+});
+
+test("returning from a changed order opens its current workflow stage", async () => {
+  mockOrder.status = "paid";
+  mockOrder.payment.status = "paid";
+  mockOrder.payment_state = "paid";
+  mockLocationState = {
+    returnTo: "/orders?stage=payment&page=3",
+    workflowFilter: "payment",
+  };
+  await act(async () => root.render(<AdminOrderDetailPage />));
+
+  const backLink = [...container.querySelectorAll("a")]
+    .find((link) => link.textContent.includes("Kembali ke workflow"));
+  expect(backLink.getAttribute("href")).toBe("/orders?stage=supplier_shipping");
+});
+
+test("archived order details remain readable while payment mutations stay disabled", async () => {
+  mockOrder.archived_at = "2026-09-29T10:00:00Z";
+  await act(async () => root.render(<AdminOrderDetailPage />));
+  expect(container.querySelector('[data-testid="archived-order-notice"]')).not.toBeNull();
+  expect(container.querySelector('[data-testid="payment-evidence-input"]').disabled).toBe(true);
+  expect(container.querySelector('[data-testid="confirm-payment-and-continue"]').disabled).toBe(true);
 });

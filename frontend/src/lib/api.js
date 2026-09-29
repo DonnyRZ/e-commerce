@@ -244,6 +244,12 @@ export const getAdminOrders = (params) =>
   api.get("/v1/admin/orders", { params }).then((r) => r.data);
 export const getAdminOrder = (orderNumber) =>
   api.get(`/v1/admin/orders/${orderNumber}`).then((r) => r.data);
+export const archiveAdminOrder = (orderNumber) =>
+  api.post(`/v1/admin/orders/${orderNumber}/archive`).then((r) => r.data);
+export const restoreAdminOrder = (orderNumber) =>
+  api.post(`/v1/admin/orders/${orderNumber}/restore`).then((r) => r.data);
+export const permanentlyDeleteAdminOrder = (orderNumber) =>
+  api.delete(`/v1/admin/orders/${orderNumber}`).then((r) => r.data);
 export const getAdminTelegramInquiries = (params) =>
   api.get("/v1/admin/telegram-inquiries", { params }).then((r) => r.data);
 export const getAdminTelegramInquiry = (reference) =>

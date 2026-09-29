@@ -210,7 +210,11 @@ async def admin_dashboard(
     out_of_stock = sum(1 for s in variant_rows if s == 0)
 
     order_counts = (
-        await session.execute(select(Order.status, func.count()).group_by(Order.status))
+        await session.execute(
+            select(Order.status, func.count())
+            .where(Order.archived_at.is_(None))
+            .group_by(Order.status)
+        )
     ).all()
     orders_by_status = {status: count for status, count in order_counts}
     inquiry_rows = (
@@ -231,7 +235,12 @@ async def admin_dashboard(
         select(func.coalesce(func.sum(Order.grand_total), 0)).where(Order.payment_state == "paid")
     )
     recent = (
-        await session.execute(select(Order).order_by(Order.created_at.desc()).limit(5))
+        await session.execute(
+            select(Order)
+            .where(Order.archived_at.is_(None))
+            .order_by(Order.created_at.desc())
+            .limit(5)
+        )
     ).scalars().all()
     recent_orders = []
     for order in recent:
@@ -1382,8 +1391,8 @@ async def admin_list_orders(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ):
-    base = select(Order)
-    count_q = select(func.count(Order.id))
+    base = select(Order).where(Order.archived_at.is_(None))
+    count_q = select(func.count(Order.id)).where(Order.archived_at.is_(None))
     if q:
         base = base.where(Order.order_number.ilike(f"%{q}%"))
         count_q = count_q.where(Order.order_number.ilike(f"%{q}%"))
@@ -1505,6 +1514,8 @@ async def admin_update_order_status(
     )
     if not order:
         raise HTTPException(status_code=404, detail="order_not_found")
+    if order.archived_at is not None:
+        raise HTTPException(status_code=409, detail={"error": "order_archived"})
     # payment integrity gate: unpaid / review / cancelled never fulfill
     if order.payment_state != "paid":
         raise HTTPException(
@@ -1627,6 +1638,7 @@ async def admin_payment_review_queue(
             select(Payment, Order)
             .join(Order, Payment.order_id == Order.id)
             .where(
+                Order.archived_at.is_(None),
                 or_(Payment.status == "reconciliation_required",
                     Order.status == "payment_review")
             )
