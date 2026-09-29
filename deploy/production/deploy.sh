@@ -6,7 +6,7 @@ env_file="${MARKETPLACE_ENV_FILE:-/etc/marketplace/marketplace.env}"
 compose=(docker compose --env-file "$env_file" -f "$release_dir/deploy/production/docker-compose.yml")
 
 echo "Running production migrations before starting application containers..."
-"${compose[@]}" --profile migration run --rm migrate
+"${compose[@]}" --profile migration run --rm --build migrate
 
 current="$("${compose[@]}" --profile migration run --rm migrate alembic current 2>/dev/null | tail -n 1 | awk '{print $1}' | tr -d '\r')"
 head="$("${compose[@]}" --profile migration run --rm migrate alembic heads 2>/dev/null | tail -n 1 | awk '{print $1}' | tr -d '\r')"
