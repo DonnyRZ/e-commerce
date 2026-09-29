@@ -35,6 +35,7 @@ from routers.checkout import router as checkout_router
 from routers.orders import router as orders_router
 from routers.admin import router as admin_router
 from routers.manual_orders import (
+    order_notification_dispatch_loop,
     payment_notification_dispatch_loop,
     router as manual_orders_router,
 )
@@ -82,10 +83,15 @@ async def lifespan(_app: FastAPI):
     payment_notification_task = asyncio.create_task(
         payment_notification_dispatch_loop()
     )
+    order_notification_task = asyncio.create_task(order_notification_dispatch_loop())
     try:
         yield
     finally:
-        for task in (cleanup_task, payment_notification_task):
+        for task in (
+            cleanup_task,
+            payment_notification_task,
+            order_notification_task,
+        ):
             task.cancel()
             try:
                 await task

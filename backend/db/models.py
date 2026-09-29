@@ -646,6 +646,42 @@ class TelegramPaymentNotificationOutbox(TimestampMixin, Base):
     error_code: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
 
 
+class TelegramOrderNotificationOutbox(TimestampMixin, Base):
+    """Durable, deduplicated Telegram notices for order state transitions."""
+
+    __tablename__ = "telegram_order_notification_outbox"
+    __table_args__ = (
+        UniqueConstraint(
+            "order_id", "event_key", name="uq_telegram_order_notification_event"
+        ),
+        Index(
+            "ix_telegram_order_notification_status_created",
+            "status",
+            "created_at",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'sending', 'sent', 'failed', 'unknown', 'unavailable')",
+            name="ck_telegram_order_notification_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    order_id: Mapped[str] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"), index=True
+    )
+    event_key: Mapped[str] = mapped_column(String(180))
+    message_text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(24), default="pending")
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error_code: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+
+
 class OrderFulfillmentStage(TimestampMixin, Base):
     """Auditable two-leg fulfillment timeline for the single store operator."""
 

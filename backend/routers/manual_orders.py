@@ -45,6 +45,7 @@ from db.models import (
     PaymentDestination,
     PaymentEvent,
     SellerOrderFulfillment,
+    TelegramOrderNotificationOutbox,
     TelegramPaymentNotificationOutbox,
     TelegramProductCandidate,
     Product,
@@ -72,14 +73,23 @@ from telegram_inbox_service import record_outgoing_message
 router = APIRouter(prefix="/api/v1", tags=["manual-orders"])
 require_admin = require_roles("admin")
 logger = logging.getLogger("muslimah_cantik.payment_notifications")
+order_notification_logger = logging.getLogger("muslimah_cantik.order_notifications")
 PAYMENT_NOTIFICATION_POLL_SECONDS = 1
 PAYMENT_NOTIFICATION_STALE_AFTER = timedelta(minutes=2)
+ORDER_NOTIFICATION_POLL_SECONDS = 1
+ORDER_NOTIFICATION_STALE_AFTER = timedelta(minutes=2)
 
 ORDER_STAGES = {
     "supplier_shipping": {"from": "paid", "to": "supplier_shipping"},
     "received_by_admin": {"from": "supplier_shipping", "to": "received_by_admin"},
     "customer_shipping": {"from": "received_by_admin", "to": "customer_shipping"},
     "delivered": {"from": "customer_shipping", "to": "delivered"},
+}
+ORDER_NOTIFICATION_LABELS = {
+    "supplier_shipping": "Barang dikirim menuju admin",
+    "received_by_admin": "Barang diterima admin",
+    "customer_shipping": "Barang dikirim ke customer",
+    "delivered": "Barang diterima customer",
 }
 WORKFLOW_STAGES = (
     "inquiry",
@@ -264,7 +274,21 @@ def _parse_time(value: Any):
         raise _error(422, "invalid_timestamp") from exc
 
 
-def _stage_payload(stage: OrderFulfillmentStage) -> dict:
+def _order_notification_payload(notification: TelegramOrderNotificationOutbox) -> dict:
+    return {
+        "event_key": notification.event_key,
+        "status": notification.status,
+        "error": notification.error_code,
+        "message_id": notification.message_id,
+        "created_at": notification.created_at,
+        "updated_at": notification.updated_at,
+    }
+
+
+def _stage_payload(
+    stage: OrderFulfillmentStage,
+    notification: Optional[TelegramOrderNotificationOutbox] = None,
+) -> dict:
     return {
         "stage": stage.stage,
         "status": stage.status,
@@ -274,6 +298,9 @@ def _stage_payload(stage: OrderFulfillmentStage) -> dict:
         "received_at": stage.received_at,
         "expected_at": stage.expected_at,
         "note": stage.note,
+        "telegram_notification": (
+            _order_notification_payload(notification) if notification else None
+        ),
     }
 
 
@@ -285,39 +312,160 @@ async def _telegram_target_for_order(session: AsyncSession, order_id: str):
         return inquiry.telegram_connection_id, inquiry.telegram_chat_id, inquiry.locale
     order = await session.get(Order, order_id)
     if order and order.telegram_conversation_id:
-        conversation = await session.get(TelegramConversation, order.telegram_conversation_id)
+        conversation = await session.get(
+            TelegramConversation, order.telegram_conversation_id
+        )
         if conversation:
             return conversation.connection_id, conversation.chat_id, conversation.locale
     return None
 
 
-async def _notify_order(
-    order_id: Optional[str], text: str, session: AsyncSession
-) -> None:
-    """Best-effort Telegram notification; never rolls back an order mutation."""
-    if not order_id or not TELEGRAM_BOT_TOKEN:
-        return
-    target = await _telegram_target_for_order(session, order_id)
-    if not target:
-        return
-    connection_id, chat_id, _locale = target
-    try:
-        result = await bot_request(
-            TELEGRAM_BOT_TOKEN,
-            "sendMessage",
-            {
-                "business_connection_id": connection_id,
-                "chat_id": chat_id,
-                "text": text[:3900],
-            },
+async def _queue_order_notification(
+    order_id: str, event_key: str, text: str, session: AsyncSession
+) -> TelegramOrderNotificationOutbox:
+    """Persist a deduplicated Telegram send in the same transaction as its event."""
+    existing = await session.scalar(
+        select(TelegramOrderNotificationOutbox).where(
+            TelegramOrderNotificationOutbox.order_id == order_id,
+            TelegramOrderNotificationOutbox.event_key == event_key,
         )
-        await record_outgoing_message(
-            session, connection_id, chat_id, result, text[:3900]
+    )
+    if existing:
+        return existing
+    notification = TelegramOrderNotificationOutbox(
+        order_id=order_id,
+        event_key=event_key,
+        message_text=text[:3900],
+        status="pending",
+    )
+    session.add(notification)
+    return notification
+
+
+async def _recover_stale_order_notifications(session: AsyncSession) -> None:
+    """Do not auto-resend a send interrupted after it may have reached Telegram."""
+    stale_before = utcnow() - ORDER_NOTIFICATION_STALE_AFTER
+    rows = (
+        (
+            await session.execute(
+                select(TelegramOrderNotificationOutbox)
+                .where(
+                    TelegramOrderNotificationOutbox.status == "sending",
+                    or_(
+                        TelegramOrderNotificationOutbox.claimed_at.is_(None),
+                        TelegramOrderNotificationOutbox.claimed_at <= stale_before,
+                    ),
+                )
+                .with_for_update(skip_locked=True)
+            )
         )
-    except Exception:
-        # Notification failure is observable through the audit trail/API but
-        # must never undo a verified payment or fulfillment transition.
-        return
+        .scalars()
+        .all()
+    )
+    for row in rows:
+        row.status = "unknown"
+        row.error_code = "delivery_outcome_unknown"
+        row.completed_at = utcnow()
+
+
+async def _dispatch_one_order_notification() -> bool:
+    """Send one durable notification without holding up an order API response."""
+    async with SessionLocal() as session:
+        notification = await session.scalar(
+            select(TelegramOrderNotificationOutbox)
+            .where(TelegramOrderNotificationOutbox.status == "pending")
+            .order_by(TelegramOrderNotificationOutbox.created_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        if not notification:
+            return False
+
+        notification.status = "sending"
+        notification.claimed_at = utcnow()
+        notification.error_code = None
+        await session.commit()
+
+        order_id = notification.order_id
+        message_text = notification.message_text
+        order = await session.get(Order, order_id)
+        if not order:
+            # The order may have been permanently deleted while this row was
+            # being claimed. Its cascading delete is authoritative.
+            return True
+        target = await _telegram_target_for_order(session, order_id)
+        if not target or not TELEGRAM_BOT_TOKEN:
+            notification.status = "unavailable"
+            notification.error_code = "telegram_chat_unavailable"
+            notification.completed_at = utcnow()
+            await session.commit()
+            return True
+
+        connection_id, chat_id, _locale = target
+        try:
+            result = await bot_request(
+                TELEGRAM_BOT_TOKEN,
+                "sendMessage",
+                {
+                    "business_connection_id": connection_id,
+                    "chat_id": chat_id,
+                    "text": message_text,
+                },
+            )
+        except TelegramDeliveryError as exc:
+            notification.status = "failed"
+            notification.error_code = exc.safe_code
+            notification.completed_at = utcnow()
+            await session.commit()
+            return True
+        except Exception:
+            # Transport failures can happen after Telegram accepted the send;
+            # retain an explicit ambiguous state and never resend automatically.
+            order_notification_logger.exception(
+                "Telegram order notification outcome is unknown"
+            )
+            notification.status = "unknown"
+            notification.error_code = "delivery_outcome_unknown"
+            notification.completed_at = utcnow()
+            await session.commit()
+            return True
+
+        message_id = result.get("message_id") if isinstance(result, dict) else None
+        notification.message_id = (
+            message_id
+            if isinstance(message_id, int) and not isinstance(message_id, bool)
+            else None
+        )
+        notification.status = "sent"
+        notification.error_code = None
+        notification.completed_at = utcnow()
+        await session.commit()
+        try:
+            await record_outgoing_message(
+                session, connection_id, chat_id, result, message_text
+            )
+        except Exception:
+            order_notification_logger.exception(
+                "Could not record order notification in Telegram inbox"
+            )
+        return True
+
+
+async def order_notification_dispatch_loop() -> None:
+    """Recover and dispatch durable order notifications independently of requests."""
+    while True:
+        try:
+            async with SessionLocal() as session:
+                await _recover_stale_order_notifications(session)
+                await session.commit()
+            await _dispatch_one_order_notification()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            order_notification_logger.exception(
+                "Telegram order notification outbox iteration failed"
+            )
+        await asyncio.sleep(ORDER_NOTIFICATION_POLL_SECONDS)
 
 
 def _queue_payment_prompt(session: AsyncSession, payment: Payment) -> None:
@@ -1367,6 +1515,12 @@ async def confirm_manual_payment(
     payment.review_note = "Manual transfer verified by admin; pre-order procurement started"
     order.payment_state = "paid"
     order.status = "paid"
+    await _queue_order_notification(
+        order.id,
+        "payment_confirmed",
+        f"Pembayaran order {order.order_number} telah dikonfirmasi. Pesanan sedang diproses.",
+        session,
+    )
     await audit(
         session,
         user.id,
@@ -1376,11 +1530,6 @@ async def confirm_manual_payment(
         {"order": order.order_number},
     )
     await session.commit()
-    await _notify_order(
-        order.id,
-        f"Pembayaran order {order.order_number} telah dikonfirmasi. Pesanan sedang diproses.",
-        session,
-    )
     return await _admin_order_payload(session, order)
 
 
@@ -1414,6 +1563,15 @@ async def reject_manual_payment(
     payment.reviewed_at = utcnow()
     order.payment_state = "review"
     order.status = "payment_review"
+    reason_digest = hashlib.sha256(payload.reason.strip().encode("utf-8")).hexdigest()[
+        :16
+    ]
+    await _queue_order_notification(
+        order.id,
+        f"payment_rejected:{latest.id}:{reason_digest}",
+        f"Bukti pembayaran order {order.order_number} belum dapat diverifikasi. Alasan: {payload.reason}",
+        session,
+    )
     await audit(
         session,
         user.id,
@@ -1423,11 +1581,6 @@ async def reject_manual_payment(
         {"reason": payload.reason},
     )
     await session.commit()
-    await _notify_order(
-        order.id,
-        f"Bukti pembayaran order {order.order_number} belum dapat diverifikasi. Alasan: {payload.reason}",
-        session,
-    )
     return await _admin_order_payload(session, order)
 
 
@@ -1484,6 +1637,12 @@ async def update_manual_fulfillment(
             days=ADMIN_TO_CUSTOMER_TRANSIT_DAYS
         )
     order.status = transition["to"]
+    await _queue_order_notification(
+        order.id,
+        f"fulfillment:{payload.stage}",
+        f"Update order {order.order_number}: {ORDER_NOTIFICATION_LABELS[payload.stage]}.",
+        session,
+    )
     await audit(
         session,
         user.id,
@@ -1493,17 +1652,6 @@ async def update_manual_fulfillment(
         {"stage": payload.stage, "tracking": payload.tracking_number},
     )
     await session.commit()
-    labels = {
-        "supplier_shipping": "Barang dikirim menuju admin",
-        "received_by_admin": "Barang diterima admin",
-        "customer_shipping": "Barang dikirim ke customer",
-        "delivered": "Barang diterima customer",
-    }
-    await _notify_order(
-        order.id,
-        f"Update order {order.order_number}: {labels[payload.stage]}.",
-        session,
-    )
     return await _admin_order_payload(session, order)
 
 
@@ -1544,6 +1692,19 @@ async def _admin_order_payload(session: AsyncSession, order: Order) -> dict:
         .scalars()
         .all()
     )
+    telegram_notifications = (
+        (
+            await session.execute(
+                select(TelegramOrderNotificationOutbox)
+                .where(TelegramOrderNotificationOutbox.order_id == order.id)
+                .order_by(TelegramOrderNotificationOutbox.created_at.desc())
+                .limit(20)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    notifications_by_event = {row.event_key: row for row in telegram_notifications}
     activity_target_ids = [order.order_number]
     if payment:
         activity_target_ids.append(payment.id)
@@ -1623,7 +1784,17 @@ async def _admin_order_payload(session: AsyncSession, order: Order) -> dict:
             if payment
             else None
         ),
-        "fulfillment": [_stage_payload(stage) for stage in stages],
+        "fulfillment": [
+            _stage_payload(
+                stage,
+                notifications_by_event.get(f"fulfillment:{stage.stage}"),
+            )
+            for stage in stages
+        ],
+        "telegram_notifications": [
+            _order_notification_payload(notification)
+            for notification in telegram_notifications
+        ],
         "activity": [
             {
                 "action": row.action,
@@ -1743,6 +1914,20 @@ async def permanently_delete_admin_order(
             .all()
         )
 
+    order_notifications = (
+        (
+            await session.execute(
+                select(TelegramOrderNotificationOutbox)
+                .where(TelegramOrderNotificationOutbox.order_id == order.id)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if any(row.status == "sending" for row in order_notifications):
+        raise _error(409, "order_notification_in_progress")
+
     evidence_storage_keys = [item.storage_key for item in evidence]
     await audit(
         session,
@@ -1792,6 +1977,11 @@ async def permanently_delete_admin_order(
     await session.execute(delete(OrderItem).where(OrderItem.order_id == order.id))
     await session.execute(
         delete(OrderFulfillmentStage).where(OrderFulfillmentStage.order_id == order.id)
+    )
+    await session.execute(
+        delete(TelegramOrderNotificationOutbox).where(
+            TelegramOrderNotificationOutbox.order_id == order.id
+        )
     )
     reservation_ids = (
         (

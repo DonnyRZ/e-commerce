@@ -84,6 +84,46 @@ function TelegramPaymentPanel({ payment, busy, onRetry }) {
   );
 }
 
+const ORDER_NOTIFICATION_STATUSES = {
+  pending: "Menunggu antrean",
+  sending: "Sedang dikirim",
+  sent: "Terkirim",
+  failed: "Gagal dikirim",
+  unknown: "Hasil belum diketahui",
+  unavailable: "Chat tidak tersedia",
+};
+
+function orderNotificationLabel(eventKey) {
+  if (eventKey === "payment_confirmed") return "Konfirmasi pembayaran";
+  if (eventKey.startsWith("payment_rejected:")) return "Permintaan perbaikan bukti";
+  if (eventKey.startsWith("fulfillment:")) {
+    const stage = eventKey.slice("fulfillment:".length);
+    return ORDER_STEPS.find(([key]) => key === stage)?.[1] || "Pembaruan order";
+  }
+  return "Pembaruan order";
+}
+
+function TelegramOrderNotifications({ notifications }) {
+  if (!notifications?.length) return null;
+  return (
+    <section className="mt-4 rounded border border-neutral-200 bg-white px-4 py-3" data-testid="telegram-order-notifications">
+      <h2 className="text-xs font-semibold text-[#02422C]">Notifikasi customer</h2>
+      <ul className="mt-2 space-y-2">
+        {notifications.slice(0, 5).map((notification) => (
+          <li key={notification.event_key} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+            <span className="text-neutral-600">{orderNotificationLabel(notification.event_key)}</span>
+            <span className={notification.status === "failed" || notification.status === "unknown" || notification.status === "unavailable" ? "font-medium text-amber-800" : "text-neutral-500"} data-testid={`telegram-order-status-${notification.event_key}`}>
+              {ORDER_NOTIFICATION_STATUSES[notification.status] || notification.status}
+            </span>
+            {notification.status === "unknown" ? <p className="basis-full text-[11px] text-neutral-500">Hasil pengiriman belum pasti; sistem tidak mengirim ulang otomatis agar pesan tidak terkirim ganda.</p> : null}
+            {notification.status === "failed" || notification.status === "unavailable" ? <p className="basis-full text-[11px] text-neutral-500">Status dan progress order tetap tersimpan; kendala ini hanya memengaruhi pesan Telegram.</p> : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function EvidencePreview({ evidence, localUrl, title }) {
   if (!evidence) return null;
   const isImage = evidence.mime_type?.startsWith("image/") || evidence.type?.startsWith("image/");
@@ -231,8 +271,11 @@ export default function AdminOrderDetailPage() {
     queryFn: () => getAdminOrder(orderNumber),
     refetchInterval: (query) => {
       const current = query.state.data;
+      const notificationIsActive = current?.telegram_notifications?.some(
+        (notification) => ["pending", "sending"].includes(notification.status),
+      );
       return current?.order_source === "telegram_manual"
-        && ["pending_payment", "payment_review"].includes(current.status)
+        && (["pending_payment", "payment_review"].includes(current.status) || notificationIsActive)
         ? 3000
         : false;
     },
@@ -267,13 +310,16 @@ export default function AdminOrderDetailPage() {
       refresh();
       return result;
     } catch (error) {
+      // A dropped response can happen after the database commit. Always
+      // reconcile from the server so a stale progress card cannot linger.
+      refresh();
       const detail = error?.response?.data?.detail;
       const code = typeof detail === "string" ? detail : detail?.error;
       const messages = {
         payment_evidence_required: "Simpan bukti transfer untuk arsip sebelum konfirmasi.",
         payment_not_eligible: "Pembayaran belum dapat dikonfirmasi.",
         payment_record_missing: "Data pembayaran tidak ditemukan.",
-        invalid_fulfillment_transition: "Order belum dapat masuk ke tahap ini.",
+        invalid_fulfillment_transition: "Tahap order sudah berubah. Status terbaru sedang dimuat ulang.",
         payment_locked: "Pembayaran order sudah terkunci.",
         payment_notification_locked: "Order sudah tidak menunggu pembayaran.",
         payment_notification_already_sent: "Pesan pembayaran sudah terkirim.",
@@ -372,6 +418,7 @@ export default function AdminOrderDetailPage() {
       {isArchived ? <p className="mt-4 rounded border border-[#CD9B3A]/40 bg-[#FDF7E9] px-4 py-3 text-sm text-[#62450D]" data-testid="archived-order-notice">Order ini diarsipkan dan tidak muncul di tahapan aktif. Data tetap tersimpan; pulihkan dari kartu order di filter Diarsipkan untuk melanjutkan perubahan.</p> : null}
 
       {isManual ? <OrderProgress currentStage={order.status} className="mt-6 rounded border border-[#CD9B3A]/30 bg-[#FDF7E9] p-4" testId="order-progress" /> : null}
+      {isManual ? <TelegramOrderNotifications notifications={order.telegram_notifications} /> : null}
 
       <main className="mt-5 space-y-4">
         {isPaymentStage ? (

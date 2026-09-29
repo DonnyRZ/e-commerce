@@ -90,8 +90,10 @@ function WorkflowCard({ item, returnTo, workflowFilter }) {
         ? "Inquiry sudah menjadi order dan tidak dapat dihapus dari sini."
         : code === "inquiry_delivery_in_progress"
           ? "Pesan inquiry sedang diproses Telegram. Coba lagi sebentar."
-          : code === "payment_notification_in_progress"
+        : code === "payment_notification_in_progress"
         ? "Pilihan pembayaran masih dikirim ke Telegram. Coba lagi sesaat."
+        : code === "order_notification_in_progress"
+          ? "Update order masih dikirim ke Telegram. Coba hapus lagi setelah pengiriman selesai."
         : "Aksi order gagal. Periksa koneksi lalu coba lagi.");
     } finally {
       setBusyAction("");

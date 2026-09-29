@@ -1,15 +1,19 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import AdminOrderDetailPage from "./AdminOrderDetailPage";
-import { confirmAdminPayment, uploadAdminPaymentEvidence } from "@/lib/api";
+import { confirmAdminPayment, updateAdminFulfillment, uploadAdminPaymentEvidence } from "@/lib/api";
 
 let mockOrder;
 let mockQueryClient;
 let mockLocationState;
 let resolveUpload;
+let mockOrderQueryOptions;
 
 jest.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: mockOrder, isLoading: false }),
+  useQuery: (options) => {
+    mockOrderQueryOptions = options;
+    return { data: mockOrder, isLoading: false };
+  },
   useQueryClient: () => mockQueryClient,
 }));
 jest.mock("react-router-dom", () => ({
@@ -61,6 +65,7 @@ beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
   mockOrder = pendingOrder();
   mockLocationState = null;
+  mockOrderQueryOptions = null;
   mockQueryClient = {
     invalidateQueries: jest.fn(),
     removeQueries: jest.fn(),
@@ -79,6 +84,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  jest.restoreAllMocks();
 });
 
 test("keeps six-stage payment view in place while evidence is stored for audit", async () => {
@@ -139,6 +145,59 @@ test("confirmed payment advances the shared progress to supplier shipping", asyn
 
   expect(container.querySelector('[data-testid="order-progress"] li[aria-current="step"]').textContent).toContain("Supplier mengirim");
   expect(container.querySelector('[data-testid="active-fulfillment"]')).not.toBeNull();
+});
+
+test("received-by-admin progress updates immediately from the committed response", async () => {
+  jest.spyOn(window, "confirm").mockReturnValue(true);
+  mockOrder.status = "supplier_shipping";
+  mockOrder.payment_state = "paid";
+  mockOrder.payment.status = "paid";
+  const nextOrder = {
+    ...mockOrder,
+    status: "received_by_admin",
+    fulfillment: [{ stage: "received_by_admin", status: "completed", received_at: "2026-09-29T08:35:00Z" }],
+    telegram_notifications: [{ event_key: "fulfillment:received_by_admin", status: "pending" }],
+  };
+  updateAdminFulfillment.mockResolvedValueOnce(nextOrder);
+  await act(async () => root.render(<AdminOrderDetailPage />));
+
+  const advance = [...container.querySelectorAll("button")]
+    .find((button) => button.textContent.includes("Tandai barang diterima admin"));
+  expect(advance).not.toBeNull();
+  await act(async () => {
+    advance.click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(updateAdminFulfillment).toHaveBeenCalledWith("MC-UX-1", { stage: "received_by_admin" });
+  expect(container.querySelector('[data-testid="order-progress"] li[aria-current="step"]').textContent).toContain("Diterima admin");
+  expect(container.querySelector('[data-testid="telegram-order-status-fulfillment:received_by_admin"]').textContent).toContain("Menunggu antrean");
+  expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["admin-order-workflow"] });
+  expect(mockOrderQueryOptions.refetchInterval({ state: { data: nextOrder } })).toBe(3000);
+  expect(mockOrderQueryOptions.refetchInterval({
+    state: { data: { ...nextOrder, telegram_notifications: [{ event_key: "fulfillment:received_by_admin", status: "sent" }] } },
+  })).toBe(false);
+});
+
+test("ambiguous transition response triggers an authoritative order and workflow refresh", async () => {
+  jest.spyOn(window, "confirm").mockReturnValue(true);
+  mockOrder.status = "supplier_shipping";
+  mockOrder.payment_state = "paid";
+  mockOrder.payment.status = "paid";
+  updateAdminFulfillment.mockRejectedValueOnce(new Error("connection dropped after commit"));
+  await act(async () => root.render(<AdminOrderDetailPage />));
+
+  const advance = [...container.querySelectorAll("button")]
+    .find((button) => button.textContent.includes("Tandai barang diterima admin"));
+  await act(async () => {
+    advance.click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["admin-order", "MC-UX-1"] });
+  expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["admin-order-workflow"] });
 });
 
 test("returning from a changed order opens its current workflow stage", async () => {

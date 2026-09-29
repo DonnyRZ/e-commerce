@@ -227,7 +227,7 @@ class OrderLifecycleEndpointTests(unittest.IsolatedAsyncioTestCase):
         )
         session = SimpleNamespace(
             scalar=AsyncMock(return_value=order),
-            execute=AsyncMock(side_effect=[FakeResult(), *[FakeResult() for _ in range(7)]]),
+            execute=AsyncMock(side_effect=[FakeResult(), *[FakeResult() for _ in range(9)]]),
             add=unittest.mock.Mock(),
             commit=AsyncMock(),
         )
@@ -237,7 +237,7 @@ class OrderLifecycleEndpointTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result, {"order_number": "MC-DELETE-1", "deleted": True})
-        self.assertEqual(session.execute.await_count, 8)
+        self.assertEqual(session.execute.await_count, 10)
         delete_statements = [
             str(call.args[0]).upper()
             for call in session.execute.await_args_list
@@ -245,7 +245,7 @@ class OrderLifecycleEndpointTests(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(
             [statement.split(" FROM ", 1)[1].split(" ", 1)[0] for statement in delete_statements],
-            ["ORDER_ITEMS", "ORDER_FULFILLMENT_STAGES", "SELLER_ORDER_FULFILLMENTS", "ORDERS"],
+            ["ORDER_ITEMS", "ORDER_FULFILLMENT_STAGES", "TELEGRAM_ORDER_NOTIFICATION_OUTBOX", "SELLER_ORDER_FULFILLMENTS", "ORDERS"],
         )
         self.assertTrue(any("FROM INVENTORY_RESERVATIONS" in str(call.args[0]).upper() for call in session.execute.await_args_list))
         session.commit.assert_awaited_once()
@@ -274,6 +274,29 @@ class OrderLifecycleEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.detail["error"], "payment_notification_in_progress")
         session.commit.assert_not_awaited()
 
+    async def test_permanent_delete_waits_for_active_order_notification(self):
+        order = SimpleNamespace(id="order-1", order_number="MC-ORDER-SENDING-1", archived_at=None)
+        session = SimpleNamespace(
+            scalar=AsyncMock(return_value=order),
+            execute=AsyncMock(
+                side_effect=[
+                    FakeResult(),
+                    FakeResult([SimpleNamespace(status="sending")]),
+                ]
+            ),
+            add=unittest.mock.Mock(),
+            commit=AsyncMock(),
+        )
+
+        with self.assertRaises(HTTPException) as caught:
+            await permanently_delete_admin_order(
+                "MC-ORDER-SENDING-1", SimpleNamespace(id="admin-1"), session, None
+            )
+
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertEqual(caught.exception.detail["error"], "order_notification_in_progress")
+        session.commit.assert_not_awaited()
+
     async def test_permanent_delete_removes_payment_evidence_and_keeps_audit(self):
         order = SimpleNamespace(
             id="order-1",
@@ -293,7 +316,7 @@ class OrderLifecycleEndpointTests(unittest.IsolatedAsyncioTestCase):
                     FakeResult([payment]),
                     FakeResult([SimpleNamespace(status="sent")]),
                     FakeResult([evidence]),
-                    *[FakeResult() for _ in range(11)],
+                    *[FakeResult() for _ in range(13)],
                 ]
             ),
             add=unittest.mock.Mock(),
@@ -306,7 +329,7 @@ class OrderLifecycleEndpointTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(result["deleted"])
-        self.assertEqual(session.execute.await_count, 14)
+        self.assertEqual(session.execute.await_count, 16)
         delete_tables = [
             str(call.args[0]).upper().split(" FROM ", 1)[1].split(" ", 1)[0]
             for call in session.execute.await_args_list
@@ -321,6 +344,7 @@ class OrderLifecycleEndpointTests(unittest.IsolatedAsyncioTestCase):
                 "PAYMENTS",
                 "ORDER_ITEMS",
                 "ORDER_FULFILLMENT_STAGES",
+                "TELEGRAM_ORDER_NOTIFICATION_OUTBOX",
                 "SELLER_ORDER_FULFILLMENTS",
                 "ORDERS",
             ],
