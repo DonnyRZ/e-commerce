@@ -34,7 +34,10 @@ from routers.shop import router as shop_router
 from routers.checkout import router as checkout_router
 from routers.orders import router as orders_router
 from routers.admin import router as admin_router
-from routers.manual_orders import router as manual_orders_router
+from routers.manual_orders import (
+    payment_notification_dispatch_loop,
+    router as manual_orders_router,
+)
 from routers.cms_admin import router as cms_admin_router
 from routers.cms_public import router as cms_public_router
 from routers.telegram import router as telegram_router
@@ -76,13 +79,16 @@ async def lifespan(_app: FastAPI):
     validate_runtime_config(strict=APP_ENV == "production")
     # Telegram inbox retention is independent from storefront cart inquiries.
     cleanup_task = asyncio.create_task(telegram_inquiry_cleanup_loop())
+    payment_notification_task = asyncio.create_task(
+        payment_notification_dispatch_loop()
+    )
     try:
         yield
     finally:
-        if cleanup_task:
-            cleanup_task.cancel()
+        for task in (cleanup_task, payment_notification_task):
+            task.cancel()
             try:
-                await cleanup_task
+                await task
             except asyncio.CancelledError:
                 pass
         await close_redis()

@@ -608,6 +608,41 @@ class ManualPaymentEvidence(TimestampMixin, Base):
     rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
+class TelegramPaymentNotificationOutbox(TimestampMixin, Base):
+    """Durable delivery attempts for manual-payment Telegram prompts."""
+
+    __tablename__ = "telegram_payment_notification_outbox"
+    __table_args__ = (
+        Index(
+            "ix_telegram_payment_outbox_status_created",
+            "status",
+            "created_at",
+        ),
+        Index(
+            "ix_telegram_payment_outbox_payment_created",
+            "payment_id",
+            "created_at",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'sending', 'sent', 'failed', 'unknown', 'blocked', 'unavailable')",
+            name="ck_telegram_payment_outbox_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    payment_id: Mapped[str] = mapped_column(
+        ForeignKey("payments.id", ondelete="CASCADE")
+    )
+    status: Mapped[str] = mapped_column(String(24), default="pending")
+    claimed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    error_code: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+
+
 class OrderFulfillmentStage(TimestampMixin, Base):
     """Auditable two-leg fulfillment timeline for the single store operator."""
 

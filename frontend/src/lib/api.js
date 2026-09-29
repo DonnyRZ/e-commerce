@@ -280,11 +280,16 @@ export const createAdminTelegramOrder = (id, data, idempotencyKey) =>
   api.post(`/v1/admin/telegram-inbox/${id}/orders`, data, {
     headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
   }).then((r) => r.data);
-export const uploadAdminPaymentEvidence = (orderNumber, file) => {
+export const uploadAdminPaymentEvidence = (orderNumber, file, onProgress) => {
   const fd = new FormData();
   fd.append("file", file);
   return api.post(`/v1/admin/orders/${orderNumber}/payment-evidence`, fd, {
     headers: { "Content-Type": undefined },
+    onUploadProgress: (event) => {
+      if (event.total && onProgress) {
+        onProgress(Math.min(99, Math.round((event.loaded / event.total) * 100)));
+      }
+    },
   }).then((r) => r.data);
 };
 export const getAdminPaymentEvidence = (orderNumber) =>

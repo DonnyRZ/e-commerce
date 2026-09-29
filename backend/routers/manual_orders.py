@@ -7,7 +7,9 @@ shipping details, then keeps payment and fulfillment transitions server-side.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 import mimetypes
 import secrets
 import uuid
@@ -39,6 +41,7 @@ from db.models import (
     OrderItem,
     Payment,
     PaymentDestination,
+    TelegramPaymentNotificationOutbox,
     Product,
     ProductVariant,
     TelegramConversation,
@@ -46,7 +49,7 @@ from db.models import (
     User,
     utcnow,
 )
-from db.session import get_session
+from db.session import SessionLocal, get_session
 from storage.payment_evidence import delete as delete_evidence_file
 from storage.payment_evidence import resolve as resolve_evidence_file
 from storage.payment_evidence import save as save_evidence_file
@@ -63,6 +66,9 @@ from telegram_inbox_service import record_outgoing_message
 
 router = APIRouter(prefix="/api/v1", tags=["manual-orders"])
 require_admin = require_roles("admin")
+logger = logging.getLogger("muslimah_cantik.payment_notifications")
+PAYMENT_NOTIFICATION_POLL_SECONDS = 1
+PAYMENT_NOTIFICATION_STALE_AFTER = timedelta(minutes=2)
 
 ORDER_STAGES = {
     "supplier_shipping": {"from": "paid", "to": "supplier_shipping"},
@@ -248,98 +254,178 @@ async def _notify_order(
         return
 
 
-async def _send_payment_prompt(order_number: str, session: AsyncSession) -> None:
-    """Send the stable order-payment message and persist its delivery outcome."""
-    order = await session.scalar(
-        select(Order).where(Order.order_number == order_number)
-    )
-    if not order:
-        return
-    payment = await session.scalar(
-        select(Payment).where(Payment.order_id == order.id).with_for_update()
-    )
-    if not payment:
-        return
-    target = await _telegram_target_for_order(session, order.id)
-    destinations = (
-        await session.execute(
-            select(PaymentDestination)
-            .where(PaymentDestination.is_active.is_(True))
-            .order_by(PaymentDestination.slot)
-        )
-    ).scalars().all()
-    if not destinations:
-        payment.telegram_payment_status = "blocked"
-        payment.telegram_payment_error = "no_active_destinations"
-        await session.commit()
-        return
-    if (
-        not target
-        or not TELEGRAM_BOT_TOKEN
-    ):
-        payment.telegram_payment_status = "unavailable"
-        payment.telegram_payment_error = "telegram_chat_unavailable"
-        await session.commit()
-        return
-    connection_id, chat_id, locale = target
-
-    token = secrets.token_urlsafe(12)
-    payment.telegram_selection_token = token
-    # A retry gets a fresh callback token and message. Clear the previous
-    # message id so a customer can tap the newly sent keyboard immediately,
-    # before this request receives and persists Telegram's message_id.
+def _queue_payment_prompt(session: AsyncSession, payment: Payment) -> None:
+    """Persist a durable send request without waiting for Telegram's API."""
+    payment.telegram_selection_token = secrets.token_urlsafe(12)
     payment.telegram_payment_message_id = None
     payment.telegram_payment_status = "sending"
     payment.telegram_payment_error = None
-    await session.commit()
+    session.add(
+        TelegramPaymentNotificationOutbox(payment_id=payment.id, status="pending")
+    )
 
-    count = await session.scalar(
-        select(func.coalesce(func.sum(OrderItem.quantity), 0)).where(
-            OrderItem.order_id == order.id
-        )
-    )
-    tracking_link = (
-        f"{FRONTEND_URL}/orders/track?order_number={order.order_number}&token={order.guest_access_token}"
-        if order.guest_access_token
-        else f"{FRONTEND_URL}/orders/{order.order_number}"
-    )
-    text = payment_prompt_text(
-        order, int(count or 0), locale, tracking_link
-    )
-    try:
-        result = await bot_request(
-            TELEGRAM_BOT_TOKEN,
-            "sendMessage",
-            {
-                "business_connection_id": connection_id,
-                "chat_id": chat_id,
-                "text": text[:3900],
-                "reply_markup": payment_choice_keyboard(
-                    destinations, token, locale
-                ),
-            },
-        )
-    except TimeoutError:
-        payment.telegram_payment_status = "unknown"
-        payment.telegram_payment_error = "delivery_outcome_unknown"
-        await session.commit()
-        return
-    except TelegramDeliveryError:
-        payment.telegram_payment_status = "failed"
-        payment.telegram_payment_error = "telegram_rejected_message"
-        await session.commit()
-        return
 
-    message_id = result.get("message_id") if isinstance(result, dict) else None
-    payment.telegram_payment_message_id = (
-        message_id if isinstance(message_id, int) and not isinstance(message_id, bool) else None
-    )
-    payment.telegram_payment_status = "sent"
-    payment.telegram_payment_error = None
-    await session.commit()
-    await record_outgoing_message(
-        session, connection_id, chat_id, result, text[:3900]
-    )
+async def _recover_stale_payment_notifications(session: AsyncSession) -> None:
+    """Mark interrupted requests ambiguous; never resend them automatically."""
+    stale_before = utcnow() - PAYMENT_NOTIFICATION_STALE_AFTER
+    rows = (
+        await session.execute(
+            select(TelegramPaymentNotificationOutbox)
+            .where(
+                TelegramPaymentNotificationOutbox.status == "sending",
+                TelegramPaymentNotificationOutbox.claimed_at <= stale_before,
+            )
+            .with_for_update()
+        )
+    ).scalars().all()
+    for row in rows:
+        row.status = "unknown"
+        row.error_code = "delivery_outcome_unknown"
+        row.completed_at = utcnow()
+        payment = await session.get(Payment, row.payment_id)
+        if payment and payment.telegram_payment_status == "sending":
+            payment.telegram_payment_status = "unknown"
+            payment.telegram_payment_error = "delivery_outcome_unknown"
+
+
+async def _dispatch_one_payment_notification() -> bool:
+    """Claim and send one queued prompt. The outbox survives API restarts."""
+    async with SessionLocal() as session:
+        row = await session.scalar(
+            select(TelegramPaymentNotificationOutbox)
+            .where(TelegramPaymentNotificationOutbox.status == "pending")
+            .order_by(TelegramPaymentNotificationOutbox.created_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        if not row:
+            return False
+        row.status = "sending"
+        row.claimed_at = utcnow()
+        await session.commit()
+
+        payment = await session.get(Payment, row.payment_id)
+        order = await session.get(Order, payment.order_id) if payment else None
+        if not payment or not order:
+            row.status = "failed"
+            row.error_code = "payment_or_order_missing"
+            row.completed_at = utcnow()
+            await session.commit()
+            return True
+        if payment.status != "pending" or order.status != "pending_payment":
+            row.status = "failed"
+            row.error_code = "payment_notification_locked"
+            row.completed_at = utcnow()
+            await session.commit()
+            return True
+
+        destinations = (
+            await session.execute(
+                select(PaymentDestination)
+                .where(PaymentDestination.is_active.is_(True))
+                .order_by(PaymentDestination.slot)
+            )
+        ).scalars().all()
+        if not destinations:
+            row.status = "blocked"
+            row.error_code = "no_active_destinations"
+            row.completed_at = utcnow()
+            payment.telegram_payment_status = "blocked"
+            payment.telegram_payment_error = "no_active_destinations"
+            await session.commit()
+            return True
+
+        target = await _telegram_target_for_order(session, order.id)
+        if not target or not TELEGRAM_BOT_TOKEN:
+            row.status = "unavailable"
+            row.error_code = "telegram_chat_unavailable"
+            row.completed_at = utcnow()
+            payment.telegram_payment_status = "unavailable"
+            payment.telegram_payment_error = "telegram_chat_unavailable"
+            await session.commit()
+            return True
+
+        connection_id, chat_id, locale = target
+        token = payment.telegram_selection_token or secrets.token_urlsafe(12)
+        payment.telegram_selection_token = token
+        count = await session.scalar(
+            select(func.coalesce(func.sum(OrderItem.quantity), 0)).where(
+                OrderItem.order_id == order.id
+            )
+        )
+        tracking_link = (
+            f"{FRONTEND_URL}/orders/track?order_number={order.order_number}&token={order.guest_access_token}"
+            if order.guest_access_token
+            else f"{FRONTEND_URL}/orders/{order.order_number}"
+        )
+        message_text = payment_prompt_text(order, int(count or 0), locale, tracking_link)
+        await session.commit()
+
+        try:
+            result = await bot_request(
+                TELEGRAM_BOT_TOKEN,
+                "sendMessage",
+                {
+                    "business_connection_id": connection_id,
+                    "chat_id": chat_id,
+                    "text": message_text[:3900],
+                    "reply_markup": payment_choice_keyboard(destinations, token, locale),
+                },
+            )
+        except TelegramDeliveryError:
+            row.status = "failed"
+            row.error_code = "telegram_rejected_message"
+            row.completed_at = utcnow()
+            payment.telegram_payment_status = "failed"
+            payment.telegram_payment_error = "telegram_rejected_message"
+            await session.commit()
+            return True
+        except Exception:
+            # Timeouts and transport errors can happen after Telegram accepted
+            # the message, so the outbox must not retry them automatically.
+            logger.exception("Telegram payment prompt delivery outcome is unknown")
+            row.status = "unknown"
+            row.error_code = "delivery_outcome_unknown"
+            row.completed_at = utcnow()
+            payment.telegram_payment_status = "unknown"
+            payment.telegram_payment_error = "delivery_outcome_unknown"
+            await session.commit()
+            return True
+
+        message_id = result.get("message_id") if isinstance(result, dict) else None
+        payment.telegram_payment_message_id = (
+            message_id
+            if isinstance(message_id, int) and not isinstance(message_id, bool)
+            else None
+        )
+        payment.telegram_payment_status = "sent"
+        payment.telegram_payment_error = None
+        row.status = "sent"
+        row.error_code = None
+        row.completed_at = utcnow()
+        await session.commit()
+        try:
+            await record_outgoing_message(
+                session, connection_id, chat_id, result, message_text[:3900]
+            )
+        except Exception:
+            logger.exception("Could not record sent payment prompt in Telegram inbox")
+        return True
+
+
+async def payment_notification_dispatch_loop() -> None:
+    """Background dispatcher for durable Telegram payment prompts."""
+    while True:
+        try:
+            async with SessionLocal() as session:
+                await _recover_stale_payment_notifications(session)
+                await session.commit()
+            await _dispatch_one_payment_notification()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Payment notification outbox iteration failed")
+        await asyncio.sleep(PAYMENT_NOTIFICATION_POLL_SECONDS)
 
 
 async def _inquiry_id_for_order(session: AsyncSession, order_id: str) -> Optional[str]:
@@ -664,13 +750,63 @@ async def list_order_workflow(
         .scalars()
         .all()
     )
+    order_ids = [order.id for order in orders]
+    item_counts = (
+        {
+            order_id: int(count or 0)
+            for order_id, count in (
+                await session.execute(
+                    select(OrderItem.order_id, func.count(OrderItem.id))
+                    .where(OrderItem.order_id.in_(order_ids))
+                    .group_by(OrderItem.order_id)
+                )
+            ).all()
+        }
+        if order_ids
+        else {}
+    )
+    payments_by_order = (
+        {
+            payment.order_id: payment
+            for payment in (
+                await session.execute(
+                    select(Payment).where(Payment.order_id.in_(order_ids))
+                )
+            ).scalars().all()
+        }
+        if order_ids
+        else {}
+    )
+    evidence_counts = (
+        {
+            payment_id: int(count or 0)
+            for payment_id, count in (
+                await session.execute(
+                    select(ManualPaymentEvidence.payment_id, func.count(ManualPaymentEvidence.id))
+                    .where(
+                        ManualPaymentEvidence.payment_id.in_(
+                            [payment.id for payment in payments_by_order.values()]
+                        )
+                    )
+                    .group_by(ManualPaymentEvidence.payment_id)
+                )
+            ).all()
+        }
+        if payments_by_order
+        else {}
+    )
     for order in orders:
-        items_count = await session.scalar(
-            select(func.count(OrderItem.id)).where(OrderItem.order_id == order.id)
-        )
+        items_count = item_counts.get(order.id, 0)
+        payment = payments_by_order.get(order.id)
+        evidence_count = evidence_counts.get(payment.id, 0) if payment else 0
         address = order.shipping_address or {}
         linked_user = await session.get(User, order.user_id) if order.user_id else None
         normalized_stage = order.status if order.status in WORKFLOW_STAGES else order.status
+        next_action = (
+            "confirm_payment"
+            if order.status in {"pending_payment", "payment_review"} and evidence_count
+            else _workflow_next_action(normalized_stage)
+        )
         entries.append(
             {
                 "kind": "order",
@@ -689,7 +825,9 @@ async def list_order_workflow(
                 "subtotal": order.subtotal,
                 "grand_total": order.grand_total,
                 "currency": order.currency,
-                "next_action": _workflow_next_action(normalized_stage),
+                "evidence_count": int(evidence_count or 0),
+                "telegram_notification_status": payment.telegram_payment_status if payment else None,
+                "next_action": next_action,
             }
         )
 
@@ -839,6 +977,8 @@ async def create_manual_order(
         merchant_trans_id=f"MANUAL-{uuid.uuid4().hex[:20].upper()}",
     )
     session.add(payment)
+    await session.flush()
+    _queue_payment_prompt(session, payment)
     inquiry.order_id = order.id
     inquiry.status = "order_created"
     # The order items now contain the immutable commercial snapshot. Remove
@@ -853,7 +993,6 @@ async def create_manual_order(
         {"inquiry": reference},
     )
     await session.commit()
-    await _send_payment_prompt(order.order_number, session)
     return await _admin_order_payload(session, order)
 
 
@@ -875,14 +1014,37 @@ async def retry_payment_notification(
         raise _error(409, "payment_notification_locked")
     if payment.destination_snapshot:
         raise _error(409, "payment_destination_already_selected")
+    latest_attempt = await session.scalar(
+        select(TelegramPaymentNotificationOutbox)
+        .where(TelegramPaymentNotificationOutbox.payment_id == payment.id)
+        .order_by(TelegramPaymentNotificationOutbox.created_at.desc())
+        .limit(1)
+        .with_for_update()
+    )
     if payment.telegram_payment_status == "sending":
         sending_is_stale = bool(
-            payment.updated_at and payment.updated_at <= utcnow() - timedelta(minutes=2)
+            (
+                latest_attempt
+                and latest_attempt.status == "sending"
+                and latest_attempt.claimed_at
+                and latest_attempt.claimed_at <= utcnow() - PAYMENT_NOTIFICATION_STALE_AFTER
+            )
+            or (
+                latest_attempt is None
+                and payment.updated_at
+                and payment.updated_at <= utcnow() - PAYMENT_NOTIFICATION_STALE_AFTER
+            )
         )
         if not sending_is_stale:
             raise _error(409, "payment_notification_in_progress")
         if not payload.confirm_uncertain:
             raise _error(409, "payment_notification_outcome_uncertain")
+        if latest_attempt:
+            latest_attempt.status = "unknown"
+            latest_attempt.error_code = "delivery_outcome_unknown"
+            latest_attempt.completed_at = utcnow()
+        payment.telegram_payment_status = "unknown"
+        payment.telegram_payment_error = "delivery_outcome_unknown"
     if payment.telegram_payment_status == "sent":
         raise _error(409, "payment_notification_already_sent")
     if (
@@ -899,14 +1061,15 @@ async def retry_payment_notification(
         "sending",
     }:
         raise _error(409, "payment_notification_not_retryable")
-    await _send_payment_prompt(order_number, session)
+    previous_status = payment.telegram_payment_status
+    _queue_payment_prompt(session, payment)
     await audit(
         session,
         user.id,
         "admin.payment_notification.retry",
         "order",
         order.order_number,
-        {"status": payment.telegram_payment_status},
+        {"previous_status": previous_status},
     )
     await session.commit()
     return await _admin_order_payload(session, order)
@@ -961,12 +1124,14 @@ async def upload_payment_evidence(
         uploaded_by=user.id,
     )
     session.add(evidence)
-    payment.status = "pending_review"
-    payment.failure_code = None
-    payment.failure_note = None
-    payment.review_note = None
-    order.payment_state = "review"
-    order.status = "payment_review"
+    # New orders stay in the single payment stage until an admin has checked
+    # the bank statement and explicitly confirmed receipt. Preserve the old
+    # review status for already-existing orders during the UX transition.
+    if order.status == "payment_review":
+        payment.status = "pending_review"
+        payment.failure_code = None
+        payment.failure_note = None
+        payment.review_note = None
     await audit(
         session,
         user.id,
@@ -1044,7 +1209,18 @@ async def confirm_manual_payment(
         raise _error(409, "payment_record_missing")
     if payment.status == "paid":
         return await _admin_order_payload(session, order)
-    if payment.status != "pending_review":
+    if payment.status not in {"pending", "pending_review"} or order.status not in {
+        "pending_payment",
+        "payment_review",
+    }:
+        raise _error(409, "payment_not_eligible")
+    evidence_id = await session.scalar(
+        select(ManualPaymentEvidence.id)
+        .where(ManualPaymentEvidence.payment_id == payment.id)
+        .order_by(ManualPaymentEvidence.created_at.desc())
+        .limit(1)
+    )
+    if not evidence_id:
         raise _error(409, "payment_evidence_required")
     now = utcnow()
     payment.status = "paid"

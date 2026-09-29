@@ -28,7 +28,8 @@ const mockWorkflowResponse = {
       item_count: 2,
       grand_total: 200000,
       currency: "UZS",
-      next_action: "verify_payment",
+      evidence_count: 1,
+      next_action: "confirm_payment",
     },
   ],
   counts: { payment: 2 },
@@ -77,8 +78,18 @@ test("groups payment stages into one filter and shows each order's current payme
   expect(filterButtons.some((button) => button.textContent.includes("Pembayaran diverifikasi"))).toBe(false);
   expect(mockQueryOptions.queryKey[1].stage).toBe("payment");
 
+  const overview = container.querySelector('[data-testid="workflow-overview"]');
+  expect(overview.querySelectorAll("li")).toHaveLength(6);
+  expect([...overview.querySelectorAll("li")].map((step) => step.textContent.trim())).toEqual([
+    "1Inquiry",
+    "2Pembayaran",
+    "3Supplier mengirim",
+    "4Diterima admin",
+    "5Dikirim ke customer",
+    "6Selesai",
+  ]);
   expect(container.textContent).toContain("Menunggu transfer");
-  expect(container.textContent).toContain("Bukti perlu diperiksa");
+  expect(container.textContent).toContain("Bukti tersimpan · siap dikonfirmasi");
   expect(container.querySelectorAll('[aria-label="Order progress"]')).toHaveLength(2);
   expect(container.textContent).toContain("Satu transfer per order");
 });
