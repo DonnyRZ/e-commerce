@@ -5,7 +5,7 @@ import { ArrowLeft, Check, ChevronDown, Clock3, FileText, Landmark, MapPin, Pack
 import { toast } from "sonner";
 import { confirmAdminPayment, getAdminOrder, retryAdminPaymentNotification, updateAdminOrderStatus, updateAdminFulfillment, uploadAdminPaymentEvidence } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
-import { OrderProgress, ORDER_STEPS, normalizeOrderStage } from "./OrderProgress";
+import { OrderProgress, ORDER_STEPS, workflowStageForStatus } from "./OrderProgress";
 import { StatusPill, fmtDate, fmtMoney } from "./adminUtils";
 
 const MAX_EVIDENCE_BYTES = 8 * 1024 * 1024;
@@ -398,7 +398,10 @@ export default function AdminOrderDetailPage() {
   let workflowReturnTo = requestedReturnTo === "/orders" || requestedReturnTo?.startsWith("/orders?")
     ? requestedReturnTo
     : "/orders";
-  const currentWorkflowStage = normalizeOrderStage(order.status);
+  const currentWorkflowStage = workflowStageForStatus(order.status);
+  const currentWorkflowLabel = ORDER_STEPS.find(([key]) => key === currentWorkflowStage)?.[1]
+    || MANUAL_STATUS_LABELS[order.status]
+    || order.status;
   if (routeState.workflowFilter && !["all", "archived"].includes(routeState.workflowFilter) && currentWorkflowStage !== routeState.workflowFilter) {
     const [path, search = ""] = workflowReturnTo.split("?", 2);
     const returnParams = new URLSearchParams(search);
@@ -412,12 +415,12 @@ export default function AdminOrderDetailPage() {
       <Link to={workflowReturnTo} className="inline-flex items-center gap-2 text-sm text-neutral-500 hover:text-neutral-900"><ArrowLeft className="h-4 w-4" aria-hidden="true" /> Kembali ke workflow</Link>
       <header className="mt-5 flex flex-wrap items-start justify-between gap-4">
         <div><p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#CD9B3A]">Order detail</p><h1 className="mt-2 text-2xl font-semibold tracking-tight text-[#02422C]">{order.order_number}</h1><p className="mt-1 text-sm text-neutral-500">{fmtDate(order.created_at)} · {order.email || "Guest Telegram"}</p></div>
-        <div className="flex flex-wrap items-center gap-2">{isManual ? <StatusPill value={MANUAL_STATUS_LABELS[order.status] || order.status} tone={["pending_payment", "payment_review"].includes(order.status) ? "amber" : order.status === "delivered" ? "emerald" : "blue"} /> : <><StatusPill value={order.status} /><StatusPill value={order.payment_state} /></>}{isArchived ? <StatusPill value="Diarsipkan" tone="amber" /> : null}{!isManual && legacyNext && !isArchived ? <button type="button" disabled={busy} onClick={() => run(() => updateAdminOrderStatus(orderNumber, legacyNext), `Order dipindahkan ke ${legacyNext}.`, `Pindahkan order ke ${legacyNext}?`)} className="h-10 bg-[#02422C] px-4 text-sm font-semibold text-white disabled:opacity-50">Tandai {legacyNext}</button> : null}</div>
+        <div className="flex flex-wrap items-center gap-2">{isManual ? <StatusPill value={["pending_payment", "payment_review"].includes(order.status) ? MANUAL_STATUS_LABELS[order.status] : currentWorkflowLabel} tone={["pending_payment", "payment_review"].includes(order.status) ? "amber" : order.status === "delivered" ? "emerald" : "blue"} /> : <><StatusPill value={order.status} /><StatusPill value={order.payment_state} /></>}{isArchived ? <StatusPill value="Diarsipkan" tone="amber" /> : null}{!isManual && legacyNext && !isArchived ? <button type="button" disabled={busy} onClick={() => run(() => updateAdminOrderStatus(orderNumber, legacyNext), `Order dipindahkan ke ${legacyNext}.`, `Pindahkan order ke ${legacyNext}?`)} className="h-10 bg-[#02422C] px-4 text-sm font-semibold text-white disabled:opacity-50">Tandai {legacyNext}</button> : null}</div>
       </header>
 
       {isArchived ? <p className="mt-4 rounded border border-[#CD9B3A]/40 bg-[#FDF7E9] px-4 py-3 text-sm text-[#62450D]" data-testid="archived-order-notice">Order ini diarsipkan dan tidak muncul di tahapan aktif. Data tetap tersimpan; pulihkan dari kartu order di filter Diarsipkan untuk melanjutkan perubahan.</p> : null}
 
-      {isManual ? <OrderProgress currentStage={order.status} className="mt-6 rounded border border-[#CD9B3A]/30 bg-[#FDF7E9] p-4" testId="order-progress" /> : null}
+      {isManual ? <OrderProgress currentStage={currentWorkflowStage} className="mt-6 rounded border border-[#CD9B3A]/30 bg-[#FDF7E9] p-4" testId="order-progress" /> : null}
       {isManual ? <TelegramOrderNotifications notifications={order.telegram_notifications} /> : null}
 
       <main className="mt-5 space-y-4">
@@ -457,7 +460,7 @@ export default function AdminOrderDetailPage() {
                 <input disabled={busy || isArchived} className="h-10 border border-neutral-300 bg-white px-3 text-sm disabled:bg-neutral-100" placeholder="Carrier (opsional)" id="fulfillment-carrier" />
                 <input disabled={busy || isArchived} className="h-10 border border-neutral-300 bg-white px-3 text-sm disabled:bg-neutral-100" placeholder="Nomor resi (opsional)" id="fulfillment-tracking" />
                 <input disabled={busy || isArchived} className="h-10 border border-neutral-300 bg-white px-3 text-sm disabled:bg-neutral-100 sm:col-span-2" placeholder="Catatan internal (opsional)" id="fulfillment-note" />
-                <button type="button" disabled={busy || isArchived} onClick={() => { const carrier = document.getElementById("fulfillment-carrier")?.value; const tracking_number = document.getElementById("fulfillment-tracking")?.value; const note = document.getElementById("fulfillment-note")?.value; run(() => updateAdminFulfillment(orderNumber, { stage: nextStage, carrier: carrier || undefined, tracking_number: tracking_number || undefined, note: note || undefined }), NEXT_LABEL[nextStage]); }} className="h-10 bg-[#02422C] px-4 text-sm font-semibold text-white disabled:opacity-50 sm:w-fit" data-testid="fulfillment-advance" data-next-stage={nextStage}>{busy ? "Menyimpan…" : NEXT_LABEL[nextStage]}</button>
+                <button type="button" disabled={busy || isArchived} onClick={() => { const carrier = document.getElementById("fulfillment-carrier")?.value; const tracking_number = document.getElementById("fulfillment-tracking")?.value; const note = document.getElementById("fulfillment-note")?.value; run(() => updateAdminFulfillment(orderNumber, { stage: nextStage, carrier: carrier || undefined, tracking_number: tracking_number || undefined, note: note || undefined }), NEXT_LABEL[nextStage], `Simpan tahap ${NEXT_LABEL[nextStage]}?`); }} className="h-10 bg-[#02422C] px-4 text-sm font-semibold text-white disabled:opacity-50 sm:w-fit" data-testid="fulfillment-advance" data-next-stage={nextStage}>{busy ? "Menyimpan…" : NEXT_LABEL[nextStage]}</button>
               </div>
             ) : null}
             <div className="mt-5 space-y-2">{(order.fulfillment || []).map((item) => <div key={item.stage} className="flex flex-wrap justify-between gap-2 border-t border-[#02422C]/10 pt-3 text-xs"><span className="font-medium text-[#02422C]">{ORDER_STEPS.find(([key]) => key === item.stage)?.[1] || item.stage}</span><span className="text-neutral-600">{item.tracking_number || "Tanpa resi"} · {fmtDate(item.shipped_at || item.received_at)}</span></div>)}</div>

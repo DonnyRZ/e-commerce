@@ -16,6 +16,21 @@ export function normalizeOrderStage(stage) {
   return stage;
 }
 
+export function workflowStageForStatus(status) {
+  const statusStages = {
+    pending_payment: "payment",
+    payment_review: "payment",
+    paid: "supplier_shipping",
+    processing: "supplier_shipping",
+    supplier_shipping: "received_by_admin",
+    received_by_admin: "customer_shipping",
+    customer_shipping: "customer_shipping",
+    shipped: "customer_shipping",
+    delivered: "delivered",
+  };
+  return statusStages[status] || normalizeOrderStage(status);
+}
+
 export function OrderProgress({
   currentStage,
   variant = "full",

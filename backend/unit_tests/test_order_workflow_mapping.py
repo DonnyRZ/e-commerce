@@ -16,6 +16,7 @@ os.environ.setdefault("JWT_SECRET", "isolated-test-secret-never-used-for-real-au
 
 from routers.manual_orders import (
     _workflow_counts,
+    _workflow_filter_stage,
     _workflow_page,
     _workflow_stage,
     archive_admin_order,
@@ -51,13 +52,20 @@ class OrderWorkflowMappingTests(unittest.TestCase):
             {"order_number": "DONE", "status": "delivered", "stage": _workflow_stage("delivered")},
         ]
 
-    def test_legacy_and_intermediate_statuses_map_to_visible_steps(self):
+    def test_persisted_statuses_map_to_the_next_visible_checkpoint(self):
         self.assertEqual(_workflow_stage("paid"), "supplier_shipping")
         self.assertEqual(_workflow_stage("processing"), "supplier_shipping")
+        self.assertEqual(_workflow_stage("supplier_shipping"), "received_by_admin")
+        self.assertEqual(_workflow_stage("received_by_admin"), "customer_shipping")
+        self.assertEqual(_workflow_stage("customer_shipping"), "customer_shipping")
         self.assertEqual(_workflow_stage("shipped"), "customer_shipping")
+        self.assertEqual(_workflow_stage("delivered"), "delivered")
         self.assertEqual(_workflow_stage("payment_review"), "payment")
+        self.assertEqual(_workflow_filter_stage("supplier_shipping"), "supplier_shipping")
+        self.assertEqual(_workflow_filter_stage("received_by_admin"), "received_by_admin")
+        self.assertEqual(_workflow_filter_stage("paid"), "supplier_shipping")
 
-    def test_stage_counts_include_every_status_alias_independent_of_selected_filter(self):
+    def test_stage_counts_partition_all_statuses_and_filter_by_next_checkpoint(self):
         status_counts = {}
         for entry in self.entries:
             status_counts[entry["status"]] = status_counts.get(entry["status"], 0) + 1
@@ -66,34 +74,38 @@ class OrderWorkflowMappingTests(unittest.TestCase):
             self.entries, "supplier_shipping", page=1, page_size=20
         )
 
-        self.assertEqual(total, 3)
+        self.assertEqual(total, 2)
         self.assertEqual(page, 1)
-        self.assertEqual(len(filtered), 3)
-        self.assertEqual(counts["supplier_shipping"], 3)
-        self.assertEqual(counts["customer_shipping"], 2)
+        self.assertEqual(len(filtered), 2)
+        self.assertEqual(counts["supplier_shipping"], 2)
+        self.assertEqual(counts["received_by_admin"], 1)
+        self.assertEqual(counts["customer_shipping"], 3)
         self.assertEqual(counts["payment"], 2)
         self.assertEqual(counts["inquiry"], 4)
-        self.assertEqual(counts["received_by_admin"], 1)
         self.assertEqual(counts["delivered"], 1)
+        self.assertEqual(
+            sum(counts[stage] for stage in ("payment", "supplier_shipping", "received_by_admin", "customer_shipping", "delivered")),
+            len(self.entries),
+        )
         self.assertEqual(counts["paid"], 1)
         self.assertEqual(counts["payment_review"], 1)
 
     def test_pagination_clamps_after_orders_move_between_stages(self):
         filtered, total, page = _workflow_page(
-            self.entries, "supplier_shipping", page=99, page_size=2
+            self.entries, "supplier_shipping", page=99, page_size=1
         )
-        self.assertEqual(total, 3)
+        self.assertEqual(total, 2)
         self.assertEqual(page, 2)
         self.assertEqual([entry["order_number"] for entry in filtered], ["SUP-LEGACY"])
 
 
 class OrderWorkflowEndpointTests(unittest.IsolatedAsyncioTestCase):
-    async def test_received_by_admin_filter_returns_stage_four_order(self):
-        received_order = SimpleNamespace(
-            id="order-received",
-            order_number="MC-RECEIVED-1",
+    async def test_received_by_admin_filter_contains_supplier_shipped_order(self):
+        shipped_order = SimpleNamespace(
+            id="order-supplier-shipped",
+            order_number="MC-SUPPLIER-SHIPPED-1",
             order_source="telegram_manual",
-            status="received_by_admin",
+            status="supplier_shipping",
             payment_state="paid",
             archived_at=None,
             created_at=datetime(2026, 9, 29, tzinfo=timezone.utc),
@@ -109,9 +121,9 @@ class OrderWorkflowEndpointTests(unittest.IsolatedAsyncioTestCase):
             execute=AsyncMock(
                 side_effect=[
                     FakeResult(),
-                    FakeResult([("supplier_shipping", 1), ("received_by_admin", 1)]),
-                    FakeResult([received_order]),
-                    FakeResult([("order-received", 1)]),
+                    FakeResult([("paid", 1), ("supplier_shipping", 1)]),
+                    FakeResult([shipped_order]),
+                    FakeResult([("order-supplier-shipped", 1)]),
                     FakeResult(),
                 ]
             ),
@@ -128,17 +140,17 @@ class OrderWorkflowEndpointTests(unittest.IsolatedAsyncioTestCase):
             session=session,
         )
 
-        self.assertEqual([item["order_number"] for item in response["items"]], ["MC-RECEIVED-1"])
-        self.assertEqual(response["items"][0]["status"], "received_by_admin")
+        self.assertEqual([item["order_number"] for item in response["items"]], ["MC-SUPPLIER-SHIPPED-1"])
+        self.assertEqual(response["items"][0]["status"], "supplier_shipping")
         self.assertEqual(response["items"][0]["stage"], "received_by_admin")
-        self.assertEqual(response["items"][0]["next_action"], "ship_customer")
+        self.assertEqual(response["items"][0]["next_action"], "receive_admin")
         self.assertEqual(response["counts"]["received_by_admin"], 1)
         self.assertEqual(response["counts"]["supplier_shipping"], 1)
 
         order_query = session.execute.await_args_list[2].args[0]
         self.assertEqual(
             set(order_query.compile().params["status_1"]),
-            {"received_by_admin"},
+            {"supplier_shipping"},
         )
 
     async def test_supplier_filter_includes_paid_rows_and_keeps_global_counts(self):
@@ -183,7 +195,7 @@ class OrderWorkflowEndpointTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([item["order_number"] for item in response["items"]], ["MC-PAID-1"])
         self.assertEqual(response["items"][0]["stage"], "supplier_shipping")
-        self.assertEqual(response["counts"]["supplier_shipping"], 5)
+        self.assertEqual(response["counts"]["supplier_shipping"], 3)
         self.assertEqual(response["counts"]["payment"], 1)
         self.assertEqual(response["total"], 1)
 
@@ -191,7 +203,57 @@ class OrderWorkflowEndpointTests(unittest.IsolatedAsyncioTestCase):
         order_query = session.execute.await_args_list[2].args[0]
         self.assertIn("ARCHIVED_AT IS NULL", str(count_query).upper())
         status_filter = order_query.compile().params["status_1"]
-        self.assertEqual(set(status_filter), {"paid", "processing", "supplier_shipping"})
+        self.assertEqual(set(status_filter), {"paid", "processing"})
+
+    async def test_customer_shipping_filter_includes_received_and_in_transit_orders(self):
+        order = SimpleNamespace(
+            id="order-received",
+            order_number="MC-RECEIVED-1",
+            order_source="telegram_manual",
+            status="received_by_admin",
+            payment_state="paid",
+            archived_at=None,
+            created_at=datetime(2026, 9, 29, tzinfo=timezone.utc),
+            user_id=None,
+            shipping_address={},
+            guest_email="customer@example.com",
+            subtotal=100,
+            grand_total=120,
+            currency="UZS",
+        )
+        session = SimpleNamespace(
+            scalar=AsyncMock(return_value=0),
+            execute=AsyncMock(
+                side_effect=[
+                    FakeResult(),
+                    FakeResult([("received_by_admin", 1), ("customer_shipping", 1), ("delivered", 1)]),
+                    FakeResult([order]),
+                    FakeResult([("order-received", 1)]),
+                    FakeResult(),
+                ]
+            ),
+            get=AsyncMock(return_value=None),
+        )
+
+        response = await list_order_workflow(
+            scope="all",
+            stage="customer_shipping",
+            q=None,
+            page=1,
+            page_size=20,
+            user=SimpleNamespace(id="admin"),
+            session=session,
+        )
+
+        self.assertEqual(response["items"][0]["stage"], "customer_shipping")
+        self.assertEqual(response["items"][0]["next_action"], "ship_customer")
+        self.assertEqual(response["counts"]["customer_shipping"], 2)
+        self.assertEqual(response["counts"]["delivered"], 1)
+        order_query = session.execute.await_args_list[2].args[0]
+        self.assertEqual(
+            set(order_query.compile().params["status_1"]),
+            {"received_by_admin", "customer_shipping", "shipped"},
+        )
 
     async def test_archived_filter_returns_archived_orders_but_not_active_counts(self):
         archived_order = SimpleNamespace(
@@ -236,7 +298,9 @@ class OrderWorkflowEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["order_number"] for item in response["items"]], ["MC-ARCHIVED-1"])
         self.assertEqual(response["items"][0]["archived_at"], archived_order.archived_at)
         self.assertEqual(response["counts"]["archived"], 1)
-        self.assertEqual(response["counts"]["supplier_shipping"], 3)
+        self.assertEqual(response["counts"]["supplier_shipping"], 0)
+        self.assertEqual(response["counts"]["received_by_admin"], 3)
+        self.assertEqual(response["items"][0]["stage"], "received_by_admin")
         archived_query = session.execute.await_args_list[2].args[0]
         self.assertIn("ARCHIVED_AT IS NOT NULL", str(archived_query).upper())
 

@@ -291,11 +291,38 @@ test("keeps paid legacy orders visible in the supplier stage and preserves the s
     .find((button) => button.textContent.startsWith("Supplier mengirim"));
   expect(supplierFilter.getAttribute("aria-pressed")).toBe("true");
   expect(container.querySelector('[data-testid="workflow-card-MC-PAID-1"]')).not.toBeNull();
-  expect(container.textContent).toContain("Siap ke supplier");
+  expect(container.textContent).toContain("Supplier mengirim");
 
   const detailLink = container.querySelector('[data-testid="workflow-card-MC-PAID-1"] a');
   expect(detailLink.getAttribute("data-return-to")).toBe("/orders?stage=paid");
   expect(detailLink.getAttribute("data-workflow-filter")).toBe("supplier_shipping");
+});
+
+test("supplier-shipped order appears at the next checkpoint, not in the previous filter", async () => {
+  mockSearchParams.set("stage", "received_by_admin");
+  mockWorkflowResponse.items = [{
+    kind: "order",
+    order_number: "MC-SUPPLIER-SHIPPED-1",
+    stage: "received_by_admin",
+    status: "supplier_shipping",
+    created_at: "2026-09-27T12:00:00Z",
+    customer: { name: "Customer Supplier", city: "Tashkent" },
+    item_count: 1,
+    grand_total: 300000,
+    currency: "UZS",
+    next_action: "receive_admin",
+  }];
+  mockWorkflowResponse.counts = { supplier_shipping: 2, received_by_admin: 1 };
+  mockWorkflowResponse.total = 1;
+  await act(async () => root.render(<AdminOrdersPage />));
+
+  expect(mockQueryOptions.queryKey[1].stage).toBe("received_by_admin");
+  const currentFilter = [...container.querySelectorAll('[aria-label="Filter tahap order"] button')]
+    .find((button) => button.textContent.startsWith("Diterima admin"));
+  expect(currentFilter.getAttribute("aria-pressed")).toBe("true");
+  const card = container.querySelector('[data-testid="workflow-card-MC-SUPPLIER-SHIPPED-1"]');
+  expect(card.textContent).toContain("Diterima admin");
+  expect(card.querySelector('li[aria-current="step"]').textContent).toContain("Diterima admin");
 });
 
 test("repairs an out-of-range page after the selected stage loses an order", async () => {
@@ -317,7 +344,7 @@ test("lists archived orders in their own filter without mixing them into active 
   mockWorkflowResponse.items = [{
     kind: "order",
     order_number: "MC-ARCHIVED-1",
-    stage: "supplier_shipping",
+    stage: "received_by_admin",
     status: "supplier_shipping",
     archived_at: "2026-09-29T10:00:00Z",
     created_at: "2026-09-27T12:00:00Z",

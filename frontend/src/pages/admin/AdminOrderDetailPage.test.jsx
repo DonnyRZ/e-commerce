@@ -147,8 +147,36 @@ test("confirmed payment advances the shared progress to supplier shipping", asyn
   expect(container.querySelector('[data-testid="active-fulfillment"]')).not.toBeNull();
 });
 
+test("marking the supplier shipment advances progress to admin receipt", async () => {
+  const confirm = jest.spyOn(window, "confirm").mockReturnValue(true);
+  mockOrder.status = "paid";
+  mockOrder.payment.status = "paid";
+  mockOrder.payment_state = "paid";
+  const nextOrder = {
+    ...mockOrder,
+    status: "supplier_shipping",
+    fulfillment: [{ stage: "supplier_shipping", status: "completed", shipped_at: "2026-09-29T08:35:00Z" }],
+  };
+  updateAdminFulfillment.mockResolvedValueOnce(nextOrder);
+  await act(async () => root.render(<AdminOrderDetailPage />));
+
+  expect(container.querySelector('[data-testid="order-progress"] li[aria-current="step"]').textContent).toContain("Supplier mengirim");
+  const advance = [...container.querySelectorAll("button")]
+    .find((button) => button.textContent.includes("Tandai supplier sudah mengirim"));
+  await act(async () => {
+    advance.click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(confirm).toHaveBeenCalledWith("Simpan tahap Tandai supplier sudah mengirim?");
+  expect(updateAdminFulfillment).toHaveBeenCalledWith("MC-UX-1", { stage: "supplier_shipping" });
+  expect(container.querySelector('[data-testid="order-progress"] li[aria-current="step"]').textContent).toContain("Diterima admin");
+  expect(container.textContent).toContain("Tandai barang diterima admin");
+});
+
 test("received-by-admin progress updates immediately from the committed response", async () => {
-  jest.spyOn(window, "confirm").mockReturnValue(false);
+  const confirm = jest.spyOn(window, "confirm").mockReturnValue(true);
   mockOrder.status = "supplier_shipping";
   mockOrder.payment_state = "paid";
   mockOrder.payment.status = "paid";
@@ -165,21 +193,66 @@ test("received-by-admin progress updates immediately from the committed response
     .find((button) => button.textContent.includes("Tandai barang diterima admin"));
   expect(advance).not.toBeNull();
   expect(advance.getAttribute("data-next-stage")).toBe("received_by_admin");
+  expect(container.querySelector('[data-testid="order-progress"] li[aria-current="step"]').textContent).toContain("Diterima admin");
   await act(async () => {
     advance.click();
     await Promise.resolve();
     await Promise.resolve();
   });
 
+  expect(confirm).toHaveBeenCalledWith("Simpan tahap Tandai barang diterima admin?");
   expect(updateAdminFulfillment).toHaveBeenCalledWith("MC-UX-1", { stage: "received_by_admin" });
-  expect(window.confirm).not.toHaveBeenCalled();
-  expect(container.querySelector('[data-testid="order-progress"] li[aria-current="step"]').textContent).toContain("Diterima admin");
+  expect(container.querySelector('[data-testid="order-progress"] li[aria-current="step"]').textContent).toContain("Dikirim ke customer");
+  expect(container.textContent).toContain("Kirim ke customer");
   expect(container.querySelector('[data-testid="telegram-order-status-fulfillment:received_by_admin"]').textContent).toContain("Menunggu antrean");
   expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["admin-order-workflow"] });
   expect(mockOrderQueryOptions.refetchInterval({ state: { data: nextOrder } })).toBe(3000);
   expect(mockOrderQueryOptions.refetchInterval({
     state: { data: { ...nextOrder, telegram_notifications: [{ event_key: "fulfillment:received_by_admin", status: "sent" }] } },
   })).toBe(false);
+});
+
+test("canceling fulfillment confirmation does not submit or advance the order", async () => {
+  const confirm = jest.spyOn(window, "confirm").mockReturnValue(false);
+  mockOrder.status = "paid";
+  mockOrder.payment.status = "paid";
+  mockOrder.payment_state = "paid";
+  await act(async () => root.render(<AdminOrderDetailPage />));
+  const advance = [...container.querySelectorAll("button")]
+    .find((button) => button.textContent.includes("Tandai supplier sudah mengirim"));
+
+  await act(async () => advance.click());
+
+  expect(confirm).toHaveBeenCalledTimes(1);
+  expect(updateAdminFulfillment).not.toHaveBeenCalled();
+  expect(container.querySelector('[data-testid="order-progress"] li[aria-current="step"]').textContent).toContain("Supplier mengirim");
+});
+
+test("customer delivery stays in its stage until receipt is confirmed", async () => {
+  jest.spyOn(window, "confirm").mockReturnValue(true);
+  mockOrder.status = "customer_shipping";
+  mockOrder.payment.status = "paid";
+  mockOrder.payment_state = "paid";
+  const nextOrder = {
+    ...mockOrder,
+    status: "delivered",
+    fulfillment: [{ stage: "delivered", status: "completed", received_at: "2026-09-29T09:00:00Z" }],
+  };
+  updateAdminFulfillment.mockResolvedValueOnce(nextOrder);
+  await act(async () => root.render(<AdminOrderDetailPage />));
+
+  expect(container.querySelector('[data-testid="order-progress"] li[aria-current="step"]').textContent).toContain("Dikirim ke customer");
+  const advance = [...container.querySelectorAll("button")]
+    .find((button) => button.textContent.includes("Tandai diterima customer"));
+  await act(async () => {
+    advance.click();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
+  expect(updateAdminFulfillment).toHaveBeenCalledWith("MC-UX-1", { stage: "delivered" });
+  expect(container.querySelector('[data-testid="order-progress"] li[aria-current="step"]').textContent).toContain("Selesai");
+  expect(container.querySelector('[data-testid="active-delivered"]')).not.toBeNull();
 });
 
 test("ambiguous transition response triggers an authoritative order and workflow refresh", async () => {

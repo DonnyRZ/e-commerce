@@ -110,21 +110,32 @@ WORKFLOW_FILTER_STAGES = (
     "delivered",
     "archived",
 )
-WORKFLOW_STAGE_ALIASES = {
+WORKFLOW_FILTER_ALIASES = {
     "pending_payment": "payment",
     "payment_review": "payment",
-    # `paid` is the persisted state immediately before supplier fulfillment;
-    # legacy fulfillment rows use processing/shipped for the same visible flow.
     "paid": "supplier_shipping",
     "processing": "supplier_shipping",
     "shipped": "customer_shipping",
 }
+WORKFLOW_STATUS_STAGES = {
+    "pending_payment": "payment",
+    "payment_review": "payment",
+    # The visible stage is the next operational checkpoint, not the last
+    # persisted event. Each fulfillment mutation therefore advances the UI.
+    "paid": "supplier_shipping",
+    "processing": "supplier_shipping",
+    "supplier_shipping": "received_by_admin",
+    "received_by_admin": "customer_shipping",
+    "customer_shipping": "customer_shipping",
+    "shipped": "customer_shipping",
+    "delivered": "delivered",
+}
 WORKFLOW_STAGE_STATUS_GROUPS = {
     "inquiry": set(),
     "payment": {"pending_payment", "payment_review"},
-    "supplier_shipping": {"paid", "processing", "supplier_shipping"},
-    "received_by_admin": {"received_by_admin"},
-    "customer_shipping": {"customer_shipping", "shipped"},
+    "supplier_shipping": {"paid", "processing"},
+    "received_by_admin": {"supplier_shipping"},
+    "customer_shipping": {"received_by_admin", "customer_shipping", "shipped"},
     "delivered": {"delivered"},
 }
 ACTIONABLE_ORDER_STATUSES = {
@@ -216,8 +227,13 @@ def _workflow_next_action(stage: str) -> str:
 
 
 def _workflow_stage(status: str) -> str:
-    """Map persisted/legacy order statuses onto the six visible workflow steps."""
-    return WORKFLOW_STAGE_ALIASES.get(status, status)
+    """Map a persisted status to its next visible operational checkpoint."""
+    return WORKFLOW_STATUS_STAGES.get(status, status)
+
+
+def _workflow_filter_stage(stage: str) -> str:
+    """Normalize legacy filter URLs without reinterpreting canonical stages."""
+    return WORKFLOW_FILTER_ALIASES.get(stage, stage)
 
 
 def _workflow_counts(status_counts: dict[str, int], inquiry_count: int) -> dict[str, int]:
@@ -226,15 +242,10 @@ def _workflow_counts(status_counts: dict[str, int], inquiry_count: int) -> dict[
     for key in WORKFLOW_FILTER_STAGES:
         counts.setdefault(key, int(status_counts.get(key, 0)))
     counts["inquiry"] = inquiry_count
-    counts["payment"] = counts["pending_payment"] + counts["payment_review"]
-    counts["supplier_shipping"] = sum(
-        int(status_counts.get(status, 0))
-        for status in WORKFLOW_STAGE_STATUS_GROUPS["supplier_shipping"]
-    )
-    counts["customer_shipping"] = sum(
-        int(status_counts.get(status, 0))
-        for status in WORKFLOW_STAGE_STATUS_GROUPS["customer_shipping"]
-    )
+    for stage, statuses in WORKFLOW_STAGE_STATUS_GROUPS.items():
+        if stage == "inquiry":
+            continue
+        counts[stage] = sum(int(status_counts.get(status, 0)) for status in statuses)
     return counts
 
 
@@ -940,9 +951,9 @@ async def list_order_workflow(
 ):
     if scope not in {"all", "actionable"}:
         raise _error(422, "invalid_workflow_scope")
-    if stage and stage not in set(WORKFLOW_STAGES) | set(WORKFLOW_STAGE_ALIASES) | {"payment", "archived"}:
+    if stage and stage not in set(WORKFLOW_STAGES) | set(WORKFLOW_FILTER_ALIASES) | {"payment", "archived"}:
         raise _error(422, "invalid_workflow_stage")
-    selected_stage = _workflow_stage(stage) if stage else None
+    selected_stage = _workflow_filter_stage(stage) if stage else None
 
     entries: list[dict] = []
     inquiry_query = select(TelegramCartInquiry).where(

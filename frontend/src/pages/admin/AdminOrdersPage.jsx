@@ -25,12 +25,10 @@ function progressStage(stage) {
   return normalizeOrderStage(stage);
 }
 
-function stageLabel(stage, evidenceCount = 0) {
-  if (["pending_payment", "payment_review"].includes(stage) && evidenceCount > 0) return "Bukti tersimpan · siap dikonfirmasi";
-  if (stage === "pending_payment") return "Menunggu transfer";
-  if (stage === "payment_review") return "Menunggu konfirmasi admin";
-  if (stage === "paid") return "Siap ke supplier";
-  const currentStage = normalizeOrderStage(stage);
+function stageLabel(status, evidenceCount = 0, currentStage = normalizeOrderStage(status)) {
+  if (["pending_payment", "payment_review"].includes(status) && evidenceCount > 0) return "Bukti tersimpan · siap dikonfirmasi";
+  if (status === "pending_payment") return "Menunggu transfer";
+  if (status === "payment_review") return "Menunggu konfirmasi admin";
   return ORDER_STEPS.find(([key]) => key === currentStage)?.[1] || "Order lama";
 }
 
@@ -45,10 +43,13 @@ function WorkflowCard({ item, returnTo, workflowFilter }) {
   const title = isInquiry ? item.reference : item.order_number;
   const href = isInquiry ? `/orders/inquiry/${encodeURIComponent(item.reference)}` : `/orders/${item.order_number}`;
   const currentStatus = item.status || item.stage;
-  const isPaymentStage = normalizeOrderStage(item.stage || currentStatus) === "payment";
+  const visibleStage = normalizeOrderStage(item.stage || currentStatus);
+  const isPaymentStage = visibleStage === "payment";
   const currentStageLabel = item.archived_at
     ? "Diarsipkan"
-    : stageLabel(isInquiry ? item.stage : currentStatus, item.evidence_count);
+    : isInquiry
+      ? stageLabel(item.stage)
+      : stageLabel(currentStatus, item.evidence_count, visibleStage);
   const runOrderAction = async (action) => {
     if (busyAction) return;
     if (action === "archive" && !window.confirm("Arsipkan order ini? Order akan hilang dari tahapan aktif dan bisa dipulihkan dari filter Diarsipkan.")) return;
