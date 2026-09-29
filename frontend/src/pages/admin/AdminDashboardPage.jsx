@@ -8,8 +8,7 @@ import { fmtDate, fmtMoney, StatusPill } from "./adminUtils";
 
 const WORKFLOW_STAGES = [
   "inquiry",
-  "pending_payment",
-  "payment_review",
+  "payment",
   "paid",
   "supplier_shipping",
   "received_by_admin",
@@ -78,7 +77,7 @@ export default function AdminDashboardPage() {
       <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <StatCard label={t("seller.dashboard.salesTotal")} value={fmtMoney(d.sales_total, d.currency)} testId="stat-sales-total" />
         <StatCard label={t("seller.dashboard.needsAction")} value={d.orders_needing_action ?? 0} testId="stat-orders-action" to="/orders?stage=actionable" />
-        <StatCard label={t("seller.dashboard.paymentReview")} value={d.payment_review_count ?? 0} testId="stat-payment-review" to="/orders?stage=payment_review" />
+        <StatCard label={t("seller.dashboard.paymentReview")} value={d.payment_count ?? 0} testId="stat-payment-review" to="/orders?stage=payment" />
         <StatCard label={t("seller.dashboard.activeProducts")} value={`${d.active_products ?? 0} / ${d.total_products ?? 0}`} testId="stat-active-products" to="/products" />
         <StatCard label={t("seller.dashboard.openInquiries")} value={d.open_inquiries ?? 0} testId="stat-open-inquiries" to="/orders?stage=inquiry" />
         <StatCard label={t("seller.dashboard.preordersInProgress")} value={d.preorders_in_progress ?? 0} testId="stat-preorders-progress" to="/orders" />
@@ -95,7 +94,7 @@ export default function AdminDashboardPage() {
               data-testid={`status-count-${stage}`}
             >
               <span className="flex min-w-0 items-center gap-2">
-                <StatusPill value={stage} />
+                {stage === "payment" ? <span className="inline-flex whitespace-nowrap bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-800">{t("seller.dashboard.status.payment")}</span> : <StatusPill value={stage} />}
                 <span className="truncate">{t(`seller.dashboard.status.${stage}`)}</span>
               </span>
               <span className="font-semibold">{workflowCounts[stage] ?? 0}</span>

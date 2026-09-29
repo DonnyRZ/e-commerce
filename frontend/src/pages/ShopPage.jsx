@@ -8,7 +8,7 @@ import {
   getFilters,
   getProducts,
 } from "@/lib/api";
-import { pickLocalized, toCardCategory, toCardProduct } from "@/lib/localize";
+import { mediaUrl, pickLocalized, toCardCategory, toCardProduct } from "@/lib/localize";
 import { CATEGORY_VISUALS } from "@/lib/catalogVisuals";
 import { findTaxonomyNode, leafTaxonomy } from "@/lib/taxonomy";
 import CategoryStrip from "@/components/common/CategoryStrip";
@@ -132,7 +132,7 @@ export default function ShopPage() {
   const stripCategories = stripNodes
     .map((c) => ({
       ...toCardCategory(c, locale),
-      image: CATEGORY_VISUALS[c.slug] || "",
+      image: mediaUrl(c.image_url) || CATEGORY_VISUALS[c.slug] || "",
       comingSoon: productsQuery.isSuccess && !productsQuery.isFetching && !productCategoryIds.has(c.id),
       comingSoonLabel: locale === "id" ? "Segera hadir" : locale === "uz" ? "Tez orada" : locale === "ru" ? "Скоро" : "Coming soon",
     }));

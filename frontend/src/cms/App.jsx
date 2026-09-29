@@ -87,7 +87,7 @@ function CmsRoutes() {
         <Route path="orders/:orderNumber" element={<AdminOrderDetailPage />} />
         <Route path="telegram-inbox" element={<AdminTelegramInboxPage />} />
         <Route path="telegram-inquiries" element={<Navigate to="/orders?stage=inquiry" replace />} />
-        <Route path="payments" element={<Navigate to="/orders?stage=payment_review" replace />} />
+        <Route path="payments" element={<Navigate to="/orders?stage=payment" replace />} />
         <Route path="customers" element={<AdminCustomersPage />} />
         <Route path="cms" element={<CmsContentPage />} />
         <Route path="cms/homepage" element={<CmsHomepageWorkspace />} />

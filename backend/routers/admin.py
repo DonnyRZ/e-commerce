@@ -253,6 +253,9 @@ async def admin_dashboard(
         stage: int(orders_by_status.get(stage, 0)) for stage in WORKFLOW_STAGES
     }
     workflow_counts["inquiry"] = open_inquiries
+    workflow_counts["payment"] = (
+        workflow_counts["pending_payment"] + workflow_counts["payment_review"]
+    )
     orders_needing_action = open_inquiries + sum(
         int(orders_by_status.get(status, 0)) for status in ACTIONABLE_ORDER_STATUSES
     )
@@ -269,6 +272,7 @@ async def admin_dashboard(
         "workflow_counts": workflow_counts,
         "open_inquiries": open_inquiries,
         "orders_needing_action": orders_needing_action,
+        "payment_count": workflow_counts["payment"],
         "preorders_in_progress": preorders_in_progress,
         "payment_review_count": int(orders_by_status.get("payment_review", 0)),
         "sales_total": int(sales or 0),

@@ -592,7 +592,7 @@ async def list_order_workflow(
 ):
     if scope not in {"all", "actionable"}:
         raise _error(422, "invalid_workflow_scope")
-    if stage and stage not in WORKFLOW_STAGES:
+    if stage and stage not in WORKFLOW_STAGES and stage != "payment":
         raise _error(422, "invalid_workflow_stage")
 
     entries: list[dict] = []
@@ -653,6 +653,10 @@ async def list_order_workflow(
     if stage:
         if stage == "inquiry":
             order_query = order_query.where(Order.id == "__no_order__")
+        elif stage == "payment":
+            order_query = order_query.where(
+                Order.status.in_(["pending_payment", "payment_review"])
+            )
         else:
             order_query = order_query.where(Order.status == stage)
     orders = (
@@ -694,6 +698,7 @@ async def list_order_workflow(
     for entry in entries:
         if entry["stage"] in counts:
             counts[entry["stage"]] += 1
+    counts["payment"] = counts["pending_payment"] + counts["payment_review"]
     total = len(entries)
     start = (page - 1) * page_size
     return {

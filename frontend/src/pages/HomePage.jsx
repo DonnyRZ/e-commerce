@@ -72,9 +72,10 @@ export default function HomePage() {
   const comingSoonLabel = locale === "id" ? "Segera hadir" : locale === "uz" ? "Tez orada" : locale === "ru" ? "Скоро" : "Coming soon";
   const departmentCards = departments.map((department) => ({
     ...department,
-    image: !catalogReady || hasProductsInNode(department)
-      ? DEPARTMENT_VISUALS[department.slug] || mediaUrl(departmentVisuals[department.slug]?.image_url) || department.image_url || ""
-      : "",
+    image: mediaUrl(departmentVisuals[department.slug]?.image_url)
+      || mediaUrl(department.image_url)
+      || DEPARTMENT_VISUALS[department.slug]
+      || "",
     comingSoon: catalogReady && !hasProductsInNode(department),
     comingSoonLabel,
     name: pickLocalized(department.translations, locale),

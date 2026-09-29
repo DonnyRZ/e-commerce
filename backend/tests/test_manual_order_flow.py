@@ -57,6 +57,21 @@ def test_admin_workflow_merges_orders_and_filters_empty_inquiries():
         if item["kind"] == "inquiry"
     )
 
+    payment_response = admin.get(
+        f"{API}/admin/order-workflow",
+        params={"scope": "all", "stage": "payment", "page_size": 100},
+    )
+    assert payment_response.status_code == 200, payment_response.text
+    payment_payload = payment_response.json()
+    assert payment_payload["counts"]["payment"] == (
+        payment_payload["counts"]["pending_payment"]
+        + payment_payload["counts"]["payment_review"]
+    )
+    assert all(
+        item["status"] in {"pending_payment", "payment_review"}
+        for item in payment_payload["items"]
+    )
+
 
 def test_guest_timeline_requires_opaque_order_access():
     response = requests.get(
