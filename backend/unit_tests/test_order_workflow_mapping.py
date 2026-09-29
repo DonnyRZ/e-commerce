@@ -88,6 +88,59 @@ class OrderWorkflowMappingTests(unittest.TestCase):
 
 
 class OrderWorkflowEndpointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_received_by_admin_filter_returns_stage_four_order(self):
+        received_order = SimpleNamespace(
+            id="order-received",
+            order_number="MC-RECEIVED-1",
+            order_source="telegram_manual",
+            status="received_by_admin",
+            payment_state="paid",
+            archived_at=None,
+            created_at=datetime(2026, 9, 29, tzinfo=timezone.utc),
+            user_id=None,
+            shipping_address={},
+            guest_email="customer@example.com",
+            subtotal=100,
+            grand_total=120,
+            currency="UZS",
+        )
+        session = SimpleNamespace(
+            scalar=AsyncMock(return_value=0),
+            execute=AsyncMock(
+                side_effect=[
+                    FakeResult(),
+                    FakeResult([("supplier_shipping", 1), ("received_by_admin", 1)]),
+                    FakeResult([received_order]),
+                    FakeResult([("order-received", 1)]),
+                    FakeResult(),
+                ]
+            ),
+            get=AsyncMock(return_value=None),
+        )
+
+        response = await list_order_workflow(
+            scope="all",
+            stage="received_by_admin",
+            q=None,
+            page=1,
+            page_size=20,
+            user=SimpleNamespace(id="admin"),
+            session=session,
+        )
+
+        self.assertEqual([item["order_number"] for item in response["items"]], ["MC-RECEIVED-1"])
+        self.assertEqual(response["items"][0]["status"], "received_by_admin")
+        self.assertEqual(response["items"][0]["stage"], "received_by_admin")
+        self.assertEqual(response["items"][0]["next_action"], "ship_customer")
+        self.assertEqual(response["counts"]["received_by_admin"], 1)
+        self.assertEqual(response["counts"]["supplier_shipping"], 1)
+
+        order_query = session.execute.await_args_list[2].args[0]
+        self.assertEqual(
+            set(order_query.compile().params["status_1"]),
+            {"received_by_admin"},
+        )
+
     async def test_supplier_filter_includes_paid_rows_and_keeps_global_counts(self):
         order = SimpleNamespace(
             id="order-paid",

@@ -148,7 +148,7 @@ test("confirmed payment advances the shared progress to supplier shipping", asyn
 });
 
 test("received-by-admin progress updates immediately from the committed response", async () => {
-  jest.spyOn(window, "confirm").mockReturnValue(true);
+  jest.spyOn(window, "confirm").mockReturnValue(false);
   mockOrder.status = "supplier_shipping";
   mockOrder.payment_state = "paid";
   mockOrder.payment.status = "paid";
@@ -164,6 +164,7 @@ test("received-by-admin progress updates immediately from the committed response
   const advance = [...container.querySelectorAll("button")]
     .find((button) => button.textContent.includes("Tandai barang diterima admin"));
   expect(advance).not.toBeNull();
+  expect(advance.getAttribute("data-next-stage")).toBe("received_by_admin");
   await act(async () => {
     advance.click();
     await Promise.resolve();
@@ -171,6 +172,7 @@ test("received-by-admin progress updates immediately from the committed response
   });
 
   expect(updateAdminFulfillment).toHaveBeenCalledWith("MC-UX-1", { stage: "received_by_admin" });
+  expect(window.confirm).not.toHaveBeenCalled();
   expect(container.querySelector('[data-testid="order-progress"] li[aria-current="step"]').textContent).toContain("Diterima admin");
   expect(container.querySelector('[data-testid="telegram-order-status-fulfillment:received_by_admin"]').textContent).toContain("Menunggu antrean");
   expect(mockQueryClient.invalidateQueries).toHaveBeenCalledWith({ queryKey: ["admin-order-workflow"] });
