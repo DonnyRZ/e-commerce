@@ -295,6 +295,7 @@ export default function AdminOrderDetailPage() {
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["admin-order", orderNumber] });
     queryClient.invalidateQueries({ queryKey: ["admin-order-workflow"] });
+    queryClient.invalidateQueries({ queryKey: ["admin-telegram-inbox"] });
     queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] });
   };
 

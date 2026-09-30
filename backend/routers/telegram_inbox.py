@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import secrets
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 from urllib.parse import urljoin, urlparse
 
@@ -12,7 +14,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import String, cast, or_, select
+from sqlalchemy import String, and_, case, cast, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +40,15 @@ from db.session import get_session
 from telegram_inbox_service import candidate_copy, candidate_keyboard
 from telegram_inquiries import TelegramDeliveryError, bot_request, bot_request_multipart
 from product_sizes import load_size_preset_data, size_variant_is_visible
+from order_workflow import (
+    WORKFLOW_FILTER_STAGES,
+    TERMINAL_ORDER_STATUSES,
+    normalize_workflow_filter_stage,
+    telegram_conversation_stage,
+    telegram_conversation_stage_sql,
+    workflow_stage_for_status,
+    workflow_stage_sql,
+)
 
 router = APIRouter(prefix="/api/v1/admin/telegram-inbox", tags=["telegram-inbox"])
 require_admin = require_roles("admin")
@@ -153,7 +164,60 @@ def _message_payload(row: TelegramInboxMessage) -> dict:
     }
 
 
-def _conversation_payload(row: TelegramConversation, last_message: Optional[TelegramInboxMessage]) -> dict:
+def _order_summary(order: Optional[Order]) -> Optional[dict]:
+    if not order:
+        return None
+    return {
+        "order_number": order.order_number,
+        "status": order.status,
+        "stage": workflow_stage_for_status(order.status, "inquiry"),
+        "archived_at": order.archived_at,
+        "created_at": order.created_at,
+    }
+
+
+async def _conversation_order_context(session: AsyncSession, row: TelegramConversation):
+    orders = (
+        await session.execute(
+            select(Order)
+            .where(Order.telegram_conversation_id == row.id)
+            .order_by(Order.created_at.desc(), Order.id.desc())
+        )
+    ).scalars().all()
+    active_orders = [
+        order for order in orders
+        if order.archived_at is None and order.status not in TERMINAL_ORDER_STATUSES
+    ]
+    non_archived_orders = [order for order in orders if order.archived_at is None]
+    chosen_order = (
+        active_orders[0]
+        if active_orders
+        else non_archived_orders[0]
+        if non_archived_orders
+        else orders[0]
+        if orders
+        else None
+    )
+    non_delivered_orders = [order for order in non_archived_orders if order.status != "delivered"]
+    workflow_stage = telegram_conversation_stage(
+        conversation_status=row.status,
+        total_orders=len(orders),
+        non_archived_orders=len(non_archived_orders),
+        active_orders=len(active_orders),
+        non_delivered_orders=len(non_delivered_orders),
+        selected_order_status=active_orders[0].status if active_orders else None,
+    )
+    return workflow_stage, len(orders), _order_summary(chosen_order), orders
+
+
+def _conversation_payload(
+    row: TelegramConversation,
+    last_message: Optional[TelegramInboxMessage],
+    *,
+    workflow_stage: str = "inquiry",
+    order_count: int = 0,
+    latest_order: Optional[dict] = None,
+) -> dict:
     now = utcnow()
     can_send = bool(
         row.status != "archived"
@@ -173,7 +237,128 @@ def _conversation_payload(row: TelegramConversation, last_message: Optional[Tele
         "last_customer_message_at": row.last_customer_message_at,
         "can_send": can_send,
         "last_message": _message_payload(last_message) if last_message else None,
+        "workflow_stage": workflow_stage,
+        "order_count": order_count,
+        "latest_order": latest_order,
     }
+
+
+def _cursor_encode(row: TelegramConversation) -> str:
+    raw = json.dumps(
+        {"at": row.last_message_at.isoformat(), "id": row.id},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _cursor_decode(cursor: str) -> tuple[datetime, str]:
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+        value = json.loads(raw.decode("utf-8"))
+        timestamp = datetime.fromisoformat(value["at"])
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        conversation_id = value["id"]
+        if not isinstance(conversation_id, str) or not conversation_id:
+            raise ValueError("missing conversation id")
+        return timestamp, conversation_id
+    except (ValueError, TypeError, KeyError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise _error(422, "invalid_inbox_cursor") from exc
+
+
+def _conversation_stage_cte():
+    priority = case(
+        (
+            and_(
+                Order.archived_at.is_(None),
+                Order.status.not_in(TERMINAL_ORDER_STATUSES),
+            ),
+            0,
+        ),
+        (Order.archived_at.is_(None), 1),
+        else_=2,
+    )
+    ranked_orders = (
+        select(
+            Order.telegram_conversation_id.label("conversation_id"),
+            Order.id.label("order_id"),
+            Order.order_number.label("order_number"),
+            Order.status.label("status"),
+            Order.archived_at.label("archived_at"),
+            Order.created_at.label("created_at"),
+            workflow_stage_sql(Order.status, "inquiry").label("workflow_stage"),
+            func.row_number().over(
+                partition_by=Order.telegram_conversation_id,
+                order_by=(priority.asc(), Order.created_at.desc(), Order.id.desc()),
+            ).label("order_rank"),
+        )
+        .where(Order.telegram_conversation_id.is_not(None))
+        .cte("telegram_inbox_ranked_orders")
+    )
+    order_stats = (
+        select(
+            Order.telegram_conversation_id.label("conversation_id"),
+            func.count(Order.id).label("total_orders"),
+            func.sum(case((Order.archived_at.is_(None), 1), else_=0)).label("non_archived_orders"),
+            func.sum(
+                case(
+                    (
+                        and_(
+                            Order.archived_at.is_(None),
+                            Order.status.not_in(TERMINAL_ORDER_STATUSES),
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("active_orders"),
+            func.sum(
+                case(
+                    (
+                        and_(Order.archived_at.is_(None), Order.status != "delivered"),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("non_delivered_orders"),
+        )
+        .where(Order.telegram_conversation_id.is_not(None))
+        .group_by(Order.telegram_conversation_id)
+        .cte("telegram_inbox_order_stats")
+    )
+    chosen_order = (
+        select(ranked_orders)
+        .where(ranked_orders.c.order_rank == 1)
+        .cte("telegram_inbox_chosen_order")
+    )
+    total_orders = func.coalesce(order_stats.c.total_orders, 0)
+    non_archived_orders = func.coalesce(order_stats.c.non_archived_orders, 0)
+    active_orders = func.coalesce(order_stats.c.active_orders, 0)
+    non_delivered_orders = func.coalesce(order_stats.c.non_delivered_orders, 0)
+    resolved_stage = telegram_conversation_stage_sql(
+        TelegramConversation.status,
+        total_orders,
+        non_archived_orders,
+        active_orders,
+        non_delivered_orders,
+        chosen_order.c.status,
+    )
+    return (
+        select(
+            TelegramConversation.id.label("conversation_id"),
+            resolved_stage.label("workflow_stage"),
+            total_orders.label("order_count"),
+            chosen_order.c.order_number.label("latest_order_number"),
+            chosen_order.c.status.label("latest_order_status"),
+            chosen_order.c.archived_at.label("latest_order_archived_at"),
+            chosen_order.c.created_at.label("latest_order_created_at"),
+            chosen_order.c.workflow_stage.label("latest_order_stage"),
+        )
+        .select_from(TelegramConversation)
+        .outerjoin(order_stats, order_stats.c.conversation_id == TelegramConversation.id)
+        .outerjoin(chosen_order, chosen_order.c.conversation_id == TelegramConversation.id)
+        .cte("telegram_inbox_conversation_stages")
+    )
 
 
 async def _save_cms_message(
@@ -228,38 +413,165 @@ async def _save_cms_message(
 
 @router.get("")
 async def list_conversations(
-    status: str = Query(default="all", pattern="^(all|needs_admin|waiting_customer|ready_for_order|archived)$"),
+    stage: Optional[str] = Query(default=None),
+    chat_status: Optional[str] = Query(default=None, pattern="^(all|needs_admin|waiting_customer|ready_for_order)$"),
+    status: Optional[str] = Query(default=None, pattern="^(all|needs_admin|waiting_customer|ready_for_order|archived)$"),
     q: Optional[str] = Query(default=None, max_length=120),
+    cursor: Optional[str] = Query(default=None, max_length=512),
+    limit: int = Query(default=50, ge=1, le=100),
     user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
 ):
-    query = select(TelegramConversation)
-    if status != "all":
-        query = query.where(TelegramConversation.status == status)
+    # `status` is retained as a compatibility alias for old Inbox clients.
+    if status == "archived" and stage is None:
+        stage = "archived"
+    elif status not in (None, "all", "archived") and chat_status is None:
+        chat_status = status
+    if chat_status == "all":
+        chat_status = None
+    if chat_status and chat_status not in {"needs_admin", "waiting_customer", "ready_for_order"}:
+        raise _error(422, "invalid_chat_status")
+    if stage:
+        stage = normalize_workflow_filter_stage(stage)
+        if stage not in set(WORKFLOW_FILTER_STAGES):
+            raise _error(422, "invalid_workflow_stage")
+    decoded_cursor = _cursor_decode(cursor) if cursor else None
+
+    stage_rows = _conversation_stage_cte()
+    filters = []
+    if chat_status:
+        filters.append(TelegramConversation.status == chat_status)
     if q and q.strip():
         needle = f"%{q.strip()}%"
-        query = query.where(
+        matching_order_conversations = select(Order.telegram_conversation_id).where(
+            Order.telegram_conversation_id.is_not(None),
+            Order.order_number.ilike(needle),
+        )
+        filters.append(
             or_(
                 TelegramConversation.customer_name.ilike(needle),
                 TelegramConversation.customer_username.ilike(needle),
                 cast(TelegramConversation.chat_id, String).ilike(needle),
+                TelegramConversation.id.in_(matching_order_conversations),
             )
         )
+
+    filtered_rows = (
+        select(
+            stage_rows.c.conversation_id,
+            stage_rows.c.workflow_stage,
+        )
+        .join(TelegramConversation, TelegramConversation.id == stage_rows.c.conversation_id)
+        .where(*filters)
+        .cte("telegram_inbox_filtered_conversations")
+    )
+    grouped_counts = (
+        await session.execute(
+            select(filtered_rows.c.workflow_stage, func.count(filtered_rows.c.conversation_id))
+            .group_by(filtered_rows.c.workflow_stage)
+        )
+    ).all()
+    counts = {key: 0 for key in WORKFLOW_FILTER_STAGES}
+    for bucket, count in grouped_counts:
+        counts[bucket] = int(count or 0)
+
+    list_filters = [*filters]
+    if stage:
+        list_filters.append(stage_rows.c.workflow_stage == stage)
+    if stage != "archived":
+        list_filters.append(stage_rows.c.workflow_stage != "archived")
+
+    if decoded_cursor:
+        cursor_at, cursor_id = decoded_cursor
+        list_filters.append(
+            or_(
+                TelegramConversation.last_message_at < cursor_at,
+                and_(
+                    TelegramConversation.last_message_at == cursor_at,
+                    TelegramConversation.id < cursor_id,
+                ),
+            )
+        )
+
+    total = counts.get(stage, 0) if stage else sum(
+        count for bucket, count in counts.items() if bucket != "archived"
+    )
+
     rows = (
         await session.execute(
-            query.order_by(TelegramConversation.last_message_at.desc()).limit(100)
+            select(
+                TelegramConversation,
+                stage_rows.c.workflow_stage,
+                stage_rows.c.order_count,
+                stage_rows.c.latest_order_number,
+                stage_rows.c.latest_order_status,
+                stage_rows.c.latest_order_archived_at,
+                stage_rows.c.latest_order_created_at,
+                stage_rows.c.latest_order_stage,
+            )
+            .join(stage_rows, stage_rows.c.conversation_id == TelegramConversation.id)
+            .where(*list_filters)
+            .order_by(TelegramConversation.last_message_at.desc(), TelegramConversation.id.desc())
+            .limit(limit + 1)
         )
-    ).scalars().all()
+    ).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    conversation_ids = [row[0].id for row in rows]
+
+    latest_messages: dict[str, TelegramInboxMessage] = {}
+    if conversation_ids:
+        ranked_messages = (
+            select(
+                TelegramInboxMessage.id.label("message_id"),
+                func.row_number().over(
+                    partition_by=TelegramInboxMessage.conversation_id,
+                    order_by=(TelegramInboxMessage.created_at.desc(), TelegramInboxMessage.id.desc()),
+                ).label("message_rank"),
+            )
+            .where(TelegramInboxMessage.conversation_id.in_(conversation_ids))
+            .cte("telegram_inbox_latest_message_ids")
+        )
+        message_rows = (
+            await session.execute(
+                select(TelegramInboxMessage)
+                .join(ranked_messages, ranked_messages.c.message_id == TelegramInboxMessage.id)
+                .where(ranked_messages.c.message_rank == 1)
+            )
+        ).scalars().all()
+        latest_messages = {message.conversation_id: message for message in message_rows}
+
     items = []
-    for row in rows:
-        last_message = await session.scalar(
-            select(TelegramInboxMessage)
-            .where(TelegramInboxMessage.conversation_id == row.id)
-            .order_by(TelegramInboxMessage.created_at.desc(), TelegramInboxMessage.id.desc())
-            .limit(1)
+    for values in rows:
+        row, resolved_stage, order_count, order_number, order_status, order_archived_at, order_created_at, order_stage = values
+        latest_order = (
+            {
+                "order_number": order_number,
+                "status": order_status,
+                "stage": order_stage,
+                "archived_at": order_archived_at,
+                "created_at": order_created_at,
+            }
+            if order_number
+            else None
         )
-        items.append(_conversation_payload(row, last_message))
-    return {"items": items}
+        items.append(
+            _conversation_payload(
+                row,
+                latest_messages.get(row.id),
+                workflow_stage=resolved_stage,
+                order_count=int(order_count or 0),
+                latest_order=latest_order,
+            )
+        )
+
+    return {
+        "items": items,
+        "counts": counts,
+        "total": total,
+        "next_cursor": _cursor_encode(rows[-1][0]) if has_more and rows else None,
+        "limit": limit,
+    }
 
 
 @router.get("/{conversation_id}")
@@ -271,6 +583,7 @@ async def get_conversation(
     row = await session.get(TelegramConversation, conversation_id)
     if not row:
         raise _error(404, "conversation_not_found")
+    workflow_stage, order_count, latest_order, related_orders = await _conversation_order_context(session, row)
     messages = (
         await session.execute(
             select(TelegramInboxMessage)
@@ -287,11 +600,24 @@ async def get_conversation(
         )
     ).scalars().all()
     connection = await session.get(TelegramBusinessConnection, row.connection_id)
-    payload = _conversation_payload(row, messages[0] if messages else None)
+    payload = _conversation_payload(
+        row,
+        messages[0] if messages else None,
+        workflow_stage=workflow_stage,
+        order_count=order_count,
+        latest_order=latest_order,
+    )
     payload["can_send"] = bool(
         payload["can_send"] and connection and connection.is_enabled and connection.can_reply
     )
     payload["messages"] = [_message_payload(message) for message in reversed(messages)]
+    payload["orders"] = [
+        {
+            **_order_summary(order),
+            "is_latest": bool(latest_order and order.order_number == latest_order["order_number"]),
+        }
+        for order in related_orders
+    ]
     payload["candidates"] = [
         {
             "id": candidate.id,
@@ -326,7 +652,14 @@ async def update_conversation(
         setattr(row, key, value)
     await audit(session, user.id, "admin.telegram_inbox.conversation.update", "telegram_conversation", row.id, data)
     await session.commit()
-    return _conversation_payload(row, None)
+    workflow_stage, order_count, latest_order, _ = await _conversation_order_context(session, row)
+    return _conversation_payload(
+        row,
+        None,
+        workflow_stage=workflow_stage,
+        order_count=order_count,
+        latest_order=latest_order,
+    )
 
 
 @router.post("/{conversation_id}/messages", status_code=201)

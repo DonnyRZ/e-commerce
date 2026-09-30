@@ -16,7 +16,9 @@ import {
   ShoppingBag,
   X,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
+import { ORDER_STEPS, workflowStageForStatus } from "./OrderProgress";
 import {
   createAdminTelegramOrder,
   getAdminTelegramConversation,
@@ -29,11 +31,12 @@ import {
   updateAdminTelegramConversation,
 } from "@/lib/api";
 
-const FILTERS = [
+const WORKFLOW_FILTERS = [...ORDER_STEPS, ["archived", "Diarsipkan"]];
+const CHAT_STATUS_FILTERS = [
+  { id: "all", label: "Semua status chat" },
   { id: "needs_admin", label: "Perlu dibalas" },
   { id: "waiting_customer", label: "Menunggu customer" },
   { id: "ready_for_order", label: "Siap dibuat order" },
-  { id: "archived", label: "Diarsipkan" },
 ];
 
 const STATUS_LABELS = {
@@ -81,7 +84,13 @@ function StatusBadge({ value }) {
   );
 }
 
-function ConversationList({ items, selectedId, onSelect, loading, status, onStatus }) {
+function WorkflowBadge({ stage }) {
+  const normalized = WORKFLOW_FILTERS.find(([key]) => key === stage)?.[0] || "inquiry";
+  const label = WORKFLOW_FILTERS.find(([key]) => key === normalized)?.[1] || "Pending Order";
+  return <span className="inline-flex max-w-full truncate rounded-full bg-[#EAF3EF] px-2 py-1 text-[10px] font-semibold text-[#145A46]">{label}</span>;
+}
+
+function ConversationList({ items, selectedId, onSelect, loading, loadingMore, hasMore, loadMore, status, onStatus }) {
   return (
     <section className="flex h-full min-h-0 flex-col border-r border-neutral-200 bg-white lg:w-[290px] lg:shrink-0" data-testid="telegram-inbox-list">
       <div className="border-b border-neutral-200 p-4">
@@ -93,17 +102,15 @@ function ConversationList({ items, selectedId, onSelect, loading, status, onStat
           <Search className="h-4 w-4 text-neutral-400" aria-hidden="true" />
             <input className="min-w-0 flex-1 text-sm outline-none" value={status.q} onChange={(event) => status.setQ(event.target.value)} placeholder="Cari nama atau username" aria-label="Cari percakapan" />
         </label>
-        <div className="mt-3 flex gap-1 overflow-x-auto overscroll-x-contain pb-1 lg:flex-wrap">
-          {FILTERS.map((filter) => (
-            <button key={filter.id} type="button" onClick={() => onStatus(filter.id)} className={`min-h-11 whitespace-nowrap rounded-full px-3 text-[11px] font-medium transition-colors ${status.filter === filter.id ? "bg-[#02422C] text-white" : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"}`}>
-              {filter.label}
-            </button>
-          ))}
-        </div>
+        <label className="mt-3 block text-[10px] font-medium text-neutral-500">Status chat
+          <select aria-label="Filter status chat" value={status.chatStatus} onChange={(event) => onStatus(event.target.value)} className="mt-1 h-10 w-full border border-neutral-200 bg-white px-2 text-xs text-neutral-700 outline-none focus:border-[#145A46]">
+            {CHAT_STATUS_FILTERS.map((filter) => <option key={filter.id} value={filter.id}>{filter.label}</option>)}
+          </select>
+        </label>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {loading ? <div className="p-5 text-xs text-neutral-400">Memuat percakapan…</div> : null}
-        {!loading && !items.length ? <div className="px-5 py-12 text-center text-xs leading-5 text-neutral-400">Belum ada chat di filter ini.<br />Pesan baru tercatat setelah sinkronisasi Inbox aktif.</div> : null}
+        {!loading && !items.length ? <div className="px-5 py-12 text-center text-xs leading-5 text-neutral-400">Belum ada chat di tahap ini.<br />Pesan baru tercatat setelah sinkronisasi Inbox aktif.</div> : null}
         {items.map((item) => (
           <button key={item.id} type="button" onClick={() => onSelect(item.id)} className={`block w-full border-b border-neutral-100 px-4 py-3 text-left transition-colors hover:bg-neutral-50 ${selectedId === item.id ? "bg-[#F2F7F4]" : ""}`} data-testid={`telegram-conversation-${item.id}`}>
             <div className="flex items-start justify-between gap-2">
@@ -111,9 +118,12 @@ function ConversationList({ items, selectedId, onSelect, loading, status, onStat
               <span className="shrink-0 text-[10px] text-neutral-400">{shortTime(item.last_message_at)}</span>
             </div>
             <p className="mt-0.5 truncate text-[11px] text-neutral-500">{item.customer_username ? `@${item.customer_username}` : `Telegram · ${item.chat_id}`}</p>
+            <div className="mt-2 flex min-w-0 items-center gap-1.5"><WorkflowBadge stage={item.workflow_stage} />{item.order_count ? <span className="shrink-0 text-[10px] text-neutral-500">{item.order_count} order</span> : null}</div>
+            {item.latest_order?.order_number ? <p className="mt-1 truncate text-[10px] text-neutral-500">{item.latest_order.order_number}</p> : null}
             <div className="mt-2 flex items-center justify-between gap-2"><span className="min-w-0 truncate text-xs text-neutral-500">{item.last_message?.type === "photo" ? "📷 Foto" : item.last_message?.text || "Belum ada pesan"}</span><StatusBadge value={item.status} /></div>
           </button>
         ))}
+        {hasMore ? <button type="button" onClick={loadMore} disabled={loadingMore} className="m-3 min-h-10 w-[calc(100%-1.5rem)] border border-neutral-200 text-xs font-medium text-[#145A46] hover:bg-neutral-50 disabled:opacity-50">{loadingMore ? "Memuat…" : "Muat chat lebih lama"}</button> : null}
       </div>
       <p className="border-t border-neutral-200 px-4 py-2 text-[10px] leading-4 text-neutral-400">Bot hanya merekam pesan baru sejak Inbox diaktifkan.</p>
     </section>
@@ -272,8 +282,12 @@ function ProductWorkspace({ conversation, detail, onInvalidate, onOrderCreated, 
 }
 
 export default function AdminTelegramInboxPage() {
-  const [filter, setFilter] = useState("needs_admin");
+  const [filter, setFilter] = useState("all");
+  const [chatStatus, setChatStatus] = useState("all");
   const [q, setQ] = useState("");
+  const [extraItems, setExtraItems] = useState([]);
+  const [nextCursor, setNextCursor] = useState(null);
+  const [loadCursor, setLoadCursor] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [text, setText] = useState("");
   const [photo, setPhoto] = useState(null);
@@ -286,10 +300,28 @@ export default function AdminTelegramInboxPage() {
   const queryClient = useQueryClient();
 
   const inboxQuery = useQuery({
-    queryKey: ["admin-telegram-inbox", filter, q],
-    queryFn: () => getAdminTelegramInbox({ status: filter, q: q.trim() || undefined }),
+    queryKey: ["admin-telegram-inbox", filter, chatStatus, q.trim(), "first"],
+    queryFn: () => getAdminTelegramInbox({
+      stage: filter === "all" ? undefined : filter,
+      chat_status: chatStatus === "all" ? undefined : chatStatus,
+      q: q.trim() || undefined,
+      limit: 50,
+    }),
     refetchInterval: 5000,
     refetchIntervalInBackground: false,
+  });
+  const olderQuery = useQuery({
+    queryKey: ["admin-telegram-inbox", filter, chatStatus, q.trim(), "cursor", loadCursor],
+    queryFn: () => getAdminTelegramInbox({
+      stage: filter === "all" ? undefined : filter,
+      chat_status: chatStatus === "all" ? undefined : chatStatus,
+      q: q.trim() || undefined,
+      cursor: loadCursor,
+      limit: 50,
+    }),
+    enabled: Boolean(loadCursor),
+    retry: false,
+    refetchOnWindowFocus: false,
   });
   const detailQuery = useQuery({
     queryKey: ["admin-telegram-conversation", selectedId],
@@ -298,13 +330,42 @@ export default function AdminTelegramInboxPage() {
     refetchInterval: 4000,
     refetchIntervalInBackground: false,
   });
-  const items = inboxQuery.data?.items ?? EMPTY_LIST;
+  const items = useMemo(() => {
+    const merged = [...(inboxQuery.data?.items ?? EMPTY_LIST), ...extraItems];
+    const seen = new Set();
+    return merged.filter((item) => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
+  }, [extraItems, inboxQuery.data?.items]);
   const detail = detailQuery.data;
+  useEffect(() => {
+    setExtraItems([]);
+    setNextCursor(null);
+    setLoadCursor(null);
+  }, [filter, chatStatus, q]);
+  useEffect(() => {
+    if (!extraItems.length) setNextCursor(inboxQuery.data?.next_cursor || null);
+  }, [extraItems.length, inboxQuery.data?.next_cursor]);
+  useEffect(() => {
+    if (!loadCursor || !olderQuery.data || olderQuery.isFetching) return;
+    const firstPageIds = new Set((inboxQuery.data?.items ?? []).map((item) => item.id));
+    setExtraItems((current) => {
+      const knownIds = new Set([...firstPageIds, ...current.map((item) => item.id)]);
+      return [...current, ...(olderQuery.data.items ?? []).filter((item) => !knownIds.has(item.id))];
+    });
+    setNextCursor(olderQuery.data.next_cursor || null);
+    setLoadCursor(null);
+  }, [inboxQuery.data?.items, loadCursor, olderQuery.data, olderQuery.isFetching]);
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [detail?.messages?.length, selectedId]);
 
   const invalidate = () => {
+    setExtraItems([]);
+    setNextCursor(null);
+    setLoadCursor(null);
     queryClient.invalidateQueries({ queryKey: ["admin-telegram-inbox"] });
     queryClient.invalidateQueries({ queryKey: ["admin-telegram-conversation", selectedId] });
   };
@@ -342,23 +403,65 @@ export default function AdminTelegramInboxPage() {
       invalidate();
     } catch (error) { toast.error(errorMessage(error)); }
   };
+  const changeWorkflowFilter = (value) => {
+    setFilter(value);
+    setSelectedId(null);
+    setMobileThread(false);
+    setExtraItems([]);
+    setNextCursor(null);
+    setLoadCursor(null);
+  };
+  const changeChatStatus = (value) => {
+    setChatStatus(value);
+    setSelectedId(null);
+    setMobileThread(false);
+    setExtraItems([]);
+    setNextCursor(null);
+    setLoadCursor(null);
+  };
+  const changeSearch = (value) => {
+    setQ(value);
+    setExtraItems([]);
+    setNextCursor(null);
+    setLoadCursor(null);
+  };
+  const loadMore = () => {
+    if (olderQuery.isError && loadCursor) {
+      olderQuery.refetch();
+      return;
+    }
+    if (nextCursor && !loadCursor) setLoadCursor(nextCursor);
+  };
   const currentList = (
     <ConversationList
       items={items}
       selectedId={selectedId}
       onSelect={(id) => { setSelectedId(id); setSourceMessageId(null); setMobileThread(true); setProductPanelOpen(false); }}
       loading={inboxQuery.isLoading}
-      status={{ filter, q, setQ }}
-      onStatus={(value) => { setFilter(value); setSelectedId(null); setMobileThread(false); }}
+      loadingMore={Boolean(loadCursor) && olderQuery.isFetching}
+      hasMore={Boolean(nextCursor || (extraItems.length === 0 && inboxQuery.data?.next_cursor))}
+      loadMore={loadMore}
+      status={{ chatStatus, q, setQ: changeSearch }}
+      onStatus={changeChatStatus}
     />
   );
 
   return (
-    <div className="-m-4 flex min-h-[calc(100dvh-3.5rem)] flex-col bg-white lg:-m-8 lg:min-h-[calc(100dvh-3.5rem)]" data-testid="admin-telegram-inbox-page">
-      <header className="flex min-h-[62px] items-center justify-between border-b border-neutral-200 px-4 py-3 lg:px-6">
+    <div className="-m-4 flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden bg-white lg:-m-8" data-testid="admin-telegram-inbox-page">
+      <header className="flex min-h-[62px] shrink-0 items-center justify-between border-b border-neutral-200 px-4 py-3 lg:px-6">
         <div><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#CD9B3A]">Sales · Telegram Business</p><h1 className="mt-0.5 text-lg font-semibold tracking-tight text-[#02422C]">Inbox Telegram</h1></div>
         <span className="hidden items-center gap-1.5 text-[11px] text-neutral-500 sm:inline-flex"><span className="h-2 w-2 rounded-full bg-emerald-500" />Tampilan diperbarui otomatis</span>
       </header>
+      <div className="shrink-0 border-b border-neutral-200 bg-white px-3 py-3 lg:px-6" data-testid="telegram-inbox-workflow-filters">
+        <p className="mb-2 text-[10px] font-medium text-neutral-500">{filter === "all" ? "Semua tahap aktif" : "Filter tahap order"}</p>
+        <div className="flex gap-2 overflow-x-auto overscroll-x-contain pb-1" role="group" aria-label="Filter tahap order">
+          {WORKFLOW_FILTERS.map(([stage, label]) => (
+            <button key={stage} type="button" onClick={() => changeWorkflowFilter(filter === stage ? "all" : stage)} aria-pressed={filter === stage} className={`min-h-10 shrink-0 whitespace-nowrap rounded-full px-3.5 text-xs font-semibold transition-colors ${filter === stage ? "bg-[#02422C] text-white" : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200"}`} data-testid={`telegram-stage-filter-${stage}`}>
+              {label}<span className="ml-2 inline-flex min-w-5 justify-center tabular-nums opacity-70">{inboxQuery.data?.counts?.[stage] ?? "—"}</span>
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="flex min-h-0 flex-1 overflow-hidden lg:grid lg:grid-cols-[290px_minmax(0,1fr)_320px]">
         <div className={`${mobileThread ? "hidden" : "flex"} min-h-0 w-full flex-col lg:flex lg:w-auto lg:min-w-0`}>{currentList}</div>
         {!selectedId ? (
@@ -381,7 +484,8 @@ export default function AdminTelegramInboxPage() {
                 <div className="flex min-w-0 items-center gap-2"><button type="button" className="inline-flex h-11 w-11 shrink-0 items-center justify-center lg:hidden" onClick={() => setMobileThread(false)} aria-label="Kembali ke daftar chat"><ArrowLeft className="h-5 w-5" /></button><div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#EAF3EF] text-xs font-semibold text-[#145A46]">{detail.customer_name?.slice(0, 1)?.toUpperCase() || "T"}</div><div className="min-w-0"><h2 className="truncate text-sm font-semibold text-[#02422C]">{detail.customer_name}</h2><p className="truncate text-[10px] text-neutral-500">{detail.customer_username ? `@${detail.customer_username}` : `ID ${detail.chat_id}`} · {detail.locale.toUpperCase()}</p></div></div>
                 <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto"><select aria-label="Bahasa konfirmasi" value={detail.locale} onChange={async (event) => { try { await updateAdminTelegramConversation(selectedId, { locale: event.target.value }); invalidate(); } catch (error) { toast.error(errorMessage(error)); } }} className="h-11 border border-neutral-200 bg-white px-2 text-xs uppercase text-neutral-600"><option value="id">ID</option><option value="en">EN</option><option value="uz">UZ</option><option value="ru">RU</option></select><StatusBadge value={detail.status} /><button type="button" onClick={() => setConversationStatus(detail.status === "archived" ? "needs_admin" : "archived")} className="inline-flex h-11 items-center gap-1 border border-neutral-200 px-3 text-xs text-neutral-600 hover:bg-neutral-50" title={detail.status === "archived" ? "Buka kembali" : "Arsipkan chat"}>{detail.status === "archived" ? <MessageCircle className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}<span className="hidden sm:inline">{detail.status === "archived" ? "Buka kembali" : "Arsipkan"}</span></button></div>
               </div>
-              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-4 lg:px-5" data-testid="telegram-inbox-messages">
+              {detail.orders?.length ? <div className="shrink-0 border-b border-neutral-200 bg-white px-3 py-2 lg:px-5" data-testid="telegram-conversation-orders"><p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Order terkait · {detail.order_count}</p><div className="flex flex-wrap gap-2">{detail.orders.map((order) => <Link key={order.order_number} to={`/admin/orders/${encodeURIComponent(order.order_number)}`} className="inline-flex min-h-8 items-center gap-1.5 border border-neutral-200 px-2 text-[10px] font-medium text-[#145A46] hover:bg-[#F2F7F4]">{order.order_number}<WorkflowBadge stage={order.stage || workflowStageForStatus(order.status, "inquiry")} />{order.archived_at ? <span className="text-neutral-500">Diarsipkan</span> : null}</Link>)}</div></div> : null}
+              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-4 lg:px-5" data-testid="telegram-inbox-messages">
                 {!detail.messages?.length ? <div className="py-10 text-center text-xs text-neutral-400">Belum ada transkrip tersimpan untuk chat ini.</div> : null}
                 {(detail.messages || []).map((message) => (
                   <div key={message.id} className={`flex ${message.direction === "outbound" ? "justify-end" : "justify-start"}`}>

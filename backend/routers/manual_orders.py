@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Uplo
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import csrf_protect, require_roles
@@ -56,6 +57,15 @@ from db.models import (
     utcnow,
 )
 from db.session import SessionLocal, get_session
+from order_workflow import (
+    ACTIONABLE_ORDER_STATUSES,
+    WORKFLOW_FILTER_ALIASES,
+    WORKFLOW_FILTER_STAGES,
+    WORKFLOW_STAGE_STATUS_GROUPS,
+    WORKFLOW_STAGES,
+    normalize_workflow_filter_stage,
+    workflow_stage_for_status,
+)
 from storage.payment_evidence import delete as delete_evidence_file
 from storage.payment_evidence import resolve as resolve_evidence_file
 from storage.payment_evidence import save as save_evidence_file
@@ -90,63 +100,6 @@ ORDER_NOTIFICATION_LABELS = {
     "received_by_admin": "Barang diterima admin",
     "customer_shipping": "Barang dikirim ke customer",
     "delivered": "Barang diterima customer",
-}
-WORKFLOW_STAGES = (
-    "inquiry",
-    "pending_payment",
-    "payment_review",
-    "paid",
-    "supplier_shipping",
-    "received_by_admin",
-    "customer_shipping",
-    "delivered",
-)
-WORKFLOW_FILTER_STAGES = (
-    "inquiry",
-    "payment",
-    "supplier_shipping",
-    "received_by_admin",
-    "customer_shipping",
-    "delivered",
-    "archived",
-)
-WORKFLOW_FILTER_ALIASES = {
-    "pending_payment": "payment",
-    "payment_review": "payment",
-    "paid": "supplier_shipping",
-    "processing": "supplier_shipping",
-    "shipped": "customer_shipping",
-}
-WORKFLOW_STATUS_STAGES = {
-    "pending_payment": "payment",
-    "payment_review": "payment",
-    # The visible stage is the next operational checkpoint, not the last
-    # persisted event. Each fulfillment mutation therefore advances the UI.
-    "paid": "supplier_shipping",
-    "processing": "supplier_shipping",
-    "supplier_shipping": "received_by_admin",
-    "received_by_admin": "customer_shipping",
-    "customer_shipping": "customer_shipping",
-    "shipped": "customer_shipping",
-    "delivered": "delivered",
-}
-WORKFLOW_STAGE_STATUS_GROUPS = {
-    "inquiry": set(),
-    "payment": {"pending_payment", "payment_review"},
-    "supplier_shipping": {"paid", "processing"},
-    "received_by_admin": {"supplier_shipping"},
-    "customer_shipping": {"received_by_admin", "customer_shipping", "shipped"},
-    "delivered": {"delivered"},
-}
-ACTIONABLE_ORDER_STATUSES = {
-    "pending_payment",
-    "payment_review",
-    "paid",
-    "supplier_shipping",
-    "received_by_admin",
-    "customer_shipping",
-    "processing",
-    "shipped",
 }
 ALLOWED_EVIDENCE = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
 PUBLIC_ORDER_STAGES = {
@@ -228,12 +181,12 @@ def _workflow_next_action(stage: str) -> str:
 
 def _workflow_stage(status: str) -> str:
     """Map a persisted status to its next visible operational checkpoint."""
-    return WORKFLOW_STATUS_STAGES.get(status, status)
+    return workflow_stage_for_status(status)
 
 
 def _workflow_filter_stage(stage: str) -> str:
     """Normalize legacy filter URLs without reinterpreting canonical stages."""
-    return WORKFLOW_FILTER_ALIASES.get(stage, stage)
+    return normalize_workflow_filter_stage(stage)
 
 
 def _workflow_counts(status_counts: dict[str, int], inquiry_count: int) -> dict[str, int]:

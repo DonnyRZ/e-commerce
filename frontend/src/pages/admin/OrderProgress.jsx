@@ -16,7 +16,7 @@ export function normalizeOrderStage(stage) {
   return stage;
 }
 
-export function workflowStageForStatus(status) {
+export function workflowStageForStatus(status, fallback) {
   const statusStages = {
     pending_payment: "payment",
     payment_review: "payment",
@@ -28,7 +28,7 @@ export function workflowStageForStatus(status) {
     shipped: "customer_shipping",
     delivered: "delivered",
   };
-  return statusStages[status] || normalizeOrderStage(status);
+  return statusStages[status] || (fallback === undefined ? normalizeOrderStage(status) : fallback);
 }
 
 export function OrderProgress({

@@ -81,6 +81,7 @@ function WorkflowCard({ item, returnTo, workflowFilter }) {
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["admin-order-workflow"] }),
+        queryClient.invalidateQueries({ queryKey: ["admin-telegram-inbox"] }),
         queryClient.invalidateQueries({ queryKey: ["admin-dashboard"] }),
       ]);
       toast.success(action === "archive" ? "Order diarsipkan. Bisa dipulihkan dari filter Diarsipkan." : action === "restore" ? "Order dipulihkan ke tahap sebelumnya." : isInquiry ? "Inquiry dihapus permanen dari CMS." : "Order dihapus permanen.");
