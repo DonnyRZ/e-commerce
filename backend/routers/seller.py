@@ -119,6 +119,7 @@ class ProductCreateIn(BaseModel):
 
 
 class ProductUpdateIn(BaseModel):
+    expected_revision: Optional[int] = Field(default=None, ge=1)
     category_id: Optional[str] = Field(default=None, min_length=8, max_length=40)
     product_type: Optional[str] = Field(default=None, max_length=20)
     brand: Optional[str] = Field(default=None, max_length=120)
@@ -132,6 +133,7 @@ class ProductUpdateIn(BaseModel):
 
 
 class VariantUpdateIn(BaseModel):
+    expected_revision: Optional[int] = Field(default=None, ge=1)
     sku: Optional[str] = Field(default=None, min_length=2, max_length=80)
     option_values: Optional[dict] = None
     price_override: Optional[int] = Field(default=None, ge=0)
@@ -142,7 +144,12 @@ class VariantUpdateIn(BaseModel):
 
 
 class InventoryIn(BaseModel):
+    expected_revision: Optional[int] = Field(default=None, ge=1)
     stock_quantity: int = Field(ge=0)
+
+
+class VariantCreateWithRevisionIn(VariantIn):
+    expected_revision: Optional[int] = Field(default=None, ge=1)
 
 
 class FulfillmentIn(BaseModel):
@@ -481,6 +488,7 @@ async def _product_payload(session: AsyncSession, product: Product) -> dict:
         "compare_at_price": product.compare_at_price,
         "currency": product.currency,
         "status": product.status,
+        "revision": product.revision,
         "attributes": product.attributes or {},
         "tags": product.tags or [],
         "media": product.media or [],
@@ -504,6 +512,24 @@ async def _product_payload(session: AsyncSession, product: Product) -> dict:
             for v in variants
         ],
     }
+
+
+def _advance_product_revision(product: Product) -> int:
+    product.revision = int(product.revision or 1) + 1
+    return product.revision
+
+
+async def _ensure_product_revision(
+    session: AsyncSession, product: Product, expected_revision: Optional[int]
+) -> None:
+    if expected_revision is None:
+        raise HTTPException(status_code=428, detail={"error": "revision_required"})
+    if int(expected_revision) != int(product.revision or 1):
+        current = await _product_payload(session, product)
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "product_changed", "current": current},
+        )
 
 
 # ------------------------------- dashboard --------------------------------
@@ -693,6 +719,7 @@ async def list_products(
         items.append(
             {
                 "id": product.id,
+                "revision": product.revision,
                 "slug": product.slug,
                 "name": names.get(locale) or names.get("en") or product.slug,
                 "status": product.status,
@@ -812,7 +839,8 @@ async def update_product(
     )
     if not product:
         raise HTTPException(status_code=404, detail="product_not_found")
-    data = payload.model_dump(exclude_unset=True)
+    await _ensure_product_revision(session, product, payload.expected_revision)
+    data = payload.model_dump(exclude_unset=True, exclude={"expected_revision"})
     if "status" in data and data["status"] not in PRODUCT_STATUSES:
         _bad_request("invalid_status")
     if "product_type" in data:
@@ -890,6 +918,7 @@ async def update_product(
     ):
         if field in data:
             setattr(product, field, data[field])
+    _advance_product_revision(product)
     await session.commit()
     return await _product_payload(session, product)
 
@@ -897,7 +926,7 @@ async def update_product(
 @router.post("/products/{product_id}/variants", status_code=201)
 async def create_variant(
     product_id: str,
-    payload: VariantIn,
+    payload: VariantCreateWithRevisionIn,
     user: User = Depends(require_seller),
     session: AsyncSession = Depends(get_session),
 ):
@@ -908,6 +937,7 @@ async def create_variant(
     )
     if not product:
         raise HTTPException(status_code=404, detail="product_not_found")
+    await _ensure_product_revision(session, product, payload.expected_revision)
     _validate_variant_prices(
         payload.price_override, payload.sale_price_override, product.base_price
     )
@@ -937,6 +967,7 @@ async def create_variant(
         is_active=payload.is_active,
     )
     session.add(variant)
+    _advance_product_revision(product)
     try:
         await session.commit()
     except IntegrityError:
@@ -976,7 +1007,8 @@ async def update_variant(
     )
     if not product or not variant:
         raise HTTPException(status_code=404, detail="variant_not_found")
-    data = payload.model_dump(exclude_unset=True)
+    await _ensure_product_revision(session, product, payload.expected_revision)
+    data = payload.model_dump(exclude_unset=True, exclude={"expected_revision"})
     if "sku" in data:
         data["sku"] = _normalize_sku(data["sku"])
         if data["sku"] != variant.sku:
@@ -1001,6 +1033,7 @@ async def update_variant(
     for field in ("sku", "option_values", "price_override", "sale_price_override", "media_id", "image_url", "is_active"):
         if field in data:
             setattr(variant, field, data[field])
+    _advance_product_revision(product)
     try:
         await session.commit()
     except IntegrityError:
@@ -1038,6 +1071,7 @@ async def update_inventory(
     )
     if not product or not variant:
         raise HTTPException(status_code=404, detail="variant_not_found")
+    await _ensure_product_revision(session, product, payload.expected_revision)
     reserved = await _reserved_quantities(session, [variant.id])
     active_reserved = reserved.get(variant.id, 0)
     if payload.stock_quantity < active_reserved:
@@ -1050,9 +1084,11 @@ async def update_inventory(
             },
         )
     variant.stock_quantity = payload.stock_quantity
+    _advance_product_revision(product)
     await session.commit()
     return {
         "variant_id": variant.id,
+        "revision": product.revision,
         "stock_quantity": variant.stock_quantity,
         "active_reserved": active_reserved,
         "available": variant.stock_quantity - active_reserved,

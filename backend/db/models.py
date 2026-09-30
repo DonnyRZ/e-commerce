@@ -132,6 +132,8 @@ class Product(TimestampMixin, Base):
     tags: Mapped[list] = mapped_column(JSONB, default=list)
     media: Mapped[list] = mapped_column(JSONB, default=list)
     status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
+    # Monotonic catalog revision used to reject stale CMS/editor writes.
+    revision: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
     # Demo catalog items are visible for storefront/showcase QA but must never
     # be treated as commercially available products.
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", index=True)

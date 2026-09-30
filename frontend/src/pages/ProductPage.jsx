@@ -54,6 +54,7 @@ export default function ProductPage() {
     queryKey: ["product", slug],
     queryFn: () => getProduct(slug),
     retry: false,
+    refetchOnWindowFocus: true,
   });
   const product = query.data;
   const variants = useMemo(

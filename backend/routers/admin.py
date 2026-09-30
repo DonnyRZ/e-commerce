@@ -52,12 +52,15 @@ from routers.seller import (
     InventoryIn,
     ProductCreateIn,
     ProductUpdateIn,
+    VariantCreateWithRevisionIn,
     VariantIn,
     VariantUpdateIn,
     _bad_request,
     _check_skus,
     _normalize_sku,
     _product_payload,
+    _advance_product_revision,
+    _ensure_product_revision,
     _stock_state,
     _validate_category,
     _validate_active_product_payload,
@@ -199,6 +202,9 @@ class AdminProductEditorIn(ProductCreateIn):
     """Atomic product-editor payload; existing variant ids are optional."""
 
     variants: list[AdminVariantEditorIn] = Field(min_length=1)
+    expected_revision: Optional[int] = Field(default=None, ge=1)
+    overwrite_confirmed: bool = False
+    overwrote_revision: Optional[int] = Field(default=None, ge=1)
 
 
 # ------------------------------ dashboard -----------------------------------
@@ -640,6 +646,8 @@ async def admin_apply_product_size_presets(
                 is_active=spec["is_active"],
             ))
             added += 1
+        if entry["missing"]:
+            _advance_product_revision(product)
 
     data = {
         **normalized,
@@ -753,6 +761,7 @@ async def admin_list_products(
         items.append(
             {
                 "id": product.id,
+                "revision": product.revision,
                 "slug": product.slug,
                 "name": names.get(locale) or names.get("en") or product.slug,
                 "status": product.status,
@@ -868,7 +877,8 @@ async def admin_update_product(
     )
     if not product:
         raise HTTPException(status_code=404, detail="product_not_found")
-    data = payload.model_dump(exclude_unset=True)
+    await _ensure_product_revision(session, product, payload.expected_revision)
+    data = payload.model_dump(exclude_unset=True, exclude={"expected_revision"})
     if "status" in data and data["status"] not in ("draft", "active", "inactive"):
         _bad_request("invalid_status")
     if "product_type" in data:
@@ -937,8 +947,11 @@ async def admin_update_product(
                   "compare_at_price", "status", "attributes", "tags", "media"):
         if field in data:
             setattr(product, field, data[field])
+    revision_from = product.revision
+    _advance_product_revision(product)
     await audit(session, user.id, "admin.product.update", "product", product.id,
-                {"fields": sorted(data.keys())})
+                {"fields": sorted(data.keys()), "revision_from": revision_from,
+                 "revision_to": product.revision})
     await session.commit()
     return await _product_payload(session, product)
 
@@ -965,6 +978,11 @@ async def admin_save_product_editor(
     )
     if not product:
         raise HTTPException(status_code=404, detail="product_not_found")
+    await _ensure_product_revision(session, product, payload.expected_revision)
+    if payload.overwrite_confirmed != (payload.overwrote_revision is not None):
+        _bad_request("invalid_overwrite_confirmation")
+    if payload.overwrote_revision is not None and payload.overwrote_revision >= payload.expected_revision:
+        _bad_request("invalid_overwrite_confirmation")
 
     _validate_translations(payload.translations, require_en=True)
     _validate_product_type(payload.product_type)
@@ -1105,13 +1123,22 @@ async def admin_save_product_editor(
             _validate_local_media_url(spec.image_url)
             variant.image_url = spec.image_url
 
+    revision_from = product.revision
+    _advance_product_revision(product)
     await audit(
         session,
         user.id,
         "admin.product.editor.save",
         "product",
         product.id,
-        {"fields": ["product", "translations", "variants"], "variant_count": len(payload.variants)},
+        {
+            "fields": ["product", "translations", "variants"],
+            "variant_count": len(payload.variants),
+            "revision_from": revision_from,
+            "revision_to": product.revision,
+            "overwrite_confirmed": payload.overwrite_confirmed,
+            "overwrote_revision": payload.overwrote_revision,
+        },
     )
     try:
         await session.commit()
@@ -1126,6 +1153,7 @@ async def admin_save_product_editor(
 @router.delete("/products/{product_id}")
 async def admin_delete_product(
     product_id: str,
+    expected_revision: Optional[int] = Query(default=None, ge=1),
     user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
@@ -1135,6 +1163,7 @@ async def admin_delete_product(
     )
     if not product:
         raise HTTPException(status_code=404, detail="product_not_found")
+    await _ensure_product_revision(session, product, expected_revision)
     if product.status not in ("draft", "inactive"):
         raise HTTPException(
             status_code=409,
@@ -1182,7 +1211,7 @@ async def admin_delete_product(
 @router.post("/products/{product_id}/variants", status_code=201)
 async def admin_create_variant(
     product_id: str,
-    payload: VariantIn,
+    payload: VariantCreateWithRevisionIn,
     user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
@@ -1192,6 +1221,7 @@ async def admin_create_variant(
     )
     if not product:
         raise HTTPException(status_code=404, detail="product_not_found")
+    await _ensure_product_revision(session, product, payload.expected_revision)
     sku = _normalize_sku(payload.sku)
     await _check_skus(session, [sku])
     _validate_variant_prices(
@@ -1213,6 +1243,7 @@ async def admin_create_variant(
         is_active=payload.is_active,
     )
     session.add(variant)
+    _advance_product_revision(product)
     await audit(session, user.id, "admin.variant.create", "product", product.id,
                 {"sku": payload.sku})
     try:
@@ -1226,6 +1257,7 @@ async def admin_create_variant(
 @router.delete("/variants/{variant_id}")
 async def admin_delete_variant(
     variant_id: str,
+    expected_revision: Optional[int] = Query(default=None, ge=1),
     user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
@@ -1249,6 +1281,7 @@ async def admin_delete_variant(
     )
     if not product or not variant:
         raise HTTPException(status_code=404, detail="variant_not_found")
+    await _ensure_product_revision(session, product, expected_revision)
     if product.status not in ("draft", "inactive"):
         raise HTTPException(
             status_code=409,
@@ -1300,6 +1333,7 @@ async def admin_delete_variant(
         )
 
     await session.delete(variant)
+    _advance_product_revision(product)
     await audit(
         session,
         user.id,
@@ -1316,7 +1350,12 @@ async def admin_delete_variant(
             status_code=409,
             detail={"error": "variant_in_use", "references": references},
         )
-    return {"deleted": True, "variant_id": variant_id, "product_id": product.id}
+    return {
+        "deleted": True,
+        "variant_id": variant_id,
+        "product_id": product.id,
+        "revision": product.revision,
+    }
 
 
 @router.patch("/variants/{variant_id}")
@@ -1348,7 +1387,8 @@ async def admin_update_variant(
     )
     if not product or not variant:
         raise HTTPException(status_code=404, detail="variant_not_found")
-    data = payload.model_dump(exclude_unset=True)
+    await _ensure_product_revision(session, product, payload.expected_revision)
+    data = payload.model_dump(exclude_unset=True, exclude={"expected_revision"})
     if "sku" in data:
         data["sku"] = _normalize_sku(data["sku"])
         if data["sku"] != variant.sku:
@@ -1374,6 +1414,7 @@ async def admin_update_variant(
                   "media_id", "image_url", "is_active"):
         if field in data:
             setattr(variant, field, data[field])
+    _advance_product_revision(product)
     await audit(session, user.id, "admin.variant.update", "variant", variant.id,
                 {"fields": sorted(data.keys())})
     try:
@@ -1411,6 +1452,7 @@ async def admin_update_inventory(
     )
     if not product or not variant:
         raise HTTPException(status_code=404, detail="variant_not_found")
+    await _ensure_product_revision(session, product, payload.expected_revision)
     reserved = await _reserved_quantities(session, [variant.id])
     active_reserved = reserved.get(variant.id, 0)
     if payload.stock_quantity < active_reserved:
@@ -1423,11 +1465,13 @@ async def admin_update_inventory(
             },
         )
     variant.stock_quantity = payload.stock_quantity
+    _advance_product_revision(product)
     await audit(session, user.id, "admin.inventory.update", "variant", variant.id,
                 {"stock_quantity": payload.stock_quantity})
     await session.commit()
     return {
         "variant_id": variant.id,
+        "revision": product.revision,
         "stock_quantity": variant.stock_quantity,
         "active_reserved": active_reserved,
         "available": variant.stock_quantity - active_reserved,

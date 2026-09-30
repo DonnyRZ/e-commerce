@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronLeft, ChevronRight, ImagePlus, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { announceProductUpdate } from "@/lib/productUpdateEvents";
 import {
   createAdminProduct,
   deleteAdminProduct,
@@ -82,6 +83,89 @@ const normalizeMedia = (items) =>
     .filter(Boolean)
     .slice(0, MAX_PRODUCT_IMAGES);
 
+const editorStateFromProduct = (product) => ({
+  form: {
+    category_id: product.category_id,
+    product_type: product.product_type,
+    brand: product.brand || "",
+    base_price: String(product.base_price),
+    compare_at_price: product.compare_at_price != null ? String(product.compare_at_price) : "",
+    status: product.status,
+    media: normalizeMedia(product.media),
+  },
+  attributes: product.attributes || {},
+  translations: product.translations || { en: { name: "" } },
+  variants: (product.variants || []).map((variant) => ({
+    id: variant.id,
+    sku: variant.sku,
+    size: sizeFromOptions(variant.option_values),
+    preservedOptions: preservedOptionsFrom(variant.option_values),
+    stock: variant.stock_quantity,
+    active_reserved: variant.active_reserved,
+    price_override: variant.price_override != null ? String(variant.price_override) : "",
+    sale_price_override: variant.sale_price_override != null ? String(variant.sale_price_override) : "",
+    media_id: variant.media_id || null,
+    image_url: variant.image_url || "",
+    is_active: variant.is_active,
+  })),
+});
+
+const conflictDisplay = (value) => {
+  if (value == null || value === "") return "—";
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return text.length > 140 ? `${text.slice(0, 137)}…` : text;
+};
+
+const productConflictDiffs = (draft, latest) => {
+  const rows = [];
+  const add = (label, draftValue, latestValue) => {
+    const left = JSON.stringify(draftValue ?? null);
+    const right = JSON.stringify(latestValue ?? null);
+    if (left !== right) rows.push({ label, draft: conflictDisplay(draftValue), latest: conflictDisplay(latestValue) });
+  };
+
+  ["category_id", "product_type", "brand", "base_price", "compare_at_price", "status", "attributes", "media"]
+    .forEach((field) => add(field.replaceAll("_", " "), draft[field], latest[field]));
+
+  const draftTranslations = draft.translations || {};
+  const latestTranslations = latest.translations || {};
+  [...new Set([...Object.keys(draftTranslations), ...Object.keys(latestTranslations)])].forEach((locale) => {
+    ["name", "short_description", "description"].forEach((field) => {
+      add(`${locale.toUpperCase()} ${field.replaceAll("_", " ")}`, draftTranslations[locale]?.[field], latestTranslations[locale]?.[field]);
+    });
+  });
+
+  const variantMap = (items) => new Map((items || []).map((variant, index) => {
+    const key = variant.id || `new:${variant.sku || index}`;
+    return [key, {
+      sku: variant.sku,
+      options: variant.option_values,
+      stock: variant.stock_quantity,
+      price: variant.price_override,
+      sale: variant.sale_price_override,
+      active: variant.is_active,
+    }];
+  }));
+  const draftVariants = variantMap(draft.variants);
+  const latestVariants = variantMap(latest.variants);
+  [...new Set([...draftVariants.keys(), ...latestVariants.keys()])].forEach((key) => {
+    const left = draftVariants.get(key);
+    const right = latestVariants.get(key);
+    const label = `Variant ${left?.sku || right?.sku || key}`;
+    if (!left || !right) {
+      rows.push({ label, draft: left ? "In your draft" : "Not in your draft", latest: right ? "Saved" : "Not saved" });
+      return;
+    }
+    add(`${label} · SKU`, left.sku, right.sku);
+    add(`${label} · options`, left.options, right.options);
+    add(`${label} · stock`, left.stock, right.stock);
+    add(`${label} · price`, left.price, right.price);
+    add(`${label} · sale price`, left.sale, right.sale);
+    add(`${label} · active`, left.active, right.active);
+  });
+  return rows;
+};
+
 const uploadErrorMessage = (err) => {
   const detail = err?.response?.data?.detail;
   const code = typeof detail === "object" ? detail?.error : detail;
@@ -148,6 +232,7 @@ const productSaveErrorMessage = (err) => {
     invalid_media: "One of the selected images is no longer available. Remove it and upload it again.",
     invalid_media_url: "One of the selected image links is invalid.",
     too_many_media: "A product can have up to 8 images.",
+    revision_required: "Reload this product before saving; the editor needs its current revision.",
   };
 
   if (code === "below_active_reservations") {
@@ -182,6 +267,10 @@ export default function AdminProductEditPage() {
   const [replacingImageIndex, setReplacingImageIndex] = useState(null);
   const [deletingVariantId, setDeletingVariantId] = useState(null);
   const [deletingProduct, setDeletingProduct] = useState(false);
+  const [remoteProduct, setRemoteProduct] = useState(null);
+  const [revisionConflict, setRevisionConflict] = useState(null);
+  const baselineRevision = useRef(null);
+  const hydratedProductId = useRef(null);
 
   const categoriesQuery = useQuery({ queryKey: ["admin-categories"], queryFn: getAdminCategories });
   const productQuery = useQuery({
@@ -190,36 +279,36 @@ export default function AdminProductEditPage() {
     enabled: !isNew,
   });
 
+  const hydrateEditor = useCallback((product) => {
+    const next = editorStateFromProduct(product);
+    setForm(next.form);
+    setAttributes(next.attributes);
+    setTr(next.translations);
+    setVariants(next.variants.length ? next.variants : [{ ...EMPTY_VARIANT }]);
+    baselineRevision.current = Number(product.revision) || 1;
+    hydratedProductId.current = product.id;
+    setRemoteProduct(null);
+    setRevisionConflict(null);
+  }, []);
+
   useEffect(() => {
     const p = productQuery.data;
     if (!p) return;
-    setForm({
-      category_id: p.category_id, product_type: p.product_type, brand: p.brand || "",
-      base_price: String(p.base_price),
-      compare_at_price: p.compare_at_price != null ? String(p.compare_at_price) : "",
-      status: p.status, media: normalizeMedia(p.media),
-    });
-    setAttributes(p.attributes || {});
-    setTr(p.translations || { en: { name: "" } });
-    setVariants(
-      (p.variants || []).map((v) => ({
-        id: v.id, sku: v.sku, size: sizeFromOptions(v.option_values), preservedOptions: preservedOptionsFrom(v.option_values),
-        stock: v.stock_quantity, active_reserved: v.active_reserved,
-        price_override: v.price_override != null ? String(v.price_override) : "",
-        sale_price_override: v.sale_price_override != null ? String(v.sale_price_override) : "",
-        media_id: v.media_id || null,
-        image_url: v.image_url || "",
-        is_active: v.is_active,
-      }))
-    );
-  }, [productQuery.data]);
+    if (hydratedProductId.current !== p.id) {
+      hydrateEditor(p);
+      return;
+    }
+    if (Number(p.revision) > Number(baselineRevision.current || 0)) {
+      setRemoteProduct(p);
+    }
+  }, [hydrateEditor, productQuery.data]);
 
   const setF = (key) => (e) => setForm((current) => ({ ...current, [key]: e.target.value }));
   const setAttribute = (key, value) => setAttributes((current) => ({ ...current, [key]: value }));
   const setT = (key) => (e) =>
     setTr((current) => ({ ...current, [activeLocale]: { ...(current[activeLocale] || {}), [key]: e.target.value } }));
   const setV = (idx, key, value) =>
-    setVariants(variants.map((v, i) => (i === idx ? { ...v, [key]: value, preset_generated: false } : v)));
+    setVariants((current) => current.map((v, i) => (i === idx ? { ...v, [key]: value, preset_generated: false } : v)));
 
   const uploadProductImages = async (e) => {
     const files = Array.from(e.target.files || []);
@@ -307,8 +396,13 @@ export default function AdminProductEditPage() {
 
     setDeletingVariantId(variant.id);
     try {
-      await deleteAdminVariant(variant.id);
+      const result = await deleteAdminVariant(variant.id, baselineRevision.current);
       setVariants((current) => current.filter((item) => item.id !== variant.id));
+      baselineRevision.current = result.revision;
+      queryClient.setQueryData(["admin-product", productId], (current) => current
+        ? { ...current, revision: result.revision, variants: current.variants.filter((item) => item.id !== variant.id) }
+        : current);
+      announceProductUpdate(productId, result.revision);
       // Keep any unsaved local variant rows intact. The product query is
       // marked stale for the next navigation/refresh without replacing the
       // editor state while the operator is still working.
@@ -316,7 +410,13 @@ export default function AdminProductEditPage() {
       queryClient.invalidateQueries({ queryKey: ["admin-products"] });
       toast.success("Variant deleted");
     } catch (err) {
+      const detail = err?.response?.data?.detail;
+      if (detail?.error === "product_changed" && detail.current) {
+        setRemoteProduct(detail.current);
+        toast.warning("This product changed elsewhere. Your draft is safe; review the latest version before saving.");
+      } else {
       toast.error(adminDeleteError(err, "Variant"));
+      }
     } finally {
       setDeletingVariantId(null);
     }
@@ -329,13 +429,19 @@ export default function AdminProductEditPage() {
 
     setDeletingProduct(true);
     try {
-      await deleteAdminProduct(productId);
+      await deleteAdminProduct(productId, baselineRevision.current);
       queryClient.invalidateQueries({ queryKey: ["admin-products"] });
       queryClient.invalidateQueries({ queryKey: ["products"] });
       toast.success("Product deleted");
       navigate("/products", { replace: true });
     } catch (err) {
-      toast.error(adminDeleteError(err, "Produk"));
+      const detail = err?.response?.data?.detail;
+      if (detail?.error === "product_changed" && detail.current) {
+        setRemoteProduct(detail.current);
+        toast.warning("This product changed elsewhere. Reload the latest data before deleting it.");
+      } else {
+        toast.error(adminDeleteError(err, "Produk"));
+      }
     } finally {
       setDeletingProduct(false);
     }
@@ -389,6 +495,10 @@ export default function AdminProductEditPage() {
   const save = async (e) => {
     e.preventDefault();
     if (saving) return;
+    if (imageUploading || replacingImageIndex !== null) {
+      toast.warning("Wait for product image uploads to finish before saving.");
+      return;
+    }
     if (sizeRequired && variants.some((variant) => !String(variant.size || "").trim())) {
       toast.error("Enter a size for every clothing or footwear variant. Any size value is allowed.");
       return;
@@ -494,17 +604,95 @@ export default function AdminProductEditPage() {
           variants: editorVariants,
         });
         toast.success("Product created");
+        announceProductUpdate(created.id, created.revision);
         queryClient.invalidateQueries({ queryKey: ["admin-products"] });
+        queryClient.invalidateQueries({ queryKey: ["products"] });
         navigate(`/products/${created.id}`, { replace: true });
         return;
       }
-      await saveAdminProductEditor(productId, { ...base, variants: editorVariants });
+      const expectedRevision = Number(baselineRevision.current || productQuery.data?.revision);
+      if (!Number.isInteger(expectedRevision) || expectedRevision < 1) {
+        toast.error("The product version could not be verified. Reload the page before saving.");
+        return;
+      }
+      const draftPayload = { ...base, variants: editorVariants };
+      let saved;
+      try {
+        saved = await saveAdminProductEditor(productId, {
+          ...draftPayload,
+          expected_revision: expectedRevision,
+          overwrite_confirmed: false,
+          overwrote_revision: null,
+        });
+      } catch (err) {
+        const detail = err?.response?.data?.detail;
+        if (err?.response?.status === 409 && detail?.error === "product_changed" && detail.current) {
+          setRemoteProduct(detail.current);
+          setRevisionConflict({
+            draft: draftPayload,
+            latest: detail.current,
+            attemptedRevision: expectedRevision,
+          });
+          toast.warning("This product was updated elsewhere. Compare the versions before choosing what to keep.");
+          return;
+        }
+        throw err;
+      }
       toast.success("Product saved");
-      queryClient.invalidateQueries({ queryKey: ["admin-product", productId] });
+      hydrateEditor(saved);
+      queryClient.setQueryData(["admin-product", productId], saved);
+      announceProductUpdate(productId, saved.revision);
       queryClient.invalidateQueries({ queryKey: ["admin-products"] });
       queryClient.invalidateQueries({ queryKey: ["products"] });
     } catch (err) {
       toast.error(productSaveErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const loadLatestProduct = () => {
+    if (!revisionConflict?.latest) return;
+    queryClient.setQueryData(["admin-product", productId], revisionConflict.latest);
+    hydrateEditor(revisionConflict.latest);
+  };
+
+  const overwriteLatestProduct = async () => {
+    if (!revisionConflict || saving) return;
+    const latestRevision = Number(revisionConflict.latest.revision);
+    const overwrittenRevision = Number(revisionConflict.attemptedRevision);
+    if (!Number.isInteger(latestRevision) || latestRevision <= overwrittenRevision) {
+      toast.error("The latest version could not be verified. Reload before trying again.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const saved = await saveAdminProductEditor(productId, {
+        ...revisionConflict.draft,
+        expected_revision: latestRevision,
+        overwrite_confirmed: true,
+        overwrote_revision: overwrittenRevision,
+      });
+      toast.success("Your draft replaced the latest product version");
+      hydrateEditor(saved);
+      queryClient.setQueryData(["admin-product", productId], saved);
+      announceProductUpdate(productId, saved.revision);
+      queryClient.invalidateQueries({ queryKey: ["admin-products"] });
+      queryClient.invalidateQueries({ queryKey: ["products"] });
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      if (err?.response?.status === 409 && detail?.error === "product_changed" && detail.current) {
+        setRemoteProduct(detail.current);
+        setRevisionConflict((current) => current ? ({
+          ...current,
+          latest: detail.current,
+          attemptedRevision: latestRevision,
+        }) : current);
+        toast.warning("The product changed again. Review the new version before overwriting it.");
+      } else {
+        toast.error(productSaveErrorMessage(err));
+      }
     } finally {
       setSaving(false);
     }
@@ -515,6 +703,9 @@ export default function AdminProductEditPage() {
   }
 
   const tab = tr[activeLocale] || {};
+  const conflictDiffs = revisionConflict
+    ? productConflictDiffs(revisionConflict.draft, revisionConflict.latest)
+    : [];
 
   return (
     <div data-testid="admin-product-editor">
@@ -526,7 +717,33 @@ export default function AdminProductEditPage() {
         {isNew ? "New product" : `Edit product`}
       </h1>
 
-      <form onSubmit={save} className="mt-6 space-y-6">
+      {remoteProduct && !revisionConflict ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950" role="status" data-testid="product-remote-update-warning">
+          <p>
+            This product was updated in another session (revision {remoteProduct.revision}). Your unsaved draft is still here.
+          </p>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => {
+              queryClient.setQueryData(["admin-product", productId], remoteProduct);
+              hydrateEditor(remoteProduct);
+            }}
+            className="min-h-9 border border-amber-500 px-3 text-xs font-semibold hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+            data-testid="product-load-remote"
+          >
+            Load latest and discard my draft
+          </button>
+        </div>
+      ) : null}
+
+      <form onSubmit={save} className="mt-6">
+        <fieldset
+          disabled={saving || deletingProduct || Boolean(deletingVariantId)}
+          aria-busy={saving}
+          className="m-0 min-w-0 space-y-6 border-0 p-0"
+          data-testid="editor-fields"
+        >
         <section className="border border-neutral-200 bg-white p-5" data-testid="editor-basics">
           <h2 className="text-sm font-semibold">Basics</h2>
           <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -832,14 +1049,86 @@ export default function AdminProductEditPage() {
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="submit"
-            disabled={saving}
+            disabled={saving || imageUploading || replacingImageIndex !== null}
             data-testid="editor-save"
             className="h-11 bg-[#145A46] px-8 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
           >
             {saving ? "Saving…" : "Save product"}
           </button>
         </div>
+        </fieldset>
       </form>
+
+      {revisionConflict ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" data-testid="product-conflict-dialog">
+          <section
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="product-conflict-title"
+            aria-describedby="product-conflict-description"
+            className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-md bg-white p-5 shadow-xl sm:p-6"
+          >
+            <h2 id="product-conflict-title" className="text-lg font-semibold text-red-900">
+              This product changed while you were editing
+            </h2>
+            <p id="product-conflict-description" className="mt-2 text-sm leading-6 text-neutral-700">
+              Nothing from your draft was saved. Compare your draft with the current saved version. Overwriting replaces the saved product and all its variants with your draft; changes are not merged automatically.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-neutral-500">
+              <span>Your draft started from revision {revisionConflict.attemptedRevision}</span>
+              <span>Latest saved revision {revisionConflict.latest.revision}</span>
+            </div>
+
+            <div className="mt-5 overflow-x-auto border border-neutral-200">
+              <table className="w-full min-w-[520px] text-left text-xs">
+                <thead className="bg-neutral-50 text-neutral-500">
+                  <tr>
+                    <th className="px-3 py-2 font-semibold">Field</th>
+                    <th className="px-3 py-2 font-semibold">Your draft</th>
+                    <th className="px-3 py-2 font-semibold">Latest saved</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {conflictDiffs.slice(0, 30).map((row, index) => (
+                    <tr key={`${row.label}-${index}`} className="border-t border-neutral-100 align-top">
+                      <th className="max-w-48 px-3 py-2 font-medium text-neutral-700">{row.label}</th>
+                      <td className="max-w-72 break-words px-3 py-2 text-neutral-700">{row.draft}</td>
+                      <td className="max-w-72 break-words px-3 py-2 text-neutral-700">{row.latest}</td>
+                    </tr>
+                  ))}
+                  {!conflictDiffs.length ? (
+                    <tr><td colSpan={3} className="px-3 py-4 text-neutral-500">No field-level differences were found, but the version changed. Please load the latest version or explicitly overwrite it.</td></tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            {conflictDiffs.length > 30 ? (
+              <p className="mt-2 text-xs text-neutral-500">Showing the first 30 changed fields.</p>
+            ) : null}
+
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={loadLatestProduct}
+                disabled={saving}
+                className="min-h-10 border border-neutral-300 px-4 text-sm font-medium hover:bg-neutral-50 disabled:opacity-50"
+                data-testid="product-conflict-load-latest"
+              >
+                Load latest version
+              </button>
+              <button
+                type="button"
+                onClick={overwriteLatestProduct}
+                disabled={saving}
+                className="min-h-10 bg-red-800 px-4 text-sm font-semibold text-white hover:bg-red-900 disabled:opacity-50"
+                data-testid="product-conflict-overwrite"
+              >
+                {saving ? "Saving…" : "Overwrite latest version"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

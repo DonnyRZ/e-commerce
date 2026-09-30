@@ -110,7 +110,7 @@ def test_products_list_and_inventory_filter(admin):
     assert r.status_code == 200
     items = r.json()["items"]
     assert items
-    for key in ("id", "slug", "name", "status", "variant_count", "total_stock", "stock_state"):
+    for key in ("id", "revision", "slug", "name", "status", "variant_count", "total_stock", "stock_state"):
         assert key in items[0], key
     r = admin.get(f"{API}/admin/products", params={"inventory": "out_of_stock"})
     assert r.status_code == 200
@@ -141,19 +141,163 @@ def test_product_crud_flow(admin):
     assert r.status_code == 201, r.text
     body = r.json()
     pid, vid = body["id"], body["variants"][0]["id"]
+    revision = body["revision"]
 
-    r = admin.patch(f"{API}/admin/products/{pid}", json={"base_price": 109000, "status": "active"})
+    r = admin.patch(f"{API}/admin/products/{pid}", json={
+        "base_price": 109000, "status": "active", "expected_revision": revision,
+    })
     assert r.status_code == 200 and r.json()["base_price"] == 109000
+    revision = r.json()["revision"]
 
-    r = admin.patch(f"{API}/admin/variants/{vid}/inventory", json={"stock_quantity": 7})
+    r = admin.patch(f"{API}/admin/variants/{vid}/inventory", json={
+        "stock_quantity": 7, "expected_revision": revision,
+    })
     assert r.status_code == 200 and r.json()["stock_quantity"] == 7
+    revision = r.json()["revision"]
 
     r = admin.get(f"{API}/admin/products", params={"q": tag})
     assert r.json()["total"] >= 1
 
     # cleanup — keep test product out of the storefront
-    r = admin.patch(f"{API}/admin/products/{pid}", json={"status": "inactive"})
+    r = admin.patch(f"{API}/admin/products/{pid}", json={
+        "status": "inactive", "expected_revision": revision,
+    })
     assert r.status_code == 200
+
+
+def test_stale_product_write_is_rejected_without_changing_saved_data(admin):
+    categories = admin.get(f"{API}/admin/categories").json()
+    cats = categories if isinstance(categories, list) else categories.get("items", [])
+    cat = next(c for c in cats if c.get("kind") == "category" and c.get("is_active"))
+    tag = uuid.uuid4().hex[:8].upper()
+    created = admin.post(
+        f"{API}/admin/products",
+        json={
+            "category_id": cat["id"], "product_type": "general", "brand": "Revision test",
+            "base_price": 99000, "status": "draft", "media": [],
+            "translations": {"en": {"name": f"Revision Test {tag}"}},
+            "variants": [{"sku": f"REV-{tag}", "option_values": {"size": "One"}, "stock_quantity": 2}],
+        },
+    )
+    assert created.status_code == 201, created.text
+    product = created.json()
+    product_id = product["id"]
+    original_revision = product["revision"]
+    try:
+        missing_revision = admin.patch(
+            f"{API}/admin/products/{product_id}",
+            json={"brand": "Must not be saved without a revision"},
+        )
+        assert missing_revision.status_code == 428
+        assert missing_revision.json()["detail"]["error"] == "revision_required"
+
+        first = admin.patch(
+            f"{API}/admin/products/{product_id}",
+            json={"brand": "Saved by editor one", "expected_revision": original_revision},
+        )
+        assert first.status_code == 200, first.text
+        saved_revision = first.json()["revision"]
+        assert saved_revision > original_revision
+
+        stale = admin.patch(
+            f"{API}/admin/products/{product_id}",
+            json={"brand": "Stale editor must not win", "expected_revision": original_revision},
+        )
+        assert stale.status_code == 409, stale.text
+        assert stale.json()["detail"]["error"] == "product_changed"
+        assert stale.json()["detail"]["current"]["revision"] == saved_revision
+        reread = admin.get(f"{API}/admin/products/{product_id}")
+        assert reread.status_code == 200
+        assert reread.json()["brand"] == "Saved by editor one"
+        assert reread.json()["revision"] == saved_revision
+    finally:
+        current = admin.get(f"{API}/admin/products/{product_id}")
+        if current.status_code == 200:
+            admin.delete(
+                f"{API}/admin/products/{product_id}",
+                params={"expected_revision": current.json()["revision"]},
+            )
+
+
+def test_product_editor_overwrite_requires_current_revision_and_explicit_confirmation(admin):
+    categories = admin.get(f"{API}/admin/categories").json()
+    cats = categories if isinstance(categories, list) else categories.get("items", [])
+    cat = next(c for c in cats if c.get("kind") == "category" and c.get("is_active"))
+    tag = uuid.uuid4().hex[:8].upper()
+    created = admin.post(
+        f"{API}/admin/products",
+        json={
+            "category_id": cat["id"], "product_type": "general", "brand": "Original",
+            "base_price": 99000, "status": "draft", "media": [],
+            "translations": {"en": {"name": f"Editor Conflict {tag}"}},
+            "variants": [{"sku": f"EDREV-{tag}", "option_values": {"size": "S"}, "stock_quantity": 2}],
+        },
+    )
+    assert created.status_code == 201, created.text
+    original = created.json()
+    product_id = original["id"]
+    original_revision = original["revision"]
+
+    draft = {
+        "category_id": original["category_id"],
+        "product_type": original["product_type"],
+        "brand": "Draft explicitly chosen",
+        "base_price": 111000,
+        "compare_at_price": original["compare_at_price"],
+        "status": original["status"],
+        "attributes": original["attributes"],
+        "tags": original["tags"],
+        "media": original["media"],
+        "translations": original["translations"],
+        "variants": [{
+            "id": variant["id"],
+            "sku": variant["sku"],
+            "option_values": variant["option_values"],
+            "stock_quantity": variant["stock_quantity"],
+            "price_override": variant["price_override"],
+            "sale_price_override": variant["sale_price_override"],
+            "media_id": variant["media_id"],
+            "image_url": variant["image_url"],
+            "is_active": variant["is_active"],
+        } for variant in original["variants"]],
+    }
+
+    try:
+        first_save = admin.patch(
+            f"{API}/admin/products/{product_id}",
+            json={"brand": "Saved by another admin", "expected_revision": original_revision},
+        )
+        assert first_save.status_code == 200, first_save.text
+        latest_revision = first_save.json()["revision"]
+
+        stale = admin.put(
+            f"{API}/admin/products/{product_id}/editor",
+            json={**draft, "expected_revision": original_revision},
+        )
+        assert stale.status_code == 409, stale.text
+        assert stale.json()["detail"]["error"] == "product_changed"
+        assert stale.json()["detail"]["current"]["brand"] == "Saved by another admin"
+
+        overwrite = admin.put(
+            f"{API}/admin/products/{product_id}/editor",
+            json={
+                **draft,
+                "expected_revision": latest_revision,
+                "overwrite_confirmed": True,
+                "overwrote_revision": original_revision,
+            },
+        )
+        assert overwrite.status_code == 200, overwrite.text
+        assert overwrite.json()["brand"] == "Draft explicitly chosen"
+        assert overwrite.json()["base_price"] == 111000
+        assert overwrite.json()["revision"] > latest_revision
+    finally:
+        current = admin.get(f"{API}/admin/products/{product_id}")
+        if current.status_code == 200:
+            admin.delete(
+                f"{API}/admin/products/{product_id}",
+                params={"expected_revision": current.json()["revision"]},
+            )
 
 
 def test_product_and_variant_delete_guards(admin, customer):
@@ -193,19 +337,27 @@ def test_product_and_variant_delete_guards(admin, customer):
         no_csrf.cookies.update(admin.cookies)
         assert no_csrf.delete(f"{API}/admin/products/{product_id}").status_code == 403
 
-        deleted_variant = admin.delete(f"{API}/admin/variants/{first_variant['id']}")
+        deleted_variant = admin.delete(
+            f"{API}/admin/variants/{first_variant['id']}",
+            params={"expected_revision": product["revision"]},
+        )
         assert deleted_variant.status_code == 200, deleted_variant.text
         assert deleted_variant.json()["deleted"] is True
+        revision = deleted_variant.json()["revision"]
 
-        last_variant_delete = admin.delete(f"{API}/admin/variants/{last_variant['id']}")
+        last_variant_delete = admin.delete(
+            f"{API}/admin/variants/{last_variant['id']}",
+            params={"expected_revision": revision},
+        )
         assert last_variant_delete.status_code == 409
         assert last_variant_delete.json()["detail"]["error"] == "last_variant"
 
         activated = admin.patch(
             f"{API}/admin/products/{product_id}",
-            json={"status": "active"},
+            json={"status": "active", "expected_revision": revision},
         )
         assert activated.status_code == 200, activated.text
+        revision = activated.json()["revision"]
 
         cart_add = guest.post(
             f"{API}/cart/items",
@@ -217,24 +369,31 @@ def test_product_and_variant_delete_guards(admin, customer):
         )
         assert cart_add.status_code == 201, cart_add.text
 
-        active_delete = admin.delete(f"{API}/admin/products/{product_id}")
+        active_delete = admin.delete(
+            f"{API}/admin/products/{product_id}", params={"expected_revision": revision}
+        )
         assert active_delete.status_code == 409
         assert active_delete.json()["detail"]["error"] == "product_must_be_inactive"
 
         deactivated = admin.patch(
             f"{API}/admin/products/{product_id}",
-            json={"status": "inactive"},
+            json={"status": "inactive", "expected_revision": revision},
         )
         assert deactivated.status_code == 200, deactivated.text
+        revision = deactivated.json()["revision"]
 
-        in_use_delete = admin.delete(f"{API}/admin/products/{product_id}")
+        in_use_delete = admin.delete(
+            f"{API}/admin/products/{product_id}", params={"expected_revision": revision}
+        )
         assert in_use_delete.status_code == 409
         in_use_detail = in_use_delete.json()["detail"]
         assert in_use_detail["error"] == "product_in_use"
         assert in_use_detail["references"]["cart_items"] == 1
 
         assert guest.delete(f"{API}/cart", params={"guest": "true"}).status_code == 204
-        deleted_product = admin.delete(f"{API}/admin/products/{product_id}")
+        deleted_product = admin.delete(
+            f"{API}/admin/products/{product_id}", params={"expected_revision": revision}
+        )
         assert deleted_product.status_code == 200, deleted_product.text
         assert deleted_product.json() == {"deleted": True, "product_id": product_id}
         assert admin.get(f"{API}/admin/products/{product_id}").status_code == 404
@@ -252,8 +411,16 @@ def test_product_and_variant_delete_guards(admin, customer):
         # assertion failure before the final delete.
         current = admin.get(f"{API}/admin/products/{product_id}")
         if current.status_code == 200:
-            admin.patch(f"{API}/admin/products/{product_id}", json={"status": "inactive"})
-            admin.delete(f"{API}/admin/products/{product_id}")
+            revision = current.json()["revision"]
+            admin.patch(f"{API}/admin/products/{product_id}", json={
+                "status": "inactive", "expected_revision": revision,
+            })
+            current = admin.get(f"{API}/admin/products/{product_id}")
+            if current.status_code == 200:
+                admin.delete(
+                    f"{API}/admin/products/{product_id}",
+                    params={"expected_revision": current.json()["revision"]},
+                )
 
 
 def test_categories_crud(admin):

@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { announceProductUpdate } from "@/lib/productUpdateEvents";
 import {
   deleteAdminProduct,
   getAdminProducts,
@@ -43,11 +44,19 @@ export default function AdminProductsPage() {
     if (deletingId || updatingStatusId || !window.confirm(`Delete product "${product.name}" permanently?`)) return;
     setDeletingId(product.id);
     try {
-      await deleteAdminProduct(product.id);
+      await deleteAdminProduct(product.id, product.revision);
       toast.success("Product deleted");
+      announceProductUpdate(product.id, product.revision);
       queryClient.invalidateQueries({ queryKey: ["admin-products"] });
+      queryClient.invalidateQueries({ queryKey: ["products"] });
     } catch (err) {
-      toast.error(adminDeleteError(err, "Produk"));
+      const detail = err?.response?.data?.detail;
+      if (detail?.error === "product_changed") {
+        toast.warning("The product changed in another session. The list was refreshed; review the latest product before deleting it.");
+        queryClient.invalidateQueries({ queryKey: ["admin-products"] });
+      } else {
+        toast.error(adminDeleteError(err, "Produk"));
+      }
     } finally {
       setDeletingId(null);
     }
@@ -61,12 +70,22 @@ export default function AdminProductsPage() {
 
     setUpdatingStatusId(product.id);
     try {
-      await updateAdminProduct(product.id, { status: nextStatus });
+      const updated = await updateAdminProduct(product.id, {
+        status: nextStatus,
+        expected_revision: product.revision,
+      });
       toast.success(nextStatus === "inactive" ? "Product deactivated" : "Product activated");
+      announceProductUpdate(product.id, updated.revision);
       queryClient.invalidateQueries({ queryKey: ["admin-products"] });
+      queryClient.invalidateQueries({ queryKey: ["products"] });
     } catch (err) {
       const detail = err?.response?.data?.detail;
       const code = typeof detail === "string" ? detail : detail?.error;
+      if (code === "product_changed") {
+        toast.warning("The product changed in another session. Its status was not changed; the list is refreshing.");
+        queryClient.invalidateQueries({ queryKey: ["admin-products"] });
+        return;
+      }
       toast.error(
         code === "invalid_category"
           ? "Product must use an active leaf category before it can be activated."
