@@ -78,11 +78,10 @@ from product_sizes import (
     CLOTHING_DEPARTMENTS,
     FOOTWEAR_DEPARTMENTS,
     SIZE_PRESETS_SETTING_KEY,
-    configured_sizes_for_department,
     load_size_preset_data,
-    size_variant_matches_config,
     validate_size_values,
     acquire_size_preset_lock,
+    variants_have_required_size,
 )
 
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
@@ -324,20 +323,9 @@ def _size_preset_out(data: dict) -> dict:
     }
 
 
-def _validate_product_size_variants(
-    department: Optional[str], variants: list[dict], preset_data: dict
-) -> None:
-    configured = configured_sizes_for_department(department, preset_data)
-    if configured is None:
-        return
-    if any(
-        not size_variant_matches_config(department, options, preset_data)
-        for options in variants
-    ):
-        _bad_request(
-            "invalid_size_for_department",
-            {"department": department, "allowed_sizes": configured},
-        )
+def _validate_product_sizes(department: Optional[str], variants: list[dict]) -> None:
+    if not variants_have_required_size(department, variants):
+        _bad_request("size_required_for_department", {"department": department})
 
 
 async def _size_preset_target_rows(
@@ -533,7 +521,6 @@ def _size_preset_preview_payload(
     }
 
 
-@router.get("/product-size-presets")
 async def admin_get_product_size_presets(
     user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
@@ -541,7 +528,6 @@ async def admin_get_product_size_presets(
     return _size_preset_out(await load_size_preset_data(session))
 
 
-@router.put("/product-size-presets")
 async def admin_save_product_size_presets(
     payload: ProductSizePresetIn,
     user: User = Depends(require_admin),
@@ -585,7 +571,6 @@ async def admin_save_product_size_presets(
     return _size_preset_out(data)
 
 
-@router.post("/product-size-presets/preview")
 async def admin_preview_product_size_presets(
     user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
@@ -615,7 +600,6 @@ async def admin_preview_product_size_presets(
     return _size_preset_preview_payload(products, plan, digest, data)
 
 
-@router.post("/product-size-presets/apply")
 async def admin_apply_product_size_presets(
     payload: ProductSizePresetApplyIn,
     user: User = Depends(require_admin),
@@ -791,7 +775,6 @@ async def admin_create_product(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    preset_data = await load_size_preset_data(session, shared_lock=True)
     _validate_translations(payload.translations, require_en=True)
     _validate_product_type(payload.product_type)
     normalized_media = await _normalize_product_media(session, payload.media)
@@ -805,10 +788,8 @@ async def admin_create_product(
         _normalize_option_values(variant.option_values) for variant in payload.variants
     ]
     category = await session.get(Category, payload.category_id)
-    _validate_product_size_variants(
-        category.department if category else None,
-        normalized_options,
-        preset_data,
+    _validate_product_sizes(
+        category.department if category else None, normalized_options
     )
     for variant in payload.variants:
         _validate_variant_prices(
@@ -882,7 +863,6 @@ async def admin_update_product(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    preset_data = await load_size_preset_data(session, shared_lock=True)
     product = await session.scalar(
         select(Product).where(Product.id == product_id).with_for_update()
     )
@@ -912,10 +892,9 @@ async def admin_update_product(
                 )
             )
         ).scalars().all()
-        _validate_product_size_variants(
+        _validate_product_sizes(
             target_category.department if target_category else None,
             [options or {} for options in current_options],
-            preset_data,
         )
     if "media" in data:
         data["media"] = await _normalize_product_media(session, data["media"] or [])
@@ -979,7 +958,6 @@ async def admin_save_product_editor(
     product half-updated after the basics were already committed.
     """
 
-    preset_data = await load_size_preset_data(session, shared_lock=True)
     product = await session.scalar(
         select(Product)
         .where(Product.id == product_id)
@@ -1030,17 +1008,17 @@ async def admin_save_product_editor(
     category = await session.get(Category, payload.category_id)
     for submitted, option_values in zip(payload.variants, normalized_options):
         existing = existing_by_id.get(submitted.id) if submitted.id else None
-        may_preserve_legacy = bool(
+        unchanged_legacy = bool(
             existing
             and product.category_id == payload.category_id
             and option_values == (existing.option_values or {})
         )
-        if not may_preserve_legacy:
-            _validate_product_size_variants(
-                category.department if category else None,
-                [option_values],
-                preset_data,
+        if not unchanged_legacy:
+            _validate_product_sizes(
+                category.department if category else None, [option_values]
             )
+    # _normalize_option_values validates shape/content; sizes themselves are
+    # managed per product and are not restricted by global presets.
     submitted_variant_ids = set(variant_ids)
     # The editor intentionally does not delete omitted persisted variants. If
     # one is retained implicitly, its existing price overrides must still be
@@ -1209,23 +1187,20 @@ async def admin_create_variant(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    preset_data = await load_size_preset_data(session, shared_lock=True)
     product = await session.scalar(
         select(Product).where(Product.id == product_id).with_for_update()
     )
     if not product:
         raise HTTPException(status_code=404, detail="product_not_found")
-    category = await session.get(Category, product.category_id)
     sku = _normalize_sku(payload.sku)
     await _check_skus(session, [sku])
     _validate_variant_prices(
         payload.price_override, payload.sale_price_override, product.base_price
     )
     option_values = _normalize_option_values(payload.option_values)
-    _validate_product_size_variants(
-        category.department if category else None,
-        [option_values],
-        preset_data,
+    category = await session.get(Category, product.category_id)
+    _validate_product_sizes(
+        category.department if category else None, [option_values]
     )
     variant_image_url = await _resolve_media_url(session, payload.media_id) if payload.media_id else payload.image_url
     if not payload.media_id:
@@ -1352,7 +1327,6 @@ async def admin_update_variant(
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
-    preset_data = await load_size_preset_data(session, shared_lock=True)
     variant_product_id = await session.scalar(
         select(ProductVariant.product_id).where(ProductVariant.id == variant_id)
     )
@@ -1392,10 +1366,9 @@ async def admin_update_variant(
         data["option_values"] = _normalize_option_values(data["option_values"])
         if data["option_values"] != (variant.option_values or {}):
             category = await session.get(Category, product.category_id)
-            _validate_product_size_variants(
+            _validate_product_sizes(
                 category.department if category else None,
                 [data["option_values"]],
-                preset_data,
             )
     for field in ("sku", "option_values", "price_override", "sale_price_override",
                   "media_id", "image_url", "is_active"):

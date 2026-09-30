@@ -338,6 +338,8 @@ class TelegramInboxMessage(Base):
     source: Mapped[str] = mapped_column(String(12), default="telegram")
     message_type: Mapped[str] = mapped_column(String(12), default="text")
     text: Mapped[str] = mapped_column(Text, default="")
+    rich_content: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    media_group_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     photo_file_id: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     photo_file_unique_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     photo_file_size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

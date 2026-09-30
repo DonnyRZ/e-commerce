@@ -9,7 +9,6 @@ import {
   deleteAdminVariant,
   getAdminCategories,
   getAdminProduct,
-  getAdminProductSizePresets,
   saveAdminProductEditor,
   uploadCmsMedia,
 } from "@/lib/api";
@@ -19,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { adminDeleteError, inputClass } from "./adminUtils";
 
 const LOCALES = ["en", "id", "uz", "ru"];
+const SIZE_REQUIRED_DEPARTMENTS = new Set(["women-muslimah", "uniqlo-products", "batik", "shoe"]);
 const EMPTY_VARIANT = { sku: "", size: "", preservedOptions: {}, stock: 0, price_override: "", sale_price_override: "", media_id: null, image_url: "", is_active: true };
 
 const sizeFromOptions = (obj) =>
@@ -140,7 +140,7 @@ const productSaveErrorMessage = (err) => {
     sku_exists: "That SKU is already used by another variant. Use a different SKU.",
     sku_duplicate_in_payload: "Two variants in this product use the same SKU.",
     invalid_option_values: "Variant size must be a simple value such as S, M, or L.",
-    invalid_size_for_department: "Use a size from the active CMS preset. Refresh the editor and try again.",
+    size_required_for_department: "Enter a size for every clothing or footwear variant. Any size value is allowed.",
     invalid_variant: "One of the selected variants is no longer valid. Refresh and try again.",
     compare_price_below_base: "Compare-at price must be equal to or higher than the base price.",
     sale_price_not_below_regular: "Sale price must be lower than the regular price.",
@@ -152,10 +152,6 @@ const productSaveErrorMessage = (err) => {
 
   if (code === "below_active_reservations") {
     return `Stock cannot go below ${detail.active_reservations} active reservations.`;
-  }
-  if (code === "invalid_size_for_department") {
-    const allowed = Array.isArray(detail?.allowed_sizes) ? detail.allowed_sizes.join(", ") : "preset CMS";
-    return `Use a size from the active CMS preset: ${allowed}. Refresh the editor and try again.`;
   }
   if (code === "product_type_category_mismatch") {
     return "Batik and Parfum products must use a matching active category.";
@@ -188,10 +184,6 @@ export default function AdminProductEditPage() {
   const [deletingProduct, setDeletingProduct] = useState(false);
 
   const categoriesQuery = useQuery({ queryKey: ["admin-categories"], queryFn: getAdminCategories });
-  const sizePresetsQuery = useQuery({
-    queryKey: ["admin-product-size-presets"],
-    queryFn: getAdminProductSizePresets,
-  });
   const productQuery = useQuery({
     queryKey: ["admin-product", productId],
     queryFn: () => getAdminProduct(productId),
@@ -369,16 +361,7 @@ export default function AdminProductEditPage() {
   );
   const categoryById = new Map(categoryNodes.map((node) => [node.id, node]));
   const selectedCategory = categoryById.get(form.category_id);
-  const sizePresetKey = selectedCategory?.department && ["women-muslimah", "uniqlo-products", "batik"].includes(selectedCategory.department)
-    ? "clothing"
-    : selectedCategory?.department === "shoe" ? "footwear" : null;
-  const configuredSizes = sizePresetKey
-    ? (
-      sizePresetsQuery.data?.[sizePresetKey === "clothing" ? "applied_clothing_sizes" : "applied_footwear_sizes"]
-      ?? sizePresetsQuery.data?.[sizePresetKey === "clothing" ? "clothing_sizes" : "footwear_sizes"]
-      ?? []
-    )
-    : [];
+  const sizeRequired = SIZE_REQUIRED_DEPARTMENTS.has(selectedCategory?.department);
   const categoryBreadcrumb = (category) => {
     const chain = [];
     const seen = new Set();
@@ -403,35 +386,11 @@ export default function AdminProductEditPage() {
     }));
   };
 
-  useEffect(() => {
-    if (!isNew || !form.category_id || !sizePresetsQuery.data) return;
-    const category = categoryNodes.find((node) => node.id === form.category_id);
-    const presetKey = category?.department && ["women-muslimah", "uniqlo-products", "batik"].includes(category.department)
-      ? "clothing"
-      : category?.department === "shoe" ? "footwear" : null;
-    setVariants((current) => {
-      if (current.some((variant) => variant.id)) return current;
-      if (!presetKey) {
-        return current.some((variant) => variant.preset_generated)
-          ? [{ ...EMPTY_VARIANT }]
-          : current;
-      }
-      const sizes = sizePresetsQuery.data[presetKey === "clothing" ? "clothing_sizes" : "footwear_sizes"] || [];
-      if (!sizes.length) return current;
-      return sizes.map((size) => {
-        const existing = current.find((variant) => variant.size?.toLowerCase() === size.toLowerCase());
-        return existing
-          ? { ...existing, preset_generated: true }
-          : { ...EMPTY_VARIANT, size, preset_generated: true };
-      });
-    });
-  }, [isNew, form.category_id, sizePresetsQuery.data, categoryNodes]);
-
   const save = async (e) => {
     e.preventDefault();
     if (saving) return;
-    if (sizePresetKey && !configuredSizes.length) {
-      toast.error("Preset ukuran belum tersedia. Muat ulang preset sebelum menyimpan produk ini.");
+    if (sizeRequired && variants.some((variant) => !String(variant.size || "").trim())) {
+      toast.error("Enter a size for every clothing or footwear variant. Any size value is allowed.");
       return;
     }
 
@@ -783,7 +742,7 @@ export default function AdminProductEditPage() {
         <section className="border border-neutral-200 bg-white p-5" data-testid="editor-variants">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold">Variants & inventory</h2>
-            {!sizePresetKey ? <button
+            <button
               type="button"
               onClick={() => setVariants([...variants, { ...EMPTY_VARIANT }])}
               data-testid="editor-add-variant"
@@ -791,12 +750,12 @@ export default function AdminProductEditPage() {
             >
               <Plus className="h-3.5 w-3.5" aria-hidden="true" />
               Add variant
-            </button> : null}
+            </button>
           </div>
           <p className="mt-1 text-[11px] text-neutral-400">
-            {sizePresetKey && configuredSizes.length
-              ? `Ukuran dibuat dari preset CMS: ${configuredSizes.join(", ")}. SKU akan dibuat otomatis bila kosong.`
-              : "Enter the size for this variant, for example S, M, or L."}
+            {sizeRequired
+              ? "Enter a size for every variant. Any size is allowed; active variant sizes appear in the store."
+              : "Enter an optional size or product option for this variant. Active variant options appear in the store."}
           </p>
           <div className="mt-3 space-y-3">
             {variants.map((v, idx) => (
@@ -807,17 +766,7 @@ export default function AdminProductEditPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-[11px] font-medium text-neutral-500">Size</label>
-                  {sizePresetKey && configuredSizes.length ? (
-                    <select value={v.size} onChange={(e) => setV(idx, "size", e.target.value)} className={inputClass} data-testid={`variant-size-${idx}`}>
-                      <option value="">Pilih ukuran</option>
-                      {v.size && !configuredSizes.some((size) => size.toLowerCase() === v.size.toLowerCase()) && !isNew ? <option value={v.size}>{v.size} (varian lama)</option> : null}
-                      {configuredSizes.map((size) => <option key={size} value={size}>{size}</option>)}
-                    </select>
-                  ) : sizePresetKey ? (
-                    <input value={v.size} disabled className={`${inputClass} disabled:cursor-not-allowed disabled:bg-neutral-50`} data-testid={`variant-size-${idx}`} placeholder="Preset ukuran gagal dimuat" />
-                  ) : (
-                    <input value={v.size} onChange={(e) => setV(idx, "size", e.target.value)} className={inputClass} data-testid={`variant-size-${idx}`} placeholder="e.g. S, M, L" />
-                  )}
+                  <input value={v.size} onChange={(e) => setV(idx, "size", e.target.value)} className={inputClass} data-testid={`variant-size-${idx}`} placeholder="e.g. S, M, XL, 50ml" />
                   {Object.keys(v.preservedOptions || {}).length ? (
                     <p className="mt-1 truncate text-[10px] text-neutral-500" data-testid={`variant-preserved-options-${idx}`}>
                       {Object.entries(v.preservedOptions).map(([key, value]) => `${key}: ${value}`).join(" · ")}

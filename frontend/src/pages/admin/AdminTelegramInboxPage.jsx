@@ -3,6 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   Check,
   CheckCircle2,
   ImagePlus,
@@ -73,6 +75,84 @@ function shortTime(value) {
 
 function formatPrice(value, currency = "UZS") {
   return `${new Intl.NumberFormat("id-ID").format(value || 0)} ${currency}`;
+}
+
+function groupMediaAlbums(messages) {
+  const timeline = [];
+  const albums = new Map();
+  for (const message of messages) {
+    if (!message.media_group_id || message.type !== "photo" || message.is_deleted) {
+      timeline.push(message);
+      continue;
+    }
+    const key = `${message.direction}:${message.media_group_id}`;
+    let album = albums.get(key);
+    if (!album) {
+      album = {
+        ...message,
+        id: `album-${key}`,
+        type: "album",
+        album_slides: [],
+      };
+      albums.set(key, album);
+      timeline.push(album);
+    }
+    album.album_slides.push({ image_url: message.photo_url, caption: message.text || "" });
+    if (message.created_at < album.created_at) album.created_at = message.created_at;
+  }
+  return timeline;
+}
+
+function SlideCarousel({ slides, label, testId }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  if (!slides?.length) return null;
+  const index = Math.min(activeIndex, slides.length - 1);
+  const slide = slides[index];
+  return (
+    <div className="mt-2 overflow-hidden rounded-md bg-white" data-testid={testId}>
+      <div className="relative flex min-h-36 items-center justify-center bg-neutral-50">
+        {slide.image_url ? <img src={slide.image_url} alt={slide.caption?.split("\n")[0] || label} className="max-h-[360px] w-full object-contain" loading="lazy" /> : <p className="px-4 py-12 text-xs text-neutral-400">Foto produk tidak tersedia</p>}
+        {slides.length > 1 ? <>
+          <button type="button" onClick={() => setActiveIndex((index - 1 + slides.length) % slides.length)} aria-label="Produk sebelumnya" className="absolute left-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-neutral-700 shadow hover:bg-white"><ChevronLeft className="h-5 w-5" /></button>
+          <button type="button" onClick={() => setActiveIndex((index + 1) % slides.length)} aria-label="Produk berikutnya" className="absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-neutral-700 shadow hover:bg-white"><ChevronRight className="h-5 w-5" /></button>
+        </> : null}
+      </div>
+      {slide.caption ? <p className="whitespace-pre-wrap break-words border-t border-neutral-100 px-3 py-2 text-xs leading-5 text-neutral-700">{slide.caption}</p> : null}
+      {slides.length > 1 ? <div className="flex items-center justify-between gap-2 border-t border-neutral-100 px-3 py-2">
+        <span className="text-[10px] tabular-nums text-neutral-500">{index + 1} / {slides.length}</span>
+        <div className="flex items-center gap-1" role="group" aria-label={`${label} · pilih slide`}>
+          {slides.map((item, itemIndex) => <button key={`${itemIndex}-${item.image_url || "slide"}`} type="button" onClick={() => setActiveIndex(itemIndex)} aria-label={`Tampilkan produk ${itemIndex + 1}`} aria-current={itemIndex === index ? "true" : undefined} className={`h-2 w-2 rounded-full ${itemIndex === index ? "bg-[#145A46]" : "bg-neutral-300 hover:bg-neutral-400"}`} />)}
+        </div>
+      </div> : null}
+    </div>
+  );
+}
+
+function RichCartBubble({ message }) {
+  const content = message.rich_content || {};
+  return (
+    <div className="w-full max-w-[420px] overflow-hidden rounded-lg bg-white shadow-sm" data-testid="telegram-cart-carousel">
+      {message.is_reconstructed ? <p className="border-b border-amber-100 bg-amber-50 px-3 py-1.5 text-[10px] text-amber-800">Rekonstruksi dari snapshot · bukan arsip pesan Telegram asli</p> : null}
+      <div className="px-3 pt-3">
+        {content.title ? <h3 className="text-sm font-semibold text-neutral-800">{content.title}</h3> : null}
+        {content.intro ? <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-neutral-600">{content.intro}</p> : null}
+      </div>
+      <div className="px-2 pb-2">
+        <SlideCarousel slides={content.slides} label="Carousel produk" testId="telegram-rich-slides" />
+        {content.footer?.length ? <div className="space-y-2 border-t border-neutral-100 px-2 pt-2">
+          {content.footer.map((line, index) => <p key={`${index}-${line}`} className="whitespace-pre-wrap break-words text-xs leading-5 text-neutral-700">{line}</p>)}
+        </div> : null}
+      </div>
+    </div>
+  );
+}
+
+function AlbumBubble({ message }) {
+  return (
+    <div className="w-full max-w-[420px] rounded-lg bg-white p-2 shadow-sm" data-testid="telegram-album-carousel">
+      <SlideCarousel slides={message.album_slides} label="Album foto Telegram" testId="telegram-album-slides" />
+    </div>
+  );
 }
 
 function StatusBadge({ value }) {
@@ -487,11 +567,15 @@ export default function AdminTelegramInboxPage() {
               {detail.orders?.length ? <div className="shrink-0 border-b border-neutral-200 bg-white px-3 py-2 lg:px-5" data-testid="telegram-conversation-orders"><p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Order terkait · {detail.order_count}</p><div className="flex flex-wrap gap-2">{detail.orders.map((order) => <Link key={order.order_number} to={`/admin/orders/${encodeURIComponent(order.order_number)}`} className="inline-flex min-h-8 items-center gap-1.5 border border-neutral-200 px-2 text-[10px] font-medium text-[#145A46] hover:bg-[#F2F7F4]">{order.order_number}<WorkflowBadge stage={order.stage || workflowStageForStatus(order.status, "inquiry")} />{order.archived_at ? <span className="text-neutral-500">Diarsipkan</span> : null}</Link>)}</div></div> : null}
               <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-4 lg:px-5" data-testid="telegram-inbox-messages">
                 {!detail.messages?.length ? <div className="py-10 text-center text-xs text-neutral-400">Belum ada transkrip tersimpan untuk chat ini.</div> : null}
-                {(detail.messages || []).map((message) => (
+                {groupMediaAlbums(detail.messages || []).map((message) => (
                   <div key={message.id} className={`flex ${message.direction === "outbound" ? "justify-end" : "justify-start"}`}>
                     <div className={`max-w-[86%] rounded-lg px-3 py-2 shadow-sm sm:max-w-[78%] ${message.direction === "outbound" ? "bg-[#E5F4EA] text-neutral-800" : "border border-neutral-100 bg-white text-neutral-800"}`}>
-                      {message.photo_url ? <img src={message.photo_url} alt="Foto dari chat Telegram" className="mb-2 max-h-64 max-w-full rounded object-contain" loading="lazy" /> : null}
-                      {message.text ? <p className="whitespace-pre-wrap break-words text-xs leading-5">{message.text}</p> : null}
+                      {message.type === "rich" && message.rich_content ? <RichCartBubble message={message} /> : null}
+                      {message.type === "album" ? <AlbumBubble message={message} /> : null}
+                      {message.type !== "rich" && message.type !== "album" ? <>
+                        {message.photo_url ? <img src={message.photo_url} alt="Foto dari chat Telegram" className="mb-2 max-h-64 max-w-full rounded object-contain" loading="lazy" /> : null}
+                        {message.text ? <p className="whitespace-pre-wrap break-words text-xs leading-5">{message.text}</p> : null}
+                      </> : null}
                       {message.is_deleted ? <p className="text-xs italic text-neutral-400">Pesan dihapus</p> : null}
                       <div className="mt-1 flex items-center justify-end gap-1 text-[9px] text-neutral-400">{message.edited_at ? <span>diedit</span> : null}{message.source === "cms" ? <span>· CMS</span> : null}<span>{shortTime(message.created_at)}</span></div>
                       {message.direction === "inbound" && !message.is_deleted ? <button type="button" onClick={() => { setSourceMessageId(message.id); setProductPanelOpen(true); }} className="mt-1 min-h-11 border-t border-neutral-100 pt-2 text-left text-xs font-medium text-[#145A46] hover:underline">Tandai sebagai permintaan produk</button> : null}

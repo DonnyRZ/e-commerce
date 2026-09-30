@@ -34,12 +34,99 @@ def locale_from_language(value: object) -> str:
     return code if code in {"id", "en", "uz", "ru"} else "id"
 
 
+def _rich_text(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return "".join(_rich_text(item) for item in value)
+    if not isinstance(value, dict):
+        return ""
+    if value.get("type") == "custom_emoji":
+        return str(value.get("alternative_text") or "")
+    if isinstance(value.get("text"), (str, list, dict)):
+        return _rich_text(value["text"])
+    if isinstance(value.get("expression"), str):
+        return value["expression"]
+    return ""
+
+
+def _largest_photo(photo_sizes: object) -> dict | None:
+    photos = photo_sizes if isinstance(photo_sizes, list) else []
+
+    def size(photo: dict) -> int:
+        try:
+            return int(photo.get("file_size") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    return max(
+        (photo for photo in photos if isinstance(photo, dict)),
+        key=size,
+        default=None,
+    )
+
+
+def normalize_rich_content(message: dict) -> dict | None:
+    """Keep only the cart slideshow fields CMS needs; never persist arbitrary HTML."""
+    rich_message = message.get("rich_message")
+    blocks = rich_message.get("blocks") if isinstance(rich_message, dict) else None
+    if not isinstance(blocks, list):
+        return None
+
+    title = ""
+    intro = ""
+    slides: list[dict] = []
+    footer: list[str] = []
+    after_slideshow = False
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        kind = block.get("type")
+        if kind == "heading":
+            title = _rich_text(block.get("text"))
+        elif kind in {"paragraph", "footer"}:
+            text = _rich_text(block.get("text"))
+            if not text:
+                continue
+            if not after_slideshow and not intro:
+                intro = text
+            else:
+                footer.append(text)
+        elif kind == "divider":
+            continue
+        elif kind == "slideshow":
+            after_slideshow = True
+            slide_blocks = block.get("blocks")
+            for slide_block in slide_blocks if isinstance(slide_blocks, list) else []:
+                if not isinstance(slide_block, dict):
+                    continue
+                photo = _largest_photo(slide_block.get("photo")) if slide_block.get("type") == "photo" else None
+                caption = _rich_text(slide_block.get("caption"))
+                if not caption:
+                    caption = _rich_text(slide_block.get("text"))
+                if not photo and not caption:
+                    continue
+                slides.append(
+                    {
+                        "caption": caption,
+                        "photo_file_id": str(photo.get("file_id") or "")[:512] or None if photo else None,
+                        "photo_file_unique_id": str(photo.get("file_unique_id") or "")[:128] or None if photo else None,
+                        "photo_file_size": int(photo.get("file_size") or 0) or None if photo else None,
+                    }
+                )
+    if not any((title, intro, slides, footer)):
+        return None
+    return {"title": title, "intro": intro, "slides": slides, "footer": footer}
+
+
 async def get_or_create_conversation(
     session: AsyncSession,
     connection: TelegramBusinessConnection,
     chat: dict,
     sender: dict,
     at: datetime,
+    *,
+    sender_is_customer: bool | None = None,
 ) -> TelegramConversation:
     chat_id = chat.get("id")
     row = await session.scalar(
@@ -50,7 +137,12 @@ async def get_or_create_conversation(
         )
         .with_for_update()
     )
-    is_customer = str(sender.get("id") or "") != connection.business_user_id and not sender.get("is_bot")
+    is_customer = sender_is_customer
+    if is_customer is None:
+        is_customer = (
+            str(sender.get("id") or "") != connection.business_user_id
+            and not sender.get("is_bot")
+        )
     if row is None:
         customer = sender if is_customer else chat
         language = str(customer.get("language_code") or "")[:16]
@@ -109,7 +201,12 @@ async def get_or_create_conversation(
 
 
 async def persist_business_message(
-    session: AsyncSession, message: dict, update_id: int | None, *, edited: bool = False
+    session: AsyncSession,
+    message: dict,
+    update_id: int | None,
+    *,
+    edited: bool = False,
+    allow_outgoing_without_read: bool = False,
 ) -> TelegramInboxMessage | None:
     connection_id = message.get("business_connection_id")
     chat = message.get("chat") if isinstance(message.get("chat"), dict) else {}
@@ -144,39 +241,48 @@ async def persist_business_message(
             )
             session.add(connection)
             await session.flush()
+    if not connection:
+        return None
+
+    sender_is_customer = not (
+        isinstance(message.get("sender_business_bot"), dict)
+        or str(sender.get("id") or "") == connection.business_user_id
+        or sender.get("is_bot")
+    )
     if (
-        not connection
-        or not connection.is_enabled
+        not connection.is_enabled
         or connection.username.casefold().lstrip("@")
         != TELEGRAM_STORE_USERNAME.casefold().lstrip("@")
-        or not connection.can_read_messages
+        or (
+            not connection.can_read_messages
+            and (sender_is_customer or not allow_outgoing_without_read)
+        )
     ):
         return None
 
-    photo_sizes = message.get("photo") if isinstance(message.get("photo"), list) else []
-    photo = max(
-        (item for item in photo_sizes if isinstance(item, dict)),
-        key=lambda item: int(item.get("file_size") or 0),
-        default=None,
-    )
+    photo = _largest_photo(message.get("photo"))
+    rich_content = normalize_rich_content(message)
     text = message.get("text") or message.get("caption") or ""
     if not isinstance(text, str):
         text = ""
-    if not photo and not text.strip():
+    if not photo and not text.strip() and not rich_content:
         return None
 
     at = message_datetime(message, edited=edited)
-    conversation = await get_or_create_conversation(session, connection, chat, sender, at)
+    conversation = await get_or_create_conversation(
+        session,
+        connection,
+        chat,
+        sender,
+        at,
+        sender_is_customer=sender_is_customer,
+    )
     row = await session.scalar(
         select(TelegramInboxMessage).where(
             TelegramInboxMessage.connection_id == connection_id,
             TelegramInboxMessage.chat_id == chat["id"],
             TelegramInboxMessage.telegram_message_id == message_id,
         )
-    )
-    sender_is_customer = (
-        str(sender.get("id") or "") != connection.business_user_id
-        and not sender.get("is_bot")
     )
     if row is None:
         row = TelegramInboxMessage(
@@ -193,8 +299,10 @@ async def persist_business_message(
         session.add(row)
     if update_id is not None:
         row.update_id = update_id
-    row.message_type = "photo" if photo else "text"
+    row.message_type = "rich" if rich_content else "photo" if photo else "text"
     row.text = text[:4096]
+    row.rich_content = rich_content
+    row.media_group_id = str(message.get("media_group_id") or "")[:255] or None
     row.photo_file_id = str(photo.get("file_id") or "")[:512] or None if photo else None
     row.photo_file_unique_id = str(photo.get("file_unique_id") or "")[:128] or None if photo else None
     row.photo_file_size = int(photo.get("file_size") or 0) or None if photo else None
@@ -211,10 +319,17 @@ async def capture_business_message(
     *,
     edited: bool = False,
     source_override: str | None = None,
+    allow_outgoing_without_read: bool = False,
 ) -> None:
     """Persist a chat update; duplicate message IDs update the same row."""
     try:
-        row = await persist_business_message(session, message, update_id, edited=edited)
+        row = await persist_business_message(
+            session,
+            message,
+            update_id,
+            edited=edited,
+            allow_outgoing_without_read=allow_outgoing_without_read,
+        )
         if row and source_override:
             row.source = source_override
         await session.commit()
@@ -222,7 +337,13 @@ async def capture_business_message(
         await session.rollback()
         # A Telegram edit/send echo can race a webhook delivery. The message
         # unique key makes the operation safe; retry the upsert once.
-        row = await persist_business_message(session, message, update_id, edited=edited)
+        row = await persist_business_message(
+            session,
+            message,
+            update_id,
+            edited=edited,
+            allow_outgoing_without_read=allow_outgoing_without_read,
+        )
         if row and source_override:
             row.source = source_override
         await session.commit()
@@ -235,25 +356,54 @@ async def record_outgoing_message(
     result: dict,
     text: str,
     *,
-    message_type: str = "text",
+    message_type: str | None = None,
+    source_override: str | None = "cms",
 ) -> None:
     """Mirror server-sent Business messages into the same CMS transcript."""
+    if isinstance(result, list):
+        for sent_message in result:
+            if isinstance(sent_message, dict):
+                await record_outgoing_message(
+                    session,
+                    connection_id,
+                    chat_id,
+                    sent_message,
+                    text,
+                    message_type=message_type,
+                    source_override=source_override,
+                )
+        return
     connection = await session.get(TelegramBusinessConnection, connection_id)
     message_id = result.get("message_id") if isinstance(result, dict) else None
     if not connection or not isinstance(message_id, int):
         return
-    payload = {
-        "business_connection_id": connection_id,
-        "message_id": message_id,
-        "date": int(time.time()),
-        "chat": {"type": "private", "id": chat_id},
-        "from": {"id": connection.business_user_id, "is_bot": True},
-        "text": text if message_type == "text" else "",
-        "caption": text if message_type == "photo" else "",
-        "photo": result.get("photo", []) if isinstance(result.get("photo"), list) else [],
-    }
+    payload = dict(result)
+    payload["business_connection_id"] = connection_id
+    payload["message_id"] = message_id
+    payload["date"] = payload.get("date") if isinstance(payload.get("date"), int) else int(time.time())
+    payload["chat"] = (
+        payload.get("chat")
+        if isinstance(payload.get("chat"), dict)
+        else {"type": "private", "id": chat_id}
+    )
+    payload["chat"].setdefault("type", "private")
+    payload["chat"].setdefault("id", chat_id)
+    payload["from"] = (
+        payload.get("from")
+        if isinstance(payload.get("from"), dict)
+        else {"id": connection.business_user_id, "is_bot": True}
+    )
+    if text and not payload.get("text") and not payload.get("caption"):
+        if message_type == "photo":
+            payload["caption"] = text
+        elif message_type != "rich":
+            payload["text"] = text
     await capture_business_message(
-        session, payload, None, source_override="cms"
+        session,
+        payload,
+        None,
+        source_override=source_override,
+        allow_outgoing_without_read=True,
     )
 
 
@@ -277,6 +427,8 @@ async def capture_deleted_messages(session: AsyncSession, update: dict) -> None:
         )
         .values(
             text="",
+            rich_content=None,
+            media_group_id=None,
             photo_file_id=None,
             photo_file_unique_id=None,
             photo_file_size=None,

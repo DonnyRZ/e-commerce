@@ -34,11 +34,7 @@ from db.models import (
     User,
 )
 from db.session import get_session
-from product_sizes import (
-    configured_sizes_for_department,
-    load_size_preset_data,
-    size_variant_matches_config,
-)
+from product_sizes import variants_have_required_size
 from taxonomy import active_taxonomy_chain, get_root_category
 
 router = APIRouter(prefix="/api/v1/seller", tags=["seller"])
@@ -82,18 +78,9 @@ def _bad_request(code: str, extra: Optional[dict] = None):
     raise HTTPException(status_code=400, detail={"error": code, **(extra or {})})
 
 
-def _validate_size_options_for_department(
-    department: Optional[str], option_values: list[dict], preset_data: dict
-) -> None:
-    configured = configured_sizes_for_department(department, preset_data)
-    if configured is not None and any(
-        not size_variant_matches_config(department, options, preset_data)
-        for options in option_values
-    ):
-        _bad_request(
-            "invalid_size_for_department",
-            {"department": department, "allowed_sizes": configured},
-        )
+def _validate_product_sizes(department: Optional[str], variants: list[dict]) -> None:
+    if not variants_have_required_size(department, variants):
+        _bad_request("size_required_for_department", {"department": department})
 
 
 # ------------------------------- schemas ---------------------------------
@@ -725,7 +712,6 @@ async def create_product(
     user: User = Depends(require_seller),
     session: AsyncSession = Depends(get_session),
 ):
-    preset_data = await load_size_preset_data(session, shared_lock=True)
     _validate_translations(payload.translations, require_en=True)
     _validate_product_type(payload.product_type)
     normalized_media = await _normalize_media(session, payload.media)
@@ -739,10 +725,8 @@ async def create_product(
         _normalize_option_values(variant.option_values) for variant in payload.variants
     ]
     category = await session.get(Category, payload.category_id)
-    _validate_size_options_for_department(
-        category.department if category else None,
-        normalized_options,
-        preset_data,
+    _validate_product_sizes(
+        category.department if category else None, normalized_options
     )
     for variant in payload.variants:
         _validate_variant_prices(
@@ -821,7 +805,6 @@ async def update_product(
     user: User = Depends(require_seller),
     session: AsyncSession = Depends(get_session),
 ):
-    preset_data = await load_size_preset_data(session, shared_lock=True)
     product = await session.scalar(
         select(Product)
         .where(Product.id == product_id, Product.seller_id == user.id)
@@ -853,10 +836,9 @@ async def update_product(
                 )
             )
         ).scalars().all()
-        _validate_size_options_for_department(
+        _validate_product_sizes(
             target_category.department if target_category else None,
             [options or {} for options in current_options],
-            preset_data,
         )
     if "media" in data:
         data["media"] = await _normalize_media(session, data["media"] or [])
@@ -919,7 +901,6 @@ async def create_variant(
     user: User = Depends(require_seller),
     session: AsyncSession = Depends(get_session),
 ):
-    preset_data = await load_size_preset_data(session, shared_lock=True)
     product = await session.scalar(
         select(Product)
         .where(Product.id == product_id, Product.seller_id == user.id)
@@ -933,10 +914,8 @@ async def create_variant(
     sku = _normalize_sku(payload.sku)
     option_values = _normalize_option_values(payload.option_values)
     category = await session.get(Category, product.category_id)
-    _validate_size_options_for_department(
-        category.department if category else None,
-        [option_values],
-        preset_data,
+    _validate_product_sizes(
+        category.department if category else None, [option_values]
     )
     await _check_skus(session, [sku])
     variant_image_url = (
@@ -973,7 +952,6 @@ async def update_variant(
     user: User = Depends(require_seller),
     session: AsyncSession = Depends(get_session),
 ):
-    preset_data = await load_size_preset_data(session, shared_lock=True)
     variant_product_id = await session.scalar(
         select(ProductVariant.product_id)
         .join(Product, ProductVariant.product_id == Product.id)
@@ -1016,10 +994,9 @@ async def update_variant(
         data["option_values"] = _normalize_option_values(data["option_values"])
         if data["option_values"] != (variant.option_values or {}):
             category = await session.get(Category, product.category_id)
-            _validate_size_options_for_department(
+            _validate_product_sizes(
                 category.department if category else None,
                 [data["option_values"]],
-                preset_data,
             )
     for field in ("sku", "option_values", "price_override", "sale_price_override", "media_id", "image_url", "is_active"):
         if field in data:

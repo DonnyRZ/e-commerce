@@ -2,7 +2,7 @@ import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import String, and_, func, or_, select, true
+from sqlalchemy import String, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
@@ -13,13 +13,7 @@ from db.models import (
     ProductVariant,
 )
 from db.session import get_session
-from product_sizes import (
-    CLOTHING_DEPARTMENTS,
-    FOOTWEAR_DEPARTMENTS,
-    load_size_preset_data,
-    preset_key_for_department,
-    size_variant_is_visible,
-)
+from product_sizes import department_requires_size_selection
 from config import PREORDER_ESTIMATE_DAYS
 from taxonomy import (
     active_taxonomy_chain,
@@ -121,38 +115,8 @@ def _variant_out(v: ProductVariant) -> dict:
     }
 
 
-def _public_variant_condition(preset_data: dict, department_column=Category.department):
-    clothing_applied = preset_data.get("applied_clothing")
-    footwear_applied = preset_data.get("applied_footwear")
-    size_value = func.coalesce(
-        ProductVariant.option_values["size"].astext,
-        ProductVariant.option_values["Size"].astext,
-    )
-    clothing_visible = (
-        true()
-        if clothing_applied is None
-        else func.lower(func.trim(size_value)).in_(
-            [str(size).strip().casefold() for size in clothing_applied]
-        )
-    )
-    footwear_visible = (
-        true()
-        if footwear_applied is None
-        else func.lower(func.trim(size_value)).in_(
-            [str(size).strip().casefold() for size in footwear_applied]
-        )
-    )
-    scoped_departments = sorted(CLOTHING_DEPARTMENTS | FOOTWEAR_DEPARTMENTS)
-    return or_(
-        department_column.is_(None),
-        department_column.not_in(scoped_departments),
-        and_(department_column.in_(sorted(CLOTHING_DEPARTMENTS)), clothing_visible),
-        and_(department_column.in_(sorted(FOOTWEAR_DEPARTMENTS)), footwear_visible),
-    )
-
-
 async def _variant_stats(
-    session: AsyncSession, product_ids: list, preset_data: dict
+    session: AsyncSession, product_ids: list
 ) -> dict:
     if not product_ids:
         return {}
@@ -165,10 +129,7 @@ async def _variant_stats(
         .where(
             ProductVariant.product_id.in_(product_ids),
             ProductVariant.is_active.is_(True),
-            _public_variant_condition(preset_data),
         )
-        .join(Product, Product.id == ProductVariant.product_id)
-        .join(Category, Category.id == Product.category_id)
         .group_by(ProductVariant.product_id)
     )
     colors_stmt = (
@@ -180,10 +141,7 @@ async def _variant_stats(
             ProductVariant.product_id.in_(product_ids),
             ProductVariant.is_active.is_(True),
             ProductVariant.option_values.has_key("color"),
-            _public_variant_condition(preset_data),
         )
-        .join(Product, Product.id == ProductVariant.product_id)
-        .join(Category, Category.id == Product.category_id)
         .distinct()
     )
     stats_rows = (await session.execute(stats_stmt)).all()
@@ -302,21 +260,14 @@ def _validate_catalog_query(
         raise HTTPException(status_code=400, detail="invalid_price_range")
 
 
-def _variant_exists_clause(*, preset_data: Optional[dict] = None, **conditions):
+def _variant_exists_clause(**conditions):
     product_alias = aliased(Product)
-    category_alias = aliased(Category)
     stmt = select(ProductVariant.id).join(
         product_alias, product_alias.id == ProductVariant.product_id
-    ).join(
-        category_alias, category_alias.id == product_alias.category_id
     ).where(
         product_alias.id == Product.id,
         ProductVariant.is_active.is_(True),
     )
-    if preset_data is not None:
-        stmt = stmt.where(
-            _public_variant_condition(preset_data, category_alias.department)
-        )
     for cond in conditions.values():
         stmt = stmt.where(cond)
     return stmt.exists()
@@ -491,7 +442,6 @@ async def filter_metadata(
     category: Optional[str] = Query(default=None, max_length=120),
     session: AsyncSession = Depends(get_session),
 ):
-    preset_data = await load_size_preset_data(session)
     filters = await _scope_filters(session, department, category)
     pid_subq = select(Product.id).where(*filters).scalar_subquery()
     price = (
@@ -528,7 +478,6 @@ async def filter_metadata(
                 ProductVariant.product_id.in_(pid_subq),
                 ProductVariant.is_active.is_(True),
                 option_present,
-                _public_variant_condition(preset_data),
             )
             .distinct()
         )
@@ -565,7 +514,6 @@ async def list_products(
     limit: int = Query(12, ge=1, le=60),
     session: AsyncSession = Depends(get_session),
 ):
-    preset_data = await load_size_preset_data(session)
     _validate_catalog_query(
         badge=badge,
         availability=availability,
@@ -598,14 +546,12 @@ async def list_products(
     if color:
         filters.append(
             _variant_exists_clause(
-                preset_data=preset_data,
                 color=ProductVariant.option_values["color"].astext == color
             )
         )
     if size:
         filters.append(
             _variant_exists_clause(
-                preset_data=preset_data,
                 size=func.coalesce(
                     ProductVariant.option_values["size"].astext,
                     ProductVariant.option_values["Size"].astext,
@@ -616,7 +562,6 @@ async def list_products(
         if option_value:
             filters.append(
                 _variant_exists_clause(
-                    preset_data=preset_data,
                     **{option_key: ProductVariant.option_values[option_key].astext == option_value}
                 )
             )
@@ -653,7 +598,7 @@ async def list_products(
         .limit(limit)
     )
     rows = (await session.execute(stmt)).scalars().all()
-    stats = await _variant_stats(session, [p.id for p in rows], preset_data)
+    stats = await _variant_stats(session, [p.id for p in rows])
     items = []
     for p in rows:
         data = _product_out(p)
@@ -697,16 +642,15 @@ async def product_detail(slug: str, session: AsyncSession = Depends(get_session)
         raise HTTPException(status_code=404, detail="Product not found")
     if not await active_taxonomy_chain(session, cat):
         raise HTTPException(status_code=404, detail="Product not found")
-    preset_data = await load_size_preset_data(session)
     visible_variants = [
         v
         for v in sorted(product.variants, key=lambda v: (v.created_at, v.sku))
-        if v.is_active and size_variant_is_visible(cat.department, v.option_values, preset_data)
+        if v.is_active
     ]
     out["variants"] = [_variant_out(v) for v in visible_variants]
-    out["size_selection_required"] = bool(preset_key_for_department(cat.department))
+    out["size_selection_required"] = department_requires_size_selection(cat.department)
     out.update(
-        (await _variant_stats(session, [product.id], preset_data)).get(product.id, _EMPTY_STATS)
+        (await _variant_stats(session, [product.id])).get(product.id, _EMPTY_STATS)
     )
     cat_out = _category_out(cat)
     ancestors = await get_category_ancestors(session, cat, active_only=True)
@@ -755,7 +699,6 @@ async def list_product_variants(
         raise HTTPException(status_code=404, detail="Product not found")
     if not await active_taxonomy_chain(session, category):
         raise HTTPException(status_code=404, detail="Product not found")
-    preset_data = await load_size_preset_data(session)
     stmt = (
         select(ProductVariant)
         .where(
@@ -765,8 +708,4 @@ async def list_product_variants(
         .order_by(ProductVariant.created_at, ProductVariant.sku)
     )
     rows = (await session.execute(stmt)).scalars().all()
-    return [
-        _variant_out(v)
-        for v in rows
-        if size_variant_is_visible(category.department, v.option_values, preset_data)
-    ]
+    return [_variant_out(v) for v in rows]

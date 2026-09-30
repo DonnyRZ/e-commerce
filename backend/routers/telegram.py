@@ -51,6 +51,7 @@ from rate_limit import enforce_redis_limit
 from routers.shop import _cart_payload, _find_cart, _optional_user
 from telegram_inquiries import (
     TelegramDeliveryError,
+    TelegramPartialDeliveryError,
     bot_request,
     make_snapshot,
     localized,
@@ -66,7 +67,11 @@ from payment_destinations import (
     payment_locale,
     payment_prompt_text,
 )
-from telegram_inbox_service import capture_business_message, capture_deleted_messages
+from telegram_inbox_service import (
+    capture_business_message,
+    capture_deleted_messages,
+    record_outgoing_message,
+)
 
 router = APIRouter(prefix="/api/v1/telegram", tags=["telegram-inquiries"])
 logger = logging.getLogger("muslimah_cantik.telegram")
@@ -517,13 +522,29 @@ async def _handle_business_message(session: AsyncSession, message: dict, update_
     inquiry.snapshot = snapshot
     inquiry.status = "sending"
     await session.commit()
+
+    async def record_sent_message(sent_message: dict) -> None:
+        await record_outgoing_message(
+            session,
+            connection_id,
+            chat_id,
+            sent_message,
+            "",
+            source_override="telegram",
+        )
+
     try:
         await send_inquiry(
-            TELEGRAM_BOT_TOKEN, connection_id, chat_id, snapshot, reference
+            TELEGRAM_BOT_TOKEN,
+            connection_id,
+            chat_id,
+            snapshot,
+            reference,
+            on_message=record_sent_message,
         )
-    except TimeoutError:
-        # Telegram may have accepted the request before the network timed out.
-        # Keep this update claimed; retrying it could send a duplicate carousel.
+    except (TimeoutError, TelegramPartialDeliveryError):
+        # Telegram may have accepted a timed-out request, or a fallback may fail
+        # after earlier content was delivered. Retrying could duplicate it.
         inquiry.status = "unknown"
         await session.commit()
         logger.warning("inquiry delivery outcome unknown; awaiting explicit customer retry")

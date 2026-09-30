@@ -87,6 +87,7 @@ beforeEach(() => {
   global.IS_REACT_ACT_ENVIRONMENT = true;
   inboxQueryOptions = null;
   mockSelectedId = null;
+  mockConversation.messages = [];
   mockQueryClient.invalidateQueries.mockReset();
   Element.prototype.scrollIntoView = jest.fn();
   container = document.createElement("div");
@@ -145,4 +146,91 @@ test("shows a conversation once with related orders linked from the selected thr
     "/admin/orders/MC-LATEST-1",
     "/admin/orders/MC-OLDER-1",
   ]);
+});
+
+test("renders the cart response as one safe carousel and lets the admin navigate its products", async () => {
+  mockConversation.messages = [{
+    id: "rich-1",
+    direction: "outbound",
+    source: "telegram",
+    type: "rich",
+    text: "",
+    rich_content: {
+      title: "Permintaan konfirmasi keranjang",
+      intro: "SC-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA · 2 produk",
+      slides: [
+        { caption: "Blus merah\nJumlah: 1", image_url: "/secure-media/slide-1" },
+        { caption: "Blus biru\nJumlah: 2", image_url: "/secure-media/slide-2" },
+      ],
+      footer: ["Subtotal: 580 000 UZS", "Catatan pre-order"],
+    },
+    created_at: "2026-09-30T08:00:00Z",
+  }];
+
+  await act(async () => root.render(<AdminTelegramInboxPage />));
+  await act(async () => container.querySelector('[data-testid="telegram-conversation-conversation-1"]').click());
+
+  expect(container.querySelectorAll('[data-testid="telegram-cart-carousel"]')).toHaveLength(1);
+  expect(container.textContent).toContain("Permintaan konfirmasi keranjang");
+  expect(container.textContent).toContain("SC-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA · 2 produk");
+  expect(container.textContent).toContain("Blus merah");
+  expect(container.textContent).toContain("Subtotal: 580 000 UZS");
+  expect(container.querySelector('[aria-label="Produk sebelumnya"]')).not.toBeNull();
+  expect(container.querySelectorAll('[aria-label^="Tampilkan produk "]')).toHaveLength(2);
+  expect(container.querySelector('img[alt="Blus merah"]')).not.toBeNull();
+
+  await act(async () => container.querySelector('[aria-label="Produk berikutnya"]').click());
+  expect(container.textContent).toContain("Blus biru");
+  expect(container.querySelector('img[alt="Blus biru"]')).not.toBeNull();
+});
+
+test("groups Telegram fallback media messages into one navigable album carousel", async () => {
+  mockConversation.messages = [
+    {
+      id: "photo-1", direction: "outbound", type: "photo", source: "telegram",
+      media_group_id: "album-1", photo_url: "/secure-media/photo-1", text: "Produk satu",
+      created_at: "2026-09-30T08:00:00Z",
+    },
+    {
+      id: "photo-2", direction: "outbound", type: "photo", source: "telegram",
+      media_group_id: "album-1", photo_url: "/secure-media/photo-2", text: "Produk dua",
+      created_at: "2026-09-30T08:00:01Z",
+    },
+    {
+      id: "summary-1", direction: "outbound", type: "text", source: "telegram",
+      text: "Ringkasan keranjang", created_at: "2026-09-30T08:00:02Z",
+    },
+  ];
+
+  await act(async () => root.render(<AdminTelegramInboxPage />));
+  await act(async () => container.querySelector('[data-testid="telegram-conversation-conversation-1"]').click());
+
+  expect(container.querySelectorAll('[data-testid="telegram-album-carousel"]')).toHaveLength(1);
+  expect(container.querySelectorAll('[data-testid="telegram-album-slides"]')).toHaveLength(1);
+  expect(container.textContent).toContain("Produk satu");
+  expect(container.textContent).toContain("Ringkasan keranjang");
+  await act(async () => container.querySelector('[aria-label="Produk berikutnya"]').click());
+  expect(container.textContent).toContain("Produk dua");
+});
+
+test("labels historical cart reconstruction and keeps its message as plain text", async () => {
+  mockConversation.messages = [{
+    id: "reconstructed-1", direction: "outbound", source: "reconstructed", type: "rich",
+    text: "",
+    is_reconstructed: true,
+    rich_content: {
+      title: "Cart request",
+      intro: "SC-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      slides: [{ caption: "<script>not executable</script>", image_url: null }],
+      footer: [],
+    },
+    created_at: "2026-09-30T08:00:00Z",
+  }];
+
+  await act(async () => root.render(<AdminTelegramInboxPage />));
+  await act(async () => container.querySelector('[data-testid="telegram-conversation-conversation-1"]').click());
+
+  expect(container.textContent).toContain("Rekonstruksi dari snapshot · bukan arsip pesan Telegram asli");
+  expect(container.querySelector("script")).toBeNull();
+  expect(container.textContent).toContain("<script>not executable</script>");
 });

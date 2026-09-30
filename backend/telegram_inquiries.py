@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import html
 import time
+from collections.abc import Awaitable, Callable
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -187,6 +188,32 @@ def rich_message(snapshot: dict, reference: str) -> dict:
     return {"html": content}
 
 
+def snapshot_rich_content(snapshot: dict, reference: str) -> dict:
+    """Build the CMS-only historical projection of a sent cart inquiry."""
+    locale = snapshot.get("locale") if snapshot.get("locale") in COPY else "en"
+    labels = COPY[locale]
+    items = snapshot.get("items") if isinstance(snapshot.get("items"), list) else []
+    slides = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        slides.append(
+            {
+                "caption": _item_caption(item, locale),
+                "image_url": _public_image_url(item.get("image_url")),
+            }
+        )
+    return {
+        "title": labels["title"],
+        "intro": f"{reference} · {len(items)} {labels['products']}",
+        "slides": slides,
+        "footer": [
+            f"{labels['subtotal']}: {_price(snapshot.get('subtotal'))} {snapshot.get('currency') or 'UZS'}",
+            labels["request_note"],
+        ],
+    }
+
+
 def summary_text(snapshot: dict, reference: str) -> str:
     locale = snapshot["locale"]
     labels = COPY.get(locale, COPY["en"])
@@ -227,6 +254,10 @@ class TelegramDeliveryError(Exception):
     def __init__(self, message: str, *, safe_code: str = "telegram_api_rejected_request"):
         super().__init__(message)
         self.safe_code = safe_code
+
+
+class TelegramPartialDeliveryError(TelegramDeliveryError):
+    """A definite later rejection happened after at least one message was sent."""
 
 
 async def bot_request(
@@ -307,10 +338,38 @@ async def telegram_webhook_is_ready(token: str, webhook_url: str) -> bool:
     )
 
 
-async def send_inquiry(token: str, connection_id: str, chat_id: int, snapshot: dict, reference: str) -> str:
+async def send_inquiry(
+    token: str,
+    connection_id: str,
+    chat_id: int,
+    snapshot: dict,
+    reference: str,
+    *,
+    on_message: Callable[[dict], Awaitable[None]] | None = None,
+) -> str:
     base = {"business_connection_id": connection_id, "chat_id": chat_id}
+    delivered_any = False
+
+    async def deliver(method: str, payload: dict) -> dict | list:
+        nonlocal delivered_any
+        result = await bot_request(token, method, payload)
+        sent_messages = result if isinstance(result, list) else [result]
+        if any(
+            isinstance(message, dict) and isinstance(message.get("message_id"), int)
+            for message in sent_messages
+        ):
+            delivered_any = True
+        if on_message:
+            for sent_message in sent_messages:
+                if isinstance(sent_message, dict):
+                    await on_message(sent_message)
+        return result
+
     try:
-        await bot_request(token, "sendRichMessage", {**base, "rich_message": rich_message(snapshot, reference)})
+        await deliver(
+            "sendRichMessage",
+            {**base, "rich_message": rich_message(snapshot, reference)},
+        )
         return "rich"
     except TelegramDeliveryError:
         # Rich messages are not guaranteed to be available for every business
@@ -320,27 +379,36 @@ async def send_inquiry(token: str, connection_id: str, chat_id: int, snapshot: d
             for item in snapshot["items"]
             if item.get("image_url")
         ]
-        try:
-            if media:
+        media_sent = True
+        if media:
+            try:
                 for offset in range(0, len(media), 10):
                     chunk = media[offset : offset + 10]
                     if len(chunk) == 1:
-                        await bot_request(
-                            token,
+                        await deliver(
                             "sendPhoto",
                             {**base, "photo": chunk[0]["media"], "caption": chunk[0]["caption"]},
                         )
                     else:
-                        await bot_request(
-                            token,
+                        await deliver(
                             "sendMediaGroup",
                             {**base, "media": chunk},
                         )
+            except TelegramDeliveryError:
+                # Preserve and record successful media already delivered, then
+                # send the textual fallback without retrying prior media.
+                media_sent = False
+        try:
             for chunk in summary_chunks(snapshot, reference):
-                await bot_request(token, "sendMessage", {**base, "text": chunk})
+                await deliver("sendMessage", {**base, "text": chunk})
+        except TelegramDeliveryError as exc:
+            if delivered_any:
+                raise TelegramPartialDeliveryError(
+                    "telegram_partial_delivery_rejected"
+                ) from exc
+            raise
+        if media_sent:
             return "album"
-        except TelegramDeliveryError:
+        else:
             # If an image URL cannot be fetched, still deliver all cart details.
-            for chunk in summary_chunks(snapshot, reference):
-                await bot_request(token, "sendMessage", {**base, "text": chunk})
             return "text"

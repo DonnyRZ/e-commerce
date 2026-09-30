@@ -1,4 +1,4 @@
-"""Shared size-preset configuration and visibility rules for catalog variants."""
+"""Size-related catalog behavior and legacy preset compatibility helpers."""
 
 from __future__ import annotations
 
@@ -15,6 +15,35 @@ DEFAULT_CLOTHING_SIZES = ["M", "L", "XL", "XXL"]
 DEFAULT_FOOTWEAR_SIZES = ["36", "37", "38", "39", "40"]
 CLOTHING_DEPARTMENTS = frozenset({"women-muslimah", "uniqlo-products", "batik"})
 FOOTWEAR_DEPARTMENTS = frozenset({"shoe"})
+
+
+def department_requires_size_selection(department: Optional[str]) -> bool:
+    """Clothing and footwear PDPs ask customers to choose an available size."""
+
+    return department in CLOTHING_DEPARTMENTS | FOOTWEAR_DEPARTMENTS
+
+
+def variants_have_required_size(
+    department: Optional[str], variants: list[dict]
+) -> bool:
+    """Require a size value for each clothing/footwear variant, without presets."""
+
+    if not department_requires_size_selection(department):
+        return True
+    for options in variants:
+        if not isinstance(options, dict):
+            return False
+        size = next(
+            (
+                value
+                for key, value in options.items()
+                if str(key).strip().casefold() == "size"
+            ),
+            None,
+        )
+        if size is None or not str(size).strip():
+            return False
+    return True
 
 
 def validate_size_values(values: list[str]) -> list[str]:
@@ -40,8 +69,6 @@ def default_size_preset_data() -> dict:
     return {
         "clothing": list(DEFAULT_CLOTHING_SIZES),
         "footwear": list(DEFAULT_FOOTWEAR_SIZES),
-        # None means no mass-apply has happened yet; until then existing
-        # variants stay visible so deploying the feature cannot break sales.
         "applied_clothing": None,
         "applied_footwear": None,
     }
@@ -83,13 +110,7 @@ async def load_size_preset_data(
 
 
 async def acquire_size_preset_lock(session: AsyncSession, *, shared: bool) -> None:
-    """Serialize size-sensitive writes even before the settings row exists."""
-
-    lock = (
-        func.pg_advisory_xact_lock_shared
-        if shared
-        else func.pg_advisory_xact_lock
-    )
+    lock = func.pg_advisory_xact_lock_shared if shared else func.pg_advisory_xact_lock
     await session.execute(
         select(lock(func.hashtext(f"marketplace-setting:{SIZE_PRESETS_SETTING_KEY}")))
     )
@@ -116,43 +137,14 @@ def configured_sizes_for_department(
 def size_variant_matches_config(
     department: Optional[str], option_values: Optional[dict], preset_data: dict
 ) -> bool:
-    configured = configured_sizes_for_department(department, preset_data)
-    if configured is None:
-        return True
-    options = option_values if isinstance(option_values, dict) else {}
-    size = next(
-        (
-            value
-            for key, value in options.items()
-            if str(key).strip().casefold() == "size"
-        ),
-        None,
-    )
-    if size is None:
-        return False
-    allowed = {str(value).strip().casefold() for value in configured}
-    return str(size).strip().casefold() in allowed
+    """Compatibility shim: product sizes are no longer restricted by presets."""
+
+    return True
 
 
 def size_variant_is_visible(
     department: Optional[str], option_values: Optional[dict], preset_data: dict
 ) -> bool:
-    key = preset_key_for_department(department)
-    if key is None:
-        return True
-    applied = preset_data.get(f"applied_{key}")
-    if applied is None:
-        return True
-    options = option_values if isinstance(option_values, dict) else {}
-    size = next(
-        (
-            value
-            for key, value in options.items()
-            if str(key).strip().casefold() == "size"
-        ),
-        None,
-    )
-    if size is None:
-        return False
-    allowed = {str(value).strip().casefold() for value in applied}
-    return str(size).strip().casefold() in allowed
+    """All active product variants remain visible regardless of old presets."""
+
+    return True

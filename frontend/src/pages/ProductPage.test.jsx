@@ -91,6 +91,27 @@ test("customer must explicitly choose a size before adding the product to cart",
   });
 });
 
+test("custom sizes entered on the product appear in the store", async () => {
+  mockProduct.variants = [
+    { id: "variant-size-s", sku: "SHIRT-S", option_values: { size: "S" }, is_active: true },
+    { id: "variant-size-xxxl", sku: "SHIRT-XXXL", option_values: { size: "XXXL" }, is_active: true },
+  ];
+  await act(async () => root.render(<ProductPage />));
+  const addButton = container.querySelector('[data-testid="pdp-add-to-cart"]');
+  expect(container.querySelector('[data-testid="pdp-option-size-s"]')?.textContent).toBe("S");
+  expect(container.querySelector('[data-testid="pdp-option-size-xxxl"]')?.textContent).toBe("XXXL");
+  expect(addButton.disabled).toBe(true);
+
+  await act(async () => container.querySelector('[data-testid="pdp-option-size-xxxl"]').click());
+  expect(addButton.disabled).toBe(false);
+  await act(async () => addButton.click());
+  expect(mockAddToCart).toHaveBeenCalledWith({
+    product_id: "product123456",
+    variant_id: "variant-size-xxxl",
+    quantity: 1,
+  });
+});
+
 test("changing another option never silently selects a size", async () => {
   mockProduct.variants = [
     { id: "black-m", sku: "SHIRT-BLACK-M", option_values: { color: "Black", size: "M" }, is_active: true },

@@ -214,14 +214,6 @@ export const getAdminDashboard = () =>
   api.get("/v1/admin/dashboard").then((r) => r.data);
 export const getAdminProducts = (params) =>
   api.get("/v1/admin/products", { params }).then((r) => r.data);
-export const getAdminProductSizePresets = () =>
-  api.get("/v1/admin/product-size-presets").then((r) => r.data);
-export const saveAdminProductSizePresets = (data) =>
-  api.put("/v1/admin/product-size-presets", data).then((r) => r.data);
-export const previewAdminProductSizePresets = () =>
-  api.post("/v1/admin/product-size-presets/preview").then((r) => r.data);
-export const applyAdminProductSizePresets = (previewDigest) =>
-  api.post("/v1/admin/product-size-presets/apply", { preview_digest: previewDigest }).then((r) => r.data);
 export const createAdminProduct = (data) =>
   api.post("/v1/admin/products", data).then((r) => r.data);
 export const getAdminProduct = (id) =>

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -30,6 +31,7 @@ from db.models import (
     ProductTranslation,
     ProductVariant,
     TelegramBusinessConnection,
+    TelegramCartInquiry,
     TelegramConversation,
     TelegramInboxMessage,
     TelegramProductCandidate,
@@ -38,8 +40,12 @@ from db.models import (
 )
 from db.session import get_session
 from telegram_inbox_service import candidate_copy, candidate_keyboard
-from telegram_inquiries import TelegramDeliveryError, bot_request, bot_request_multipart
-from product_sizes import load_size_preset_data, size_variant_is_visible
+from telegram_inquiries import (
+    TelegramDeliveryError,
+    bot_request,
+    bot_request_multipart,
+    snapshot_rich_content,
+)
 from order_workflow import (
     WORKFLOW_FILTER_STAGES,
     TERMINAL_ORDER_STATUSES,
@@ -51,6 +57,7 @@ from order_workflow import (
 )
 
 router = APIRouter(prefix="/api/v1/admin/telegram-inbox", tags=["telegram-inbox"])
+INQUIRY_REFERENCE_RE = re.compile(r"\bSC-[A-F0-9]{32}\b", re.IGNORECASE)
 require_admin = require_roles("admin")
 MAX_CHAT_PHOTO_BYTES = 8 * 1024 * 1024
 ALLOWED_CHAT_PHOTO_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -146,6 +153,37 @@ async def _reply_context(session: AsyncSession, conversation: TelegramConversati
 
 
 def _message_payload(row: TelegramInboxMessage) -> dict:
+    is_deleted = row.deleted_at is not None
+    stored_rich = row.rich_content if isinstance(row.rich_content, dict) else None
+    rich_content = None
+    if stored_rich and not is_deleted:
+        slides = []
+        stored_slides = stored_rich.get("slides")
+        for index, slide in enumerate(stored_slides if isinstance(stored_slides, list) else []):
+            if not isinstance(slide, dict):
+                continue
+            photo_file_id = slide.get("photo_file_id")
+            image_url = slide.get("image_url")
+            if photo_file_id:
+                image_url = f"/api/v1/admin/telegram-inbox/media/{row.id}?media_index={index}"
+            slides.append({
+                "caption": str(slide.get("caption") or ""),
+                "image_url": image_url if isinstance(image_url, str) else None,
+            })
+        rich_content = {
+            "title": str(stored_rich.get("title") or ""),
+            "intro": str(stored_rich.get("intro") or ""),
+            "slides": slides,
+            "footer": [
+                value
+                for value in (
+                    stored_rich.get("footer")
+                    if isinstance(stored_rich.get("footer"), list)
+                    else []
+                )
+                if isinstance(value, str)
+            ],
+        }
     return {
         "id": row.id,
         "telegram_message_id": row.telegram_message_id,
@@ -153,14 +191,34 @@ def _message_payload(row: TelegramInboxMessage) -> dict:
         "source": row.source,
         "type": row.message_type,
         "text": row.text,
+        "rich_content": rich_content,
+        "media_group_id": row.media_group_id if not is_deleted else None,
         "photo_url": (
             f"/api/v1/admin/telegram-inbox/media/{row.id}"
-            if row.photo_file_id and not row.deleted_at
+            if row.photo_file_id and not is_deleted
             else None
         ),
-        "is_deleted": row.deleted_at is not None,
+        "is_deleted": is_deleted,
         "created_at": row.created_at,
         "edited_at": row.edited_at,
+    }
+
+
+def _reconstructed_cart_message(inquiry: TelegramCartInquiry) -> dict:
+    return {
+        "id": f"reconstructed-{inquiry.id}",
+        "telegram_message_id": None,
+        "direction": "outbound",
+        "source": "snapshot",
+        "type": "rich",
+        "text": "",
+        "rich_content": snapshot_rich_content(inquiry.snapshot or {}, inquiry.reference),
+        "media_group_id": None,
+        "photo_url": None,
+        "is_deleted": False,
+        "is_reconstructed": True,
+        "created_at": inquiry.delivered_at,
+        "edited_at": None,
     }
 
 
@@ -584,7 +642,7 @@ async def get_conversation(
     if not row:
         raise _error(404, "conversation_not_found")
     workflow_stage, order_count, latest_order, related_orders = await _conversation_order_context(session, row)
-    messages = (
+    message_rows = (
         await session.execute(
             select(TelegramInboxMessage)
             .where(TelegramInboxMessage.conversation_id == row.id)
@@ -592,6 +650,50 @@ async def get_conversation(
             .limit(300)
         )
     ).scalars().all()
+    messages = [_message_payload(message) for message in reversed(message_rows)]
+    inbound_text = "\n".join(
+        message.text.casefold()
+        for message in message_rows
+        if message.direction == "inbound" and not message.deleted_at
+    )
+    outbound_text = "\n".join(
+        " ".join((message.text, str((message.rich_content or {}).get("intro") or ""))).casefold()
+        for message in message_rows
+        if message.direction == "outbound" and not message.deleted_at
+    )
+    inbound_references = {
+        match.group(0).upper()
+        for match in INQUIRY_REFERENCE_RE.finditer(inbound_text)
+    }
+    outbound_references = {
+        match.group(0).upper()
+        for match in INQUIRY_REFERENCE_RE.finditer(outbound_text)
+    }
+    if inbound_references:
+        sent_inquiries = (
+            await session.execute(
+                select(TelegramCartInquiry)
+                .where(
+                    TelegramCartInquiry.telegram_connection_id == row.connection_id,
+                    TelegramCartInquiry.telegram_chat_id == row.chat_id,
+                    TelegramCartInquiry.reference.in_(inbound_references),
+                    TelegramCartInquiry.status == "sent",
+                    TelegramCartInquiry.snapshot.is_not(None),
+                    TelegramCartInquiry.delivered_at.is_not(None),
+                )
+                .order_by(TelegramCartInquiry.delivered_at.asc(), TelegramCartInquiry.id.asc())
+            )
+        ).scalars().all()
+        for inquiry in sent_inquiries:
+            if inquiry.reference.upper() not in outbound_references:
+                messages.append(_reconstructed_cart_message(inquiry))
+    messages.sort(
+        key=lambda message: (
+            message["created_at"],
+            message.get("telegram_message_id") or 0,
+            message["id"],
+        )
+    )
     candidates = (
         await session.execute(
             select(TelegramProductCandidate)
@@ -602,7 +704,7 @@ async def get_conversation(
     connection = await session.get(TelegramBusinessConnection, row.connection_id)
     payload = _conversation_payload(
         row,
-        messages[0] if messages else None,
+        message_rows[0] if message_rows else None,
         workflow_stage=workflow_stage,
         order_count=order_count,
         latest_order=latest_order,
@@ -610,7 +712,7 @@ async def get_conversation(
     payload["can_send"] = bool(
         payload["can_send"] and connection and connection.is_enabled and connection.can_reply
     )
-    payload["messages"] = [_message_payload(message) for message in reversed(messages)]
+    payload["messages"] = messages
     payload["orders"] = [
         {
             **_order_summary(order),
@@ -735,19 +837,32 @@ async def send_photo_message(
 @router.get("/media/{message_id}")
 async def get_message_photo(
     message_id: str,
+    media_index: Optional[int] = Query(default=None, ge=0),
     user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
 ):
     row = await session.get(TelegramInboxMessage, message_id)
-    if not row or not row.photo_file_id or row.deleted_at:
+    if not row or row.deleted_at:
         raise _error(404, "telegram_photo_not_found")
-    if row.photo_file_size and row.photo_file_size > MAX_CHAT_PHOTO_BYTES:
+    photo_file_id = row.photo_file_id
+    photo_file_size = row.photo_file_size
+    if media_index is not None:
+        rich_content = row.rich_content if isinstance(row.rich_content, dict) else {}
+        slides = rich_content.get("slides", [])
+        slide = slides[media_index] if isinstance(slides, list) and media_index < len(slides) else None
+        if not isinstance(slide, dict):
+            raise _error(404, "telegram_photo_not_found")
+        photo_file_id = slide.get("photo_file_id")
+        photo_file_size = slide.get("photo_file_size")
+    if not photo_file_id:
+        raise _error(404, "telegram_photo_not_found")
+    if photo_file_size and photo_file_size > MAX_CHAT_PHOTO_BYTES:
         raise _error(413, "telegram_photo_too_large")
     if not TELEGRAM_BOT_TOKEN:
         raise _error(503, "telegram_not_configured")
     try:
         file_info = await bot_request(
-            TELEGRAM_BOT_TOKEN, "getFile", {"file_id": row.photo_file_id}
+            TELEGRAM_BOT_TOKEN, "getFile", {"file_id": photo_file_id}
         )
         file_path = file_info.get("file_path")
         if not isinstance(file_path, str) or ".." in file_path.split("/"):
@@ -805,7 +920,6 @@ async def search_products(
         )
     ).scalars().all()
     items = []
-    preset_data = await load_size_preset_data(session)
     for product in products:
         translations = (
             await session.execute(
@@ -821,13 +935,6 @@ async def search_products(
                 ).order_by(ProductVariant.sku).limit(50)
             )
         ).scalars().all()
-        category = await session.get(Category, product.category_id)
-        variants = [
-            variant for variant in variants
-            if category and size_variant_is_visible(
-                category.department, variant.option_values, preset_data
-            )
-        ]
         if not variants:
             continue
         items.append(
@@ -863,9 +970,6 @@ async def create_candidate(
 ):
     conversation = await _load_conversation(session, conversation_id)
     connection = await _reply_context(session, conversation)
-    # Serialize candidate selection against a preset rollout. Otherwise an
-    # admin could pick a legacy size just as the bulk apply hides it.
-    preset_data = await load_size_preset_data(session, shared_lock=True)
     product = await session.get(Product, payload.product_id)
     variant = await session.get(ProductVariant, payload.variant_id)
     category = await session.get(Category, product.category_id) if product else None
@@ -877,9 +981,6 @@ async def create_candidate(
         or variant.product_id != product.id
         or not variant.is_active
         or not category
-        or not size_variant_is_visible(
-            category.department, variant.option_values, preset_data
-        )
     ):
         raise _error(409, "catalog_item_unavailable")
     source_message = None
@@ -1029,9 +1130,6 @@ async def create_order_from_conversation(
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ):
     conversation = await _load_conversation(session, conversation_id)
-    # Keep the catalog visibility rule stable until this order transaction
-    # commits, using the same preset-first lock order as cart additions.
-    preset_data = await load_size_preset_data(session, shared_lock=True)
     if not payload.shipping_address.get("recipient_name") or not payload.shipping_address.get("phone"):
         raise _error(422, "shipping_recipient_required")
     if idempotency_key is not None and not 16 <= len(idempotency_key) <= 80:
@@ -1075,9 +1173,6 @@ async def create_order_from_conversation(
             or variant.product_id != product.id
             or not variant.is_active
             or not category
-            or not size_variant_is_visible(
-                category.department, variant.option_values, preset_data
-            )
         ):
             raise _error(409, "catalog_item_unavailable", sku=candidate.sku)
         unit_price = _price(product, variant)
