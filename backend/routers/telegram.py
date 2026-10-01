@@ -341,10 +341,11 @@ async def create_inquiry(
         expires_at = existing.expires_at
         link_locale = existing.locale
     else:
-        await _limit_inquiry(cart.id)
         cart_payload = await _cart_payload(session, cart)
         if not cart_payload["items"]:
             raise HTTPException(status_code=400, detail={"error": "cart_empty"})
+        # Empty/stale-cart submissions should not consume the per-cart quota.
+        await _limit_inquiry(cart.id)
         reference = f"SC-{secrets.token_hex(16).upper()}"
         expires_at = utcnow() + timedelta(days=TELEGRAM_INQUIRY_TTL_DAYS)
         inquiry = TelegramCartInquiry(

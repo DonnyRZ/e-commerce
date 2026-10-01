@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import CartPage from "./CartPage";
 import { createTelegramCartInquiry } from "@/lib/api";
+import { toast } from "sonner";
 
 let mockReceiptStatus = "pending";
 const mockRefetchCart = jest.fn();
@@ -30,9 +31,13 @@ beforeEach(() => {
   mockReceiptStatus = "pending";
   mockCartItem = { id: "a", quantity: 1, unit_price: 100, translations: {}, option_values: {} };
   mockRefetchCart.mockReset();
+  mockRefetchCart.mockResolvedValue({
+    data: { id: "cart", item_count: 1, items: [mockCartItem] },
+  });
   Object.defineProperty(window, "crypto", { configurable: true, value: { randomUUID: () => "test-idempotency-key-123" } });
   createTelegramCartInquiry.mockReset();
   createTelegramCartInquiry.mockResolvedValue({ reference: "SC-test", telegram_url: "https://t.me/store?text=hello", message: "hello" });
+  toast.error.mockReset();
   delete window.location;
   window.location = { assign: jest.fn() };
   container = document.createElement("div");
@@ -62,16 +67,23 @@ test("lost API response retries the same idempotency key", async () => {
   await act(async () => button().click());
   expect(createTelegramCartInquiry.mock.calls[0][0].idempotencyKey).toBe(createTelegramCartInquiry.mock.calls[1][0].idempotencyKey);
 });
-test("refreshes cart only after Telegram confirms delivery", async () => {
+test("refreshes a stale visible cart and does not create an inquiry when the server cart is empty", async () => {
+  mockRefetchCart.mockResolvedValueOnce({ data: { id: "cart", item_count: 0, items: [] } });
+  await act(async () => root.render(<CartPage />));
+  await act(async () => button().click());
+  expect(createTelegramCartInquiry).not.toHaveBeenCalled();
+  expect(toast.error).toHaveBeenCalledWith("cart.confirmCartChanged");
+});
+test("checks the server cart before preparing inquiry and refreshes again after delivery", async () => {
   await act(async () => root.render(<CartPage />));
   expect(mockRefetchCart).not.toHaveBeenCalled();
   await act(async () => button().click());
-  expect(mockRefetchCart).not.toHaveBeenCalled();
+  expect(mockRefetchCart).toHaveBeenCalledTimes(1);
   mockReceiptStatus = "sent";
   await act(async () => root.render(<CartPage />));
-  expect(mockRefetchCart).toHaveBeenCalledTimes(1);
+  expect(mockRefetchCart).toHaveBeenCalledTimes(2);
   await act(async () => root.render(<CartPage />));
-  expect(mockRefetchCart).toHaveBeenCalledTimes(1);
+  expect(mockRefetchCart).toHaveBeenCalledTimes(2);
 });
 
 test("keeps a cart's retired size processable but prevents increasing its quantity", async () => {

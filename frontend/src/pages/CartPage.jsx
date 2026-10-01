@@ -69,16 +69,35 @@ export default function CartPage() {
     if (!telegramAvailable || busy.current || cartMutationsBlocked) return;
     busy.current = true;
     setOpeningTelegram(true);
+    let attemptSignature = signature;
     try {
-      const key = active?.key || (window.crypto?.randomUUID
+      // Re-read the server cart before creating a new inquiry. The visible
+      // cart can be stale after Telegram was opened in another app/tab.
+      // Keep an existing idempotency key on retries: the first request may
+      // have succeeded even if its response was lost, and the server can
+      // return that inquiry even after its submitted items leave the cart.
+      const retryingAttempt = Boolean(active?.key);
+      const freshCart = active?.inquiry || retryingAttempt
+        ? cart
+        : (await refetchCart({ throwOnError: true })).data;
+      if (!active?.inquiry && !retryingAttempt && !freshCart?.items?.length) {
+        toast.error(t("cart.confirmCartChanged"));
+        return;
+      }
+      const currentSignature = retryingAttempt && active?.signature
+        ? active.signature
+        : cartSignature(freshCart || cart, locale);
+      attemptSignature = currentSignature;
+      const reusableAttempt = active?.signature === currentSignature ? active : null;
+      const key = reusableAttempt?.key || (window.crypto?.randomUUID
         ? window.crypto.randomUUID()
         : Array.from(window.crypto.getRandomValues(new Uint8Array(16)))
             .map((value) => value.toString(16).padStart(2, "0"))
             .join(""));
-      const attempt = active || { signature, key, until: Date.now() + 86400000 };
+      const attempt = reusableAttempt || { signature: currentSignature, key, until: Date.now() + 86400000 };
       saveHandoff(attempt);
       setHandoff(attempt);
-      const inquiry = active?.inquiry || await createTelegramCartInquiry({
+      const inquiry = reusableAttempt?.inquiry || await createTelegramCartInquiry({
         locale,
         idempotencyKey: key,
         guest: guestCartMode,
@@ -97,10 +116,18 @@ export default function CartPage() {
       window.location.assign(target.toString());
     } catch (error) {
       if (error.response?.status === 409) {
-        const next = { signature, key: window.crypto.randomUUID(), until: Date.now() + 86400000 };
+        const next = { signature: attemptSignature, key: window.crypto.randomUUID(), until: Date.now() + 86400000 };
         saveHandoff(next); setHandoff(next);
       }
-      toast.error(t("cart.confirmFailed"));
+      const detail = error.response?.data?.detail;
+      if (detail?.error === "cart_empty") {
+        try { await refetchCart({ throwOnError: true }); } catch { /* Keep the inquiry error visible. */ }
+        toast.error(t("cart.confirmCartChanged"));
+      } else if (error.response?.status === 429 || detail === "too_many_requests") {
+        toast.error(t("cart.confirmRateLimited"));
+      } else {
+        toast.error(t("cart.confirmFailed"));
+      }
     } finally {
       busy.current = false;
       setOpeningTelegram(false);

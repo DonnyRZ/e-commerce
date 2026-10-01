@@ -151,6 +151,22 @@ class Recovery(unittest.IsolatedAsyncioTestCase):
         limit.assert_not_awaited()
         snapshot.assert_not_awaited()
 
+    async def test_empty_cart_does_not_consume_inquiry_quota(self):
+        session = SimpleNamespace(
+            scalar=AsyncMock(side_effect=[SimpleNamespace(id="cart"), None]),
+            commit=AsyncMock(),
+        )
+        with patch.object(router, "_status", AsyncMock(return_value={"available": True})), \
+             patch.object(router, "_find_cart", AsyncMock(return_value=SimpleNamespace(id="cart"))), \
+             patch.object(router, "_cart_payload", AsyncMock(return_value={"items": []})), \
+             patch.object(router, "_limit_inquiry", AsyncMock()) as limit:
+            with self.assertRaises(HTTPException) as error:
+                await router.create_inquiry(router.InquiryRequest(locale="id"), None,
+                    guest=True, idempotency_key="empty-cart-inquiry-key", session=session)
+        self.assertEqual(error.exception.status_code, 400)
+        self.assertEqual(error.exception.detail, {"error": "cart_empty"})
+        limit.assert_not_awaited()
+
     async def test_cms_cannot_create_order_before_customer_message(self):
         session, inquiry, _ = fixture()
         inquiry.order_id = None
