@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useI18n } from "@/i18n";
+import { getLocalePreference, useI18n } from "@/i18n";
 import { authLogin, authLogout, authMe, authRefresh, authRegister, mergeCart } from "./api";
 import { translations } from "@/i18n/translations";
 import { toast } from "sonner";
@@ -143,7 +143,8 @@ export function AuthProvider({ children, mergeCustomerCartOnRestore = true }) {
   }, [queryClient]);
 
   useEffect(() => {
-    if (user?.preferred_locale) setLocale(user.preferred_locale);
+    const preferredLocale = getLocalePreference(user?.preferred_locale);
+    if (preferredLocale) setLocale(preferredLocale);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 

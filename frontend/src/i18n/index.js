@@ -15,14 +15,19 @@ const STORAGE_KEY = "mc_locale";
 
 const I18nContext = createContext(null);
 
+export function getLocalePreference(accountLocale) {
+  try {
+    const saved = window.localStorage.getItem(STORAGE_KEY);
+    if (SUPPORTED_LOCALES.includes(saved)) return saved;
+  } catch {
+    // Fall back to the account preference when browser storage is unavailable.
+  }
+  return SUPPORTED_LOCALES.includes(accountLocale) ? accountLocale : null;
+}
+
 export function I18nProvider({ children }) {
   const [locale, setLocaleState] = useState(() => {
-    try {
-      const saved = window.localStorage.getItem(STORAGE_KEY);
-      return SUPPORTED_LOCALES.includes(saved) ? saved : DEFAULT_LOCALE;
-    } catch {
-      return DEFAULT_LOCALE;
-    }
+    return getLocalePreference() || DEFAULT_LOCALE;
   });
 
   const setLocale = (next) => {
