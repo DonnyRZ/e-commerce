@@ -34,9 +34,10 @@ test("Telegram links open the configured store chat directly with the prepared d
   const chatUrl = telegramChatUrl("@CantikByIndonesia", message);
   const appUrl = new URL(chatUrl);
 
-  expect(appUrl.protocol).toBe("tg:");
-  expect(appUrl.hostname).toBe("resolve");
-  expect(appUrl.searchParams.get("domain")).toBe("CantikByIndonesia");
+  expect(appUrl.origin).toBe("https://t.me");
+  expect(appUrl.pathname).toBe("/CantikByIndonesia");
+  expect(appUrl.searchParams.get("url")).toBeNull();
+  expect(appUrl.searchParams.get("domain")).toBeNull();
   expect(appUrl.searchParams.get("text")).toBe(message);
   expect(telegramChatUrl("bad username", message)).toBeNull();
   expect(telegramChatUrl("store", " ")).toBeNull();

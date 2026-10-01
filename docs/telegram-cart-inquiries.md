@@ -1,13 +1,11 @@
 # Telegram cart inquiries
 
 The cart's **Confirm** button creates a short-lived, server-priced inquiry and
-shows its message template before opening the store chat. The customer copies
-the template, then opens `@CantikByIndonesia` through a direct chat link. If
-Telegram does not fill the draft (for example, when that chat is already open),
-the customer can paste the copied template into the message field. They must
-still tap **Send** in Telegram. `@MuslimahCantikBot` then replies through the
-connected Telegram Business account; store staff can continue the conversation
-manually from the same account.
+opens the configured store chat directly in Telegram with the inquiry text
+prepared as a draft. The customer must tap **Send** in Telegram to submit it.
+The app does not use Telegram's share chooser. `@MuslimahCantikBot` then replies
+through the connected Telegram Business account; store staff can continue the
+conversation manually from the same account.
 
 This flow is an inquiry, not an order. It does not create a CMS order, collect
 payment, clear the cart, reserve stock, or decrement inventory. Price, stock,

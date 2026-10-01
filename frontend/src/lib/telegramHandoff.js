@@ -31,40 +31,35 @@ export function telegramChatUrl(username, message) {
   const preparedText = String(message || "").trim();
   if (!/^[a-zA-Z0-9_]{5,32}$/.test(normalizedUsername) || !preparedText) return null;
 
-  const url = new URL("tg://resolve");
-  url.searchParams.set("domain", normalizedUsername);
+  const url = new URL(`https://t.me/${normalizedUsername}`);
   url.searchParams.set("text", preparedText);
   return url.toString();
 }
 
 export const handoffText = {
   id: {
-    waiting: "Template pesan tersedia di bawah. Salin dulu, lalu buka chat toko. Jika kolom pesan Telegram kosong, tempel template yang disalin lalu tekan Kirim.",
-    open: "Buka chat toko di Telegram", copy: "Salin template pesan", copied: "Template pesan disalin", failed: "Tidak dapat menyalin otomatis. Tekan lama teks di atas untuk menyalinnya.",
+    waiting: "Chat toko sudah dibuka di Telegram. Tekan Kirim di sana untuk mengirim permintaan.",
     sent: "Permintaan sudah diterima di Telegram. Admin akan melanjutkan pesananmu.",
     unknown: "Pengiriman belum dapat dipastikan. Periksa chat dahulu. Jika belum ada balasan, kirim ulang pesan ini; balasan mungkin muncul dua kali.",
     retained: "Jika Telegram dibatalkan, keranjang tetap utuh. Produk permintaan dihapus setelah pesan berhasil dikirim.",
     new: "Buat permintaan baru", expired: "Permintaan kedaluwarsa. Buat permintaan baru.",
   },
   en: {
-    waiting: "Your message template is below. Copy it first, then open the store chat. If Telegram's message field is empty, paste the copied template and press Send.",
-    open: "Open store chat in Telegram", copy: "Copy message template", copied: "Message template copied", failed: "Could not copy automatically. Long-press the text above to copy it.",
+    waiting: "The store chat opened in Telegram. Tap Send there to submit the inquiry.",
     sent: "Your request reached Telegram. An admin will continue your order.",
     unknown: "Delivery is uncertain. Check the chat first. If no reply arrived, resend this message; a duplicate reply is possible.",
     retained: "Your cart stays intact if you cancel Telegram; submitted items are removed only after the message is sent.",
     new: "Create a new request", expired: "This request expired. Create a new request.",
   },
   uz: {
-    waiting: "Xabar namunasi quyida. Avval nusxa oling, keyin do‘kon chatini oching. Telegramdagi xabar maydoni bo‘sh bo‘lsa, nusxalangan matnni joylashtirib, Yuborish tugmasini bosing.",
-    open: "Telegramda do‘kon chatini ochish", copy: "Xabar namunasidan nusxa olish", copied: "Xabar nusxalandi", failed: "Avtomatik nusxa olib bo‘lmadi. Nusxa olish uchun yuqoridagi matnni bosib turing.",
+    waiting: "Telegramda do‘kon chati ochildi. So‘rovni yuborish uchun u yerda Yuborish tugmasini bosing.",
     sent: "So‘rovingiz Telegramga yetib bordi. Admin buyurtmangizni davom ettiradi.",
     unknown: "Yetkazilganligi noma’lum. Avval chatni tekshiring. Javob bo‘lmasa, xabarni qayta yuboring; javob takrorlanishi mumkin.",
     retained: "Telegram bekor qilinsa, savat o‘zgarishsiz qoladi; so‘rov mahsulotlari xabar yuborilgandan keyingina o‘chiriladi.",
     new: "Yangi so‘rov yaratish", expired: "So‘rov muddati tugagan. Yangi so‘rov yarating.",
   },
   ru: {
-    waiting: "Шаблон сообщения ниже. Сначала скопируйте его, затем откройте чат магазина. Если поле сообщения в Telegram пустое, вставьте скопированный текст и нажмите «Отправить».",
-    open: "Открыть чат магазина в Telegram", copy: "Скопировать шаблон сообщения", copied: "Шаблон сообщения скопирован", failed: "Не удалось скопировать автоматически. Нажмите и удерживайте текст выше, чтобы скопировать его.",
+    waiting: "Чат магазина открыт в Telegram. Нажмите там «Отправить», чтобы передать запрос.",
     sent: "Запрос получен в Telegram. Администратор продолжит оформление заказа.",
     unknown: "Результат отправки неизвестен. Сначала проверьте чат. Если ответа нет, отправьте сообщение повторно; возможен повторный ответ.",
     retained: "Если отменить переход в Telegram, корзина останется без изменений; товары запроса удалятся только после отправки сообщения.",

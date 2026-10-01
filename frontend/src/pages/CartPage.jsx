@@ -52,12 +52,8 @@ export default function CartPage() {
   const signature = cartSignature(cart, locale);
   const [handoff, setHandoff] = useState(null);
   const active = handoff?.signature === signature ? handoff : readHandoff(signature);
-  const copy = handoffText[locale] || handoffText.en;
+  const handoffStatus = handoffText[locale] || handoffText.en;
   const storeUsername = telegramStatusQuery.data?.store_username;
-  const inquiryMessage = telegramInquiryMessage(active?.inquiry);
-  const inquiryTelegramUrl = active?.inquiry && storeUsername
-    ? telegramChatUrl(storeUsername, inquiryMessage)
-    : null;
   const receipt = useQuery({
     queryKey: ["telegram-receipt", cart?.id, active?.inquiry?.reference],
     queryFn: () => getTelegramCartInquiry(active.inquiry.reference, guestCartMode),
@@ -123,8 +119,17 @@ export default function CartPage() {
       ) {
         throw new Error("invalid_telegram_destination");
       }
+      const message = telegramInquiryMessage(inquiry);
+      if (!message || target.searchParams.get("text") !== message) {
+        throw new Error("telegram_message_missing");
+      }
+      const chatUrl = telegramChatUrl(expectedUsername, message);
+      if (!chatUrl) throw new Error("telegram_chat_link_missing");
       saveHandoff(ready);
       setHandoff(ready);
+      // Use Telegram's direct t.me chat link with its draft text. The
+      // `share/url` flow opens a recipient picker instead of the store chat.
+      window.location.assign(chatUrl);
     } catch (error) {
       if (error.response?.status === 409) {
         const next = { signature: attemptSignature, key: window.crypto.randomUUID(), until: Date.now() + 86400000 };
@@ -347,24 +352,12 @@ export default function CartPage() {
             </button>
             {active?.inquiry ? (
               <div className="mt-4 space-y-3 rounded border border-border p-3 text-sm" aria-live="polite">
-                <p>{delivered ? copy.sent : receipt.data?.status === "unknown" ? copy.unknown : receipt.data?.status === "expired" ? copy.expired : copy.waiting}</p>
-                {!delivered && receipt.data?.status !== "expired" && storeUsername ? <p className="font-semibold">@{storeUsername}</p> : null}
-                {!delivered && receipt.data?.status !== "expired" ? <>
-                  <textarea aria-label={copy.copy} readOnly value={inquiryMessage} className="w-full rounded border p-2 text-xs" rows={4} />
-                  <button type="button" data-testid="telegram-copy-message" className="inline-flex min-h-10 items-center justify-center rounded bg-foreground px-4 py-2 font-medium text-background" onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(inquiryMessage);
-                      toast.success(copy.copied);
-                    } catch {
-                      toast.error(copy.failed);
-                    }
-                  }}>{copy.copy}</button>
-                  {inquiryTelegramUrl ? <a className="inline-flex min-h-10 items-center justify-center rounded border border-border px-4 py-2 font-medium" href={inquiryTelegramUrl}>{copy.open}</a> : null}
-                </> : <button type="button" className="underline" onClick={() => {
+                <p>{delivered ? handoffStatus.sent : receipt.data?.status === "unknown" ? handoffStatus.unknown : receipt.data?.status === "expired" ? handoffStatus.expired : handoffStatus.waiting}</p>
+                {delivered || receipt.data?.status === "expired" ? <button type="button" className="underline" onClick={() => {
                   const next = { signature, key: window.crypto.randomUUID(), until: Date.now() + 86400000 };
                   saveHandoff(next); setHandoff(next);
-                }}>{copy.new}</button>}
-                <p className="text-xs text-muted-foreground">{copy.retained}</p>
+                }}>{handoffStatus.new}</button> : null}
+                <p className="text-xs text-muted-foreground">{handoffStatus.retained}</p>
               </div>
             ) : null}
             {!telegramAvailable ? (
