@@ -123,12 +123,8 @@ export default function CartPage() {
       ) {
         throw new Error("invalid_telegram_destination");
       }
-      const message = telegramInquiryMessage(inquiry);
-      const chatUrl = telegramChatUrl(expectedUsername, message);
-      if (!chatUrl) throw new Error("telegram_chat_link_missing");
       saveHandoff(ready);
       setHandoff(ready);
-      window.location.assign(chatUrl);
     } catch (error) {
       if (error.response?.status === 409) {
         const next = { signature: attemptSignature, key: window.crypto.randomUUID(), until: Date.now() + 86400000 };
@@ -355,13 +351,15 @@ export default function CartPage() {
                 {!delivered && receipt.data?.status !== "expired" && storeUsername ? <p className="font-semibold">@{storeUsername}</p> : null}
                 {!delivered && receipt.data?.status !== "expired" ? <>
                   <textarea aria-label={copy.copy} readOnly value={inquiryMessage} className="w-full rounded border p-2 text-xs" rows={4} />
-                  {inquiryTelegramUrl ? <a className="block underline" href={inquiryTelegramUrl}>{copy.open}</a> : null}
-                  <button type="button" className="underline" onClick={async () => {
+                  <button type="button" data-testid="telegram-copy-message" className="inline-flex min-h-10 items-center justify-center rounded bg-foreground px-4 py-2 font-medium text-background" onClick={async () => {
                     try {
                       await navigator.clipboard.writeText(inquiryMessage);
                       toast.success(copy.copied);
-                    } catch { /* The selectable text above remains available. */ }
+                    } catch {
+                      toast.error(copy.failed);
+                    }
                   }}>{copy.copy}</button>
+                  {inquiryTelegramUrl ? <a className="inline-flex min-h-10 items-center justify-center rounded border border-border px-4 py-2 font-medium" href={inquiryTelegramUrl}>{copy.open}</a> : null}
                 </> : <button type="button" className="underline" onClick={() => {
                   const next = { signature, key: window.crypto.randomUUID(), until: Date.now() + 86400000 };
                   saveHandoff(next); setHandoff(next);

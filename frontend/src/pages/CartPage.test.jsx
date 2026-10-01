@@ -38,6 +38,10 @@ beforeEach(() => {
   createTelegramCartInquiry.mockReset();
   createTelegramCartInquiry.mockResolvedValue({ reference: "SC-test", telegram_url: "https://t.me/store?text=hello", message: "hello" });
   toast.error.mockReset();
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: jest.fn().mockResolvedValue() },
+  });
   delete window.location;
   window.location = { assign: jest.fn(), origin: "https://shop.example" };
   container = document.createElement("div");
@@ -50,20 +54,33 @@ afterEach(async () => {
   window.location = originalLocation;
 });
 const button = () => container.querySelector('[data-testid="cart-telegram-confirm"]');
-test("opens the configured Telegram chat directly and preserves retry recovery", async () => {
+test("keeps the template visible, copies it on request, and links directly to the store chat", async () => {
   await act(async () => root.render(<CartPage />));
   await act(async () => button().click());
   expect(button().disabled).toBe(false);
   expect(container.querySelector("textarea").value).toBe("hello");
-  const telegramUrl = new URL(window.location.assign.mock.calls[0][0]);
+  expect(window.location.assign).not.toHaveBeenCalled();
+  const copyButton = container.querySelector('[data-testid="telegram-copy-message"]');
+  await act(async () => copyButton.click());
+  expect(navigator.clipboard.writeText).toHaveBeenCalledWith("hello");
+  const telegramUrl = new URL(container.querySelector("a[href^='tg://']").getAttribute("href"));
   expect(telegramUrl.protocol).toBe("tg:");
   expect(telegramUrl.hostname).toBe("resolve");
   expect(telegramUrl.searchParams.get("domain")).toBe("store");
   expect(telegramUrl.searchParams.get("text")).toBe("hello");
-  expect(container.querySelector("a[href^='tg://']").getAttribute("href")).toContain("domain=store");
   await act(async () => button().click());
   expect(createTelegramCartInquiry).toHaveBeenCalledTimes(1);
-  expect(window.location.assign).toHaveBeenCalledTimes(2);
+  expect(window.location.assign).not.toHaveBeenCalled();
+});
+test("clipboard denial leaves a selectable template and explains manual copy", async () => {
+  navigator.clipboard.writeText.mockRejectedValueOnce(new Error("clipboard_denied"));
+  await act(async () => root.render(<CartPage />));
+  await act(async () => button().click());
+  await act(async () => container.querySelector('[data-testid="telegram-copy-message"]').click());
+
+  expect(container.querySelector("textarea").value).toBe("hello");
+  expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Tekan lama"));
+  expect(window.location.assign).not.toHaveBeenCalled();
 });
 test("lost API response retries the same idempotency key", async () => {
   createTelegramCartInquiry.mockRejectedValueOnce(new Error("timeout"));
