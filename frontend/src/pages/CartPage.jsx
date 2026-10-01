@@ -4,8 +4,8 @@ import {
   handoffText,
   readHandoff,
   saveHandoff,
+  telegramChatUrl,
   telegramInquiryMessage,
-  telegramShareUrl,
 } from "@/lib/telegramHandoff";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -55,8 +55,8 @@ export default function CartPage() {
   const copy = handoffText[locale] || handoffText.en;
   const storeUsername = telegramStatusQuery.data?.store_username;
   const inquiryMessage = telegramInquiryMessage(active?.inquiry);
-  const inquiryShareUrl = active?.inquiry
-    ? telegramShareUrl(inquiryMessage, new URL("/", window.location.origin).toString())
+  const inquiryTelegramUrl = active?.inquiry && storeUsername
+    ? telegramChatUrl(storeUsername, inquiryMessage)
     : null;
   const receipt = useQuery({
     queryKey: ["telegram-receipt", cart?.id, active?.inquiry?.reference],
@@ -124,14 +124,11 @@ export default function CartPage() {
         throw new Error("invalid_telegram_destination");
       }
       const message = telegramInquiryMessage(inquiry);
-      const shareUrl = telegramShareUrl(
-        message,
-        new URL("/", window.location.origin).toString()
-      );
-      if (!shareUrl) throw new Error("telegram_message_missing");
+      const chatUrl = telegramChatUrl(expectedUsername, message);
+      if (!chatUrl) throw new Error("telegram_chat_link_missing");
       saveHandoff(ready);
       setHandoff(ready);
-      window.location.assign(shareUrl);
+      window.location.assign(chatUrl);
     } catch (error) {
       if (error.response?.status === 409) {
         const next = { signature: attemptSignature, key: window.crypto.randomUUID(), until: Date.now() + 86400000 };
@@ -358,7 +355,7 @@ export default function CartPage() {
                 {!delivered && receipt.data?.status !== "expired" && storeUsername ? <p className="font-semibold">@{storeUsername}</p> : null}
                 {!delivered && receipt.data?.status !== "expired" ? <>
                   <textarea aria-label={copy.copy} readOnly value={inquiryMessage} className="w-full rounded border p-2 text-xs" rows={4} />
-                  {inquiryShareUrl ? <a className="block underline" href={inquiryShareUrl}>{copy.open}</a> : null}
+                  {inquiryTelegramUrl ? <a className="block underline" href={inquiryTelegramUrl}>{copy.open}</a> : null}
                   <button type="button" className="underline" onClick={async () => {
                     try {
                       await navigator.clipboard.writeText(inquiryMessage);

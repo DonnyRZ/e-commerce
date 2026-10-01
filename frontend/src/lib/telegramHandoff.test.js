@@ -3,8 +3,8 @@ import {
   handoffText,
   readHandoff,
   saveHandoff,
+  telegramChatUrl,
   telegramInquiryMessage,
-  telegramShareUrl,
 } from "./telegramHandoff";
 
 beforeEach(() => sessionStorage.clear());
@@ -29,14 +29,17 @@ test("all supported languages have recovery copy", () => {
   }
 });
 
-test("share link carries the prepared message and store URL as separate encoded fields", () => {
+test("Telegram links open the configured store chat directly with the prepared draft", () => {
   const message = "Salom & test\nSC-0123456789ABCDEF0123456789ABCDEF";
-  const shareUrl = new URL(telegramShareUrl(message, "https://shanicantik.com/"));
+  const chatUrl = telegramChatUrl("@CantikByIndonesia", message);
+  const appUrl = new URL(chatUrl);
 
-  expect(shareUrl.origin).toBe("https://t.me");
-  expect(shareUrl.pathname).toBe("/share/url");
-  expect(shareUrl.searchParams.get("url")).toBe("https://shanicantik.com/");
-  expect(shareUrl.searchParams.get("text")).toBe(message);
+  expect(appUrl.protocol).toBe("tg:");
+  expect(appUrl.hostname).toBe("resolve");
+  expect(appUrl.searchParams.get("domain")).toBe("CantikByIndonesia");
+  expect(appUrl.searchParams.get("text")).toBe(message);
+  expect(telegramChatUrl("bad username", message)).toBeNull();
+  expect(telegramChatUrl("store", " ")).toBeNull();
 });
 
 test("inquiry message prefers the API text and falls back to its direct link draft", () => {

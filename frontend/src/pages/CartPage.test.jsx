@@ -50,15 +50,17 @@ afterEach(async () => {
   window.location = originalLocation;
 });
 const button = () => container.querySelector('[data-testid="cart-telegram-confirm"]');
-test("cancelled navigation unlocks confirmation and exposes copyable message; retry reuses inquiry", async () => {
+test("opens the configured Telegram chat directly and preserves retry recovery", async () => {
   await act(async () => root.render(<CartPage />));
   await act(async () => button().click());
   expect(button().disabled).toBe(false);
   expect(container.querySelector("textarea").value).toBe("hello");
-  const shareUrl = new URL(window.location.assign.mock.calls[0][0]);
-  expect(shareUrl.pathname).toBe("/share/url");
-  expect(shareUrl.searchParams.get("text")).toBe("hello");
-  expect(shareUrl.searchParams.get("url")).toBe("https://shop.example/");
+  const telegramUrl = new URL(window.location.assign.mock.calls[0][0]);
+  expect(telegramUrl.protocol).toBe("tg:");
+  expect(telegramUrl.hostname).toBe("resolve");
+  expect(telegramUrl.searchParams.get("domain")).toBe("store");
+  expect(telegramUrl.searchParams.get("text")).toBe("hello");
+  expect(container.querySelector("a[href^='tg://']").getAttribute("href")).toContain("domain=store");
   await act(async () => button().click());
   expect(createTelegramCartInquiry).toHaveBeenCalledTimes(1);
   expect(window.location.assign).toHaveBeenCalledTimes(2);
