@@ -1,4 +1,11 @@
-import { cartSignature, readHandoff, saveHandoff, handoffText } from "./telegramHandoff";
+import {
+  cartSignature,
+  handoffText,
+  readHandoff,
+  saveHandoff,
+  telegramInquiryMessage,
+  telegramShareUrl,
+} from "./telegramHandoff";
 
 beforeEach(() => sessionStorage.clear());
 test("same cart snapshot keeps its key across remounts; changes invalidate it", () => {
@@ -20,4 +27,24 @@ test("all supported languages have recovery copy", () => {
   for (const language of ["id", "en", "uz", "ru"]) {
     expect(Object.keys(handoffText[language]).sort()).toEqual(Object.keys(handoffText.en).sort());
   }
+});
+
+test("share link carries the prepared message and store URL as separate encoded fields", () => {
+  const message = "Salom & test\nSC-0123456789ABCDEF0123456789ABCDEF";
+  const shareUrl = new URL(telegramShareUrl(message, "https://shanicantik.com/"));
+
+  expect(shareUrl.origin).toBe("https://t.me");
+  expect(shareUrl.pathname).toBe("/share/url");
+  expect(shareUrl.searchParams.get("url")).toBe("https://shanicantik.com/");
+  expect(shareUrl.searchParams.get("text")).toBe(message);
+});
+
+test("inquiry message prefers the API text and falls back to its direct link draft", () => {
+  expect(telegramInquiryMessage({
+    message: "prepared message",
+    telegram_url: "https://t.me/store?text=link+message",
+  })).toBe("prepared message");
+  expect(telegramInquiryMessage({
+    telegram_url: "https://t.me/store?text=link+message",
+  })).toBe("link message");
 });

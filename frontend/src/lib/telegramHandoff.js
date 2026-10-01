@@ -15,34 +15,59 @@ export function saveHandoff(value) {
   try { sessionStorage.setItem(STORAGE, JSON.stringify(value)); } catch { /* private mode */ }
 }
 
+export function telegramInquiryMessage(inquiry) {
+  if (typeof inquiry?.message === "string" && inquiry.message.trim()) {
+    return inquiry.message;
+  }
+  try {
+    return new URL(inquiry?.telegram_url || "").searchParams.get("text") || "";
+  } catch {
+    return "";
+  }
+}
+
+export function telegramShareUrl(message, storeUrl) {
+  const preparedText = String(message || "").trim();
+  if (!preparedText) return null;
+
+  const url = new URL(storeUrl);
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("invalid_store_url");
+  }
+  const shareUrl = new URL("https://t.me/share/url");
+  shareUrl.searchParams.set("url", url.toString());
+  shareUrl.searchParams.set("text", preparedText);
+  return shareUrl.toString();
+}
+
 export const handoffText = {
   id: {
-    waiting: "Pesan siap. Buka Telegram lalu tekan Kirim. Jika pesan tidak muncul, salin teks di bawah.",
-    open: "Buka ulang Telegram", copy: "Salin pesan", copied: "Pesan disalin",
+    waiting: "Telegram akan menampilkan daftar chat. Pilih chat toko, periksa pesan, lalu tekan Kirim. Jika teks tidak muncul, salin pesan di bawah.",
+    open: "Pilih chat toko di Telegram", copy: "Salin pesan", copied: "Pesan disalin",
     sent: "Permintaan sudah diterima di Telegram. Admin akan melanjutkan pesananmu.",
     unknown: "Pengiriman belum dapat dipastikan. Periksa chat dahulu. Jika belum ada balasan, kirim ulang pesan ini; balasan mungkin muncul dua kali.",
     retained: "Jika Telegram dibatalkan, keranjang tetap utuh. Produk permintaan dihapus setelah pesan berhasil dikirim.",
     new: "Buat permintaan baru", expired: "Permintaan kedaluwarsa. Buat permintaan baru.",
   },
   en: {
-    waiting: "Your message is ready. Open Telegram and press Send. If the draft is missing, copy the text below.",
-    open: "Reopen Telegram", copy: "Copy message", copied: "Message copied",
+    waiting: "Telegram will show a chat list. Choose the store chat, review the prepared message, then press Send. If the text is missing, copy it below.",
+    open: "Choose store chat in Telegram", copy: "Copy message", copied: "Message copied",
     sent: "Your request reached Telegram. An admin will continue your order.",
     unknown: "Delivery is uncertain. Check the chat first. If no reply arrived, resend this message; a duplicate reply is possible.",
     retained: "Your cart stays intact if you cancel Telegram; submitted items are removed only after the message is sent.",
     new: "Create a new request", expired: "This request expired. Create a new request.",
   },
   uz: {
-    waiting: "Xabar tayyor. Telegramni ochib, Yuborish tugmasini bosing. Matn chiqmasa, quyidagi matnni nusxalang.",
-    open: "Telegramni qayta ochish", copy: "Xabarni nusxalash", copied: "Xabar nusxalandi",
+    waiting: "Telegram chatlar ro‘yxatini ko‘rsatadi. Do‘kon chatini tanlang, xabarni tekshirib, Yuborish tugmasini bosing. Matn ko‘rinmasa, quyidan nusxa oling.",
+    open: "Telegramda do‘kon chatini tanlang", copy: "Xabarni nusxalash", copied: "Xabar nusxalandi",
     sent: "So‘rovingiz Telegramga yetib bordi. Admin buyurtmangizni davom ettiradi.",
     unknown: "Yetkazilganligi noma’lum. Avval chatni tekshiring. Javob bo‘lmasa, xabarni qayta yuboring; javob takrorlanishi mumkin.",
     retained: "Telegram bekor qilinsa, savat o‘zgarishsiz qoladi; so‘rov mahsulotlari xabar yuborilgandan keyingina o‘chiriladi.",
     new: "Yangi so‘rov yaratish", expired: "So‘rov muddati tugagan. Yangi so‘rov yarating.",
   },
   ru: {
-    waiting: "Сообщение готово. Откройте Telegram и нажмите Отправить. Если текста нет, скопируйте его ниже.",
-    open: "Открыть Telegram снова", copy: "Копировать сообщение", copied: "Сообщение скопировано",
+    waiting: "Telegram покажет список чатов. Выберите чат магазина, проверьте текст и нажмите «Отправить». Если текста нет, скопируйте его ниже.",
+    open: "Выбрать чат магазина в Telegram", copy: "Копировать сообщение", copied: "Сообщение скопировано",
     sent: "Запрос получен в Telegram. Администратор продолжит оформление заказа.",
     unknown: "Результат отправки неизвестен. Сначала проверьте чат. Если ответа нет, отправьте сообщение повторно; возможен повторный ответ.",
     retained: "Если отменить переход в Telegram, корзина останется без изменений; товары запроса удалятся только после отправки сообщения.",

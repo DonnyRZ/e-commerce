@@ -39,7 +39,7 @@ beforeEach(() => {
   createTelegramCartInquiry.mockResolvedValue({ reference: "SC-test", telegram_url: "https://t.me/store?text=hello", message: "hello" });
   toast.error.mockReset();
   delete window.location;
-  window.location = { assign: jest.fn() };
+  window.location = { assign: jest.fn(), origin: "https://shop.example" };
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -55,6 +55,10 @@ test("cancelled navigation unlocks confirmation and exposes copyable message; re
   await act(async () => button().click());
   expect(button().disabled).toBe(false);
   expect(container.querySelector("textarea").value).toBe("hello");
+  const shareUrl = new URL(window.location.assign.mock.calls[0][0]);
+  expect(shareUrl.pathname).toBe("/share/url");
+  expect(shareUrl.searchParams.get("text")).toBe("hello");
+  expect(shareUrl.searchParams.get("url")).toBe("https://shop.example/");
   await act(async () => button().click());
   expect(createTelegramCartInquiry).toHaveBeenCalledTimes(1);
   expect(window.location.assign).toHaveBeenCalledTimes(2);

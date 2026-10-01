@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { cartSignature, readHandoff, saveHandoff, handoffText } from "@/lib/telegramHandoff";
+import {
+  cartSignature,
+  handoffText,
+  readHandoff,
+  saveHandoff,
+  telegramInquiryMessage,
+  telegramShareUrl,
+} from "@/lib/telegramHandoff";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Minus, Plus, Trash2 } from "lucide-react";
@@ -46,6 +53,11 @@ export default function CartPage() {
   const [handoff, setHandoff] = useState(null);
   const active = handoff?.signature === signature ? handoff : readHandoff(signature);
   const copy = handoffText[locale] || handoffText.en;
+  const storeUsername = telegramStatusQuery.data?.store_username;
+  const inquiryMessage = telegramInquiryMessage(active?.inquiry);
+  const inquiryShareUrl = active?.inquiry
+    ? telegramShareUrl(inquiryMessage, new URL("/", window.location.origin).toString())
+    : null;
   const receipt = useQuery({
     queryKey: ["telegram-receipt", cart?.id, active?.inquiry?.reference],
     queryFn: () => getTelegramCartInquiry(active.inquiry.reference, guestCartMode),
@@ -104,16 +116,22 @@ export default function CartPage() {
       });
       const ready = { ...attempt, inquiry };
       const target = new URL(inquiry.telegram_url);
-      const expectedUsername = telegramStatusQuery.data.store_username;
+      const expectedUsername = storeUsername;
       if (
         target.origin !== "https://t.me" ||
         target.pathname.toLowerCase() !== `/${expectedUsername}`.toLowerCase()
       ) {
         throw new Error("invalid_telegram_destination");
       }
+      const message = telegramInquiryMessage(inquiry);
+      const shareUrl = telegramShareUrl(
+        message,
+        new URL("/", window.location.origin).toString()
+      );
+      if (!shareUrl) throw new Error("telegram_message_missing");
       saveHandoff(ready);
       setHandoff(ready);
-      window.location.assign(target.toString());
+      window.location.assign(shareUrl);
     } catch (error) {
       if (error.response?.status === 409) {
         const next = { signature: attemptSignature, key: window.crypto.randomUUID(), until: Date.now() + 86400000 };
@@ -337,12 +355,13 @@ export default function CartPage() {
             {active?.inquiry ? (
               <div className="mt-4 space-y-3 rounded border border-border p-3 text-sm" aria-live="polite">
                 <p>{delivered ? copy.sent : receipt.data?.status === "unknown" ? copy.unknown : receipt.data?.status === "expired" ? copy.expired : copy.waiting}</p>
+                {!delivered && receipt.data?.status !== "expired" && storeUsername ? <p className="font-semibold">@{storeUsername}</p> : null}
                 {!delivered && receipt.data?.status !== "expired" ? <>
-                  <textarea aria-label={copy.copy} readOnly value={active.inquiry.message || new URL(active.inquiry.telegram_url).searchParams.get("text") || ""} className="w-full rounded border p-2 text-xs" rows={4} />
-                  <a className="block underline" href={active.inquiry.telegram_url}>{copy.open}</a>
+                  <textarea aria-label={copy.copy} readOnly value={inquiryMessage} className="w-full rounded border p-2 text-xs" rows={4} />
+                  {inquiryShareUrl ? <a className="block underline" href={inquiryShareUrl}>{copy.open}</a> : null}
                   <button type="button" className="underline" onClick={async () => {
                     try {
-                      await navigator.clipboard.writeText(active.inquiry.message || new URL(active.inquiry.telegram_url).searchParams.get("text") || "");
+                      await navigator.clipboard.writeText(inquiryMessage);
                       toast.success(copy.copied);
                     } catch { /* The selectable text above remains available. */ }
                   }}>{copy.copy}</button>
