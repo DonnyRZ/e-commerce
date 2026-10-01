@@ -295,6 +295,10 @@ class TelegramConversation(Base):
     __table_args__ = (
         UniqueConstraint("connection_id", "chat_id", name="uq_telegram_conversations_connection_chat"),
         Index("ix_telegram_conversations_status_activity", "status", "last_message_at"),
+        CheckConstraint(
+            "locale_source IN ('web', 'direct_default', 'admin', 'legacy')",
+            name="ck_telegram_conversations_locale_source",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
@@ -307,6 +311,9 @@ class TelegramConversation(Base):
     customer_name: Mapped[str] = mapped_column(String(160), default="")
     telegram_language_code: Mapped[str] = mapped_column(String(16), default="")
     locale: Mapped[str] = mapped_column(String(5), default="id")
+    locale_source: Mapped[str] = mapped_column(
+        String(20), default="legacy", server_default="legacy"
+    )
     status: Mapped[str] = mapped_column(String(24), default="needs_admin", index=True)
     last_message_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     last_customer_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -674,6 +681,12 @@ class TelegramOrderNotificationOutbox(TimestampMixin, Base):
         ForeignKey("orders.id", ondelete="CASCADE"), index=True
     )
     event_key: Mapped[str] = mapped_column(String(180))
+    event_type: Mapped[str] = mapped_column(
+        String(32), default="legacy", server_default="legacy"
+    )
+    event_payload: Mapped[dict] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb")
+    )
     message_text: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(24), default="pending")
     claimed_at: Mapped[Optional[datetime]] = mapped_column(

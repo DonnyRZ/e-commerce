@@ -39,7 +39,11 @@ from db.models import (
     utcnow,
 )
 from db.session import get_session
-from telegram_inbox_service import candidate_copy, candidate_keyboard
+from telegram_inbox_service import (
+    apply_direct_default_locale,
+    candidate_copy,
+    candidate_keyboard,
+)
 from telegram_inquiries import (
     TelegramDeliveryError,
     bot_request,
@@ -750,7 +754,13 @@ async def update_conversation(
 ):
     row = await _load_conversation(session, conversation_id)
     data = payload.model_dump(exclude_unset=True)
+    locale = data.get("locale")
+    if locale is not None:
+        row.locale = locale
+        row.locale_source = "admin"
     for key, value in data.items():
+        if key == "locale":
+            continue
         setattr(row, key, value)
     await audit(session, user.id, "admin.telegram_inbox.conversation.update", "telegram_conversation", row.id, data)
     await session.commit()
@@ -994,10 +1004,11 @@ async def create_candidate(
         )
         if not source_message:
             raise _error(404, "source_message_not_found")
+    locale = apply_direct_default_locale(conversation)
     translation = await session.scalar(
         select(ProductTranslation).where(
             ProductTranslation.product_id == product.id,
-            ProductTranslation.locale == conversation.locale,
+            ProductTranslation.locale == locale,
         )
     )
     if not translation:
@@ -1025,8 +1036,8 @@ async def create_candidate(
     )
     session.add(candidate)
     await session.commit()
-    caption = candidate_copy(conversation.locale, product_name, variant.sku, payload.quantity)
-    markup = candidate_keyboard(token, conversation.locale)
+    caption = candidate_copy(locale, product_name, variant.sku, payload.quantity)
+    markup = candidate_keyboard(token, locale)
     try:
         if image_url and image_url.startswith(("https://", "http://")):
             result = await bot_request(

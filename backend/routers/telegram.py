@@ -68,8 +68,12 @@ from payment_destinations import (
     payment_prompt_text,
 )
 from telegram_inbox_service import (
+    active_locale_for_chat,
+    apply_web_locale,
+    candidate_callback_error,
     capture_business_message,
     capture_deleted_messages,
+    normalized_telegram_locale,
     record_outgoing_message,
 )
 
@@ -514,6 +518,17 @@ async def _handle_business_message(session: AsyncSession, message: dict, update_
         logger.info("inquiry ignored: status=%s", inquiry.status)
         return
 
+    conversation = await session.scalar(
+        select(TelegramConversation)
+        .where(
+            TelegramConversation.connection_id == connection_id,
+            TelegramConversation.chat_id == chat_id,
+        )
+        .with_for_update()
+    )
+    if conversation:
+        apply_web_locale(conversation, inquiry.locale)
+
     # Keep the Business chat mapping so admin order updates can notify the
     # same customer later. The chat id is never exposed to the storefront.
     inquiry.telegram_connection_id = connection_id
@@ -654,7 +669,7 @@ async def _handle_payment_callback(
         return
 
     token = match.group("token")
-    callback_locale = match.group("locale") or "id"
+    callback_locale = match.group("locale") or "uz"
     payment = await session.scalar(
         select(Payment)
         .where(Payment.telegram_selection_token == token)
@@ -708,7 +723,20 @@ async def _handle_payment_callback(
         if inquiry and inquiry.telegram_chat_id
         else conversation.chat_id if conversation else None
     )
-    target_locale = inquiry.locale if inquiry else conversation.locale if conversation else "id"
+    target_locale = (
+        await active_locale_for_chat(
+            session,
+            target_connection_id,
+            target_chat_id,
+            inquiry.locale
+            if inquiry
+            else conversation.locale
+            if conversation
+            else callback_locale,
+        )
+        if target_connection_id and isinstance(target_chat_id, int)
+        else callback_locale
+    )
     if (
         not order
         or not target_connection_id
@@ -722,7 +750,9 @@ async def _handle_payment_callback(
         )
     ):
         await _answer_payment_callback(
-            callback_query, answer_locale_error("id", "invalid"), show_alert=True
+            callback_query,
+            answer_locale_error(payment_locale(target_locale), "invalid"),
+            show_alert=True,
         )
         return
 
@@ -845,11 +875,22 @@ async def _handle_product_candidate_callback(
             or candidate.confirmation_message_id == message_id
         )
     )
+    locale = normalized_telegram_locale(
+        getattr(conversation, "locale", "uz") if conversation else "uz"
+    )
     if not valid:
-        await _answer_payment_callback(callback_query, "Pilihan ini tidak valid atau sudah kedaluwarsa.", show_alert=True)
+        await _answer_payment_callback(
+            callback_query,
+            candidate_callback_error(locale, "invalid"),
+            show_alert=True,
+        )
         return True
     if candidate.status != "pending" or candidate.created_at < utcnow() - timedelta(days=30):
-        await _answer_payment_callback(callback_query, "Pilihan ini sudah tidak aktif. Admin akan membantu Anda.", show_alert=True)
+        await _answer_payment_callback(
+            callback_query,
+            candidate_callback_error(locale, "inactive"),
+            show_alert=True,
+        )
         return True
 
     candidate.confirmation_message_id = message_id
@@ -860,7 +901,7 @@ async def _handle_product_candidate_callback(
     conversation.last_customer_message_at = utcnow()
     conversation.last_message_at = conversation.last_customer_message_at
     await session.commit()
-    locale = conversation.locale if conversation.locale in {"id", "en", "uz", "ru"} else "id"
+    locale = normalized_telegram_locale(conversation.locale)
     replies = {
         "id": ("Terima kasih, produk sudah dikonfirmasi.", "✅ Produk dikonfirmasi. Admin akan menyiapkan pesanan Anda.", "Baik, admin akan mencari produk yang sesuai."),
         "en": ("Thank you, the product is confirmed.", "✅ Product confirmed. Our admin will prepare your order.", "Understood. Our admin will look for a better match."),

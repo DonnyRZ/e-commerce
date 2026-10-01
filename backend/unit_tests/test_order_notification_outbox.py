@@ -23,7 +23,9 @@ from routers.manual_orders import (
     _dispatch_one_order_notification,
     _admin_order_payload,
     _queue_order_notification,
+    _render_order_notification,
     _recover_stale_order_notifications,
+    _telegram_target_for_order,
     update_manual_fulfillment,
 )
 
@@ -152,6 +154,53 @@ class OrderNotificationOutboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(result, existing)
         session.add.assert_not_called()
 
+    async def test_order_event_is_rendered_in_active_locale_and_keeps_admin_reason(self):
+        order = SimpleNamespace(order_number="MC-TEST-LOCALE")
+        rejected = SimpleNamespace(
+            event_key="payment_rejected:evidence-1:digest",
+            event_type="payment_rejected",
+            event_payload={"reason": "Please send a clearer receipt."},
+            message_text="Indonesian preview",
+        )
+        rendered = _render_order_notification(rejected, order, "ru")
+        self.assertIn("заказа MC-TEST-LOCALE", rendered)
+        self.assertIn("Причина: Please send a clearer receipt.", rendered)
+
+        fulfillment = SimpleNamespace(
+            event_key="fulfillment:delivered",
+            event_type="fulfillment",
+            event_payload={"stage": "delivered"},
+            message_text="Indonesian preview",
+        )
+        expected = {
+            "id": "Update order MC-TEST-LOCALE: Barang diterima customer.",
+            "en": "Order MC-TEST-LOCALE update: The item has been delivered to you.",
+            "uz": "MC-TEST-LOCALE buyurtma yangilanishi: Mahsulot sizga yetkazildi.",
+            "ru": "Обновление по заказу MC-TEST-LOCALE: Товар доставлен.",
+        }
+        for locale, expected_text in expected.items():
+            with self.subTest(locale=locale):
+                self.assertEqual(
+                    _render_order_notification(fulfillment, order, locale),
+                    expected_text,
+                )
+
+    async def test_web_order_target_uses_the_latest_conversation_locale(self):
+        inquiry = SimpleNamespace(
+            order_id="order-1",
+            telegram_connection_id="connection-1",
+            telegram_chat_id=123,
+            locale="uz",
+        )
+        conversation = SimpleNamespace(locale="ru")
+        session = SimpleNamespace(
+            scalar=AsyncMock(side_effect=[inquiry, conversation])
+        )
+
+        target = await _telegram_target_for_order(session, "order-1")
+
+        self.assertEqual(target, ("connection-1", 123, "ru"))
+
     async def test_order_detail_exposes_notification_state_for_progress_reconciliation(
         self,
     ):
@@ -220,6 +269,8 @@ class OrderNotificationOutboxTests(unittest.IsolatedAsyncioTestCase):
             id="notification-1",
             order_id="order-1",
             event_key="fulfillment:received_by_admin",
+            event_type="fulfillment",
+            event_payload={"stage": "received_by_admin"},
             message_text="Barang diterima admin",
             status="pending",
             claimed_at=None,
@@ -229,12 +280,18 @@ class OrderNotificationOutboxTests(unittest.IsolatedAsyncioTestCase):
         )
         session = SimpleNamespace(
             scalar=AsyncMock(return_value=notification),
-            get=AsyncMock(return_value=SimpleNamespace(id="order-1")),
+            get=AsyncMock(
+                return_value=SimpleNamespace(id="order-1", order_number="MC-TEST-1")
+            ),
             commit=AsyncMock(),
         )
 
-        async def send_message(*_args, **_kwargs):
+        async def send_message(_token, _method, payload):
             self.assertEqual(notification.status, "sending")
+            self.assertEqual(
+                payload["text"],
+                "MC-TEST-1 buyurtma yangilanishi: Mahsulot admin tomonidan qabul qilindi.",
+            )
             return {"message_id": 101}
 
         with (
@@ -247,7 +304,7 @@ class OrderNotificationOutboxTests(unittest.IsolatedAsyncioTestCase):
                 manual_orders,
                 "_telegram_target_for_order",
                 new_callable=AsyncMock,
-                return_value=("connection-1", "chat-1", "id"),
+                return_value=("connection-1", "chat-1", "uz"),
             ),
             patch.object(manual_orders, "TELEGRAM_BOT_TOKEN", "test-token"),
             patch.object(

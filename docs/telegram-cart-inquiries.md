@@ -11,6 +11,23 @@ payment, clear the cart, reserve stock, or decrement inventory. Price, stock,
 and shipping remain subject to admin confirmation. Pending item snapshots are
 cleared on delivery or after seven days.
 
+## Telegram reply language
+
+When a valid inquiry reference is received in a Business chat, that inquiry's
+web locale becomes the active locale for the conversation. This uses the
+locale saved with the inquiry, including English when it was the storefront's
+active default. Starting a direct product-candidate flow from the Inbox selects
+Uzbek unless an admin has explicitly selected a conversation locale. A valid
+new web inquiry sets the locale to the inquiry's web locale, including after
+an admin selection.
+
+Future automated replies, payment prompts and order-status notifications use
+the active conversation locale. Queued status notifications are translated
+when they are sent, so a locale change also applies to an order already in
+progress. Messages already delivered remain in the transcript. Admin-written
+chat replies and payment-rejection reasons keep their original text. Product
+names use available catalog translations and the existing English fallback.
+
 ## Configure safely
 
 1. Rotate the bot token that was exposed in the setup screenshot. Put the new

@@ -20,6 +20,45 @@ from db.models import (
 from telegram_inquiries import TelegramDeliveryError, bot_request
 
 
+SUPPORTED_TELEGRAM_LOCALES = {"id", "en", "uz", "ru"}
+
+
+def normalized_telegram_locale(value: object, default: str = "uz") -> str:
+    code = str(value or "").lower().replace("_", "-").split("-", 1)[0]
+    return code if code in SUPPORTED_TELEGRAM_LOCALES else default
+
+
+def apply_web_locale(conversation: TelegramConversation, locale: str) -> None:
+    conversation.locale = normalized_telegram_locale(locale)
+    conversation.locale_source = "web"
+    conversation.updated_at = utcnow()
+
+
+def apply_direct_default_locale(conversation: TelegramConversation) -> str:
+    if conversation.locale_source != "admin":
+        conversation.locale = "uz"
+        conversation.locale_source = "direct_default"
+        conversation.updated_at = utcnow()
+    return normalized_telegram_locale(conversation.locale)
+
+
+async def active_locale_for_chat(
+    session: AsyncSession,
+    connection_id: str,
+    chat_id: int,
+    fallback: str = "uz",
+) -> str:
+    conversation = await session.scalar(
+        select(TelegramConversation).where(
+            TelegramConversation.connection_id == connection_id,
+            TelegramConversation.chat_id == chat_id,
+        )
+    )
+    return normalized_telegram_locale(
+        conversation.locale if conversation else fallback, default=fallback
+    )
+
+
 def message_datetime(message: dict, *, edited: bool = False) -> datetime:
     timestamp = message.get("edit_date") if edited else message.get("date")
     if not isinstance(timestamp, int) or isinstance(timestamp, bool):
@@ -182,7 +221,10 @@ async def get_or_create_conversation(
             row.customer_name = name[:160]
         language = str(sender.get("language_code") or "")[:16]
         if language:
-            use_telegram_locale = not row.telegram_language_code
+            use_telegram_locale = (
+                not row.telegram_language_code
+                and getattr(row, "locale_source", "legacy") == "legacy"
+            )
             row.telegram_language_code = language
             if use_telegram_locale:
                 row.locale = locale_from_language(language)
@@ -445,7 +487,9 @@ def candidate_copy(locale: str, product_name: str, sku: str, quantity: int) -> s
         "uz": ("Siz nazarda tutgan mahsulot shu-mi?", "SKU", "Miqdor"),
         "ru": ("Это тот товар, который вы имели в виду?", "Артикул", "Количество"),
     }
-    question, sku_label, quantity_label = labels.get(locale, labels["id"])
+    question, sku_label, quantity_label = labels.get(
+        normalized_telegram_locale(locale), labels["uz"]
+    )
     return f"{product_name}\n{sku_label}: {sku}\n{quantity_label}: {quantity}\n\n{question}"
 
 
@@ -456,10 +500,33 @@ def candidate_keyboard(token: str, locale: str) -> dict:
         "uz": ("Ha, to‘g‘ri", "Yo‘q, boshqasini qidiring"),
         "ru": ("Да, верно", "Нет, найти другой"),
     }
-    yes, no = labels.get(locale, labels["id"])
+    yes, no = labels.get(normalized_telegram_locale(locale), labels["uz"])
     return {
         "inline_keyboard": [[
             {"text": yes, "callback_data": f"CAT:{token}:yes"},
             {"text": no, "callback_data": f"CAT:{token}:no"},
         ]]
     }
+
+
+def candidate_callback_error(locale: str, key: str) -> str:
+    copy = {
+        "id": {
+            "invalid": "Pilihan ini tidak valid atau sudah kedaluwarsa.",
+            "inactive": "Pilihan ini sudah tidak aktif. Admin akan membantu Anda.",
+        },
+        "en": {
+            "invalid": "This choice is invalid or has expired.",
+            "inactive": "This choice is no longer active. An admin will help you.",
+        },
+        "uz": {
+            "invalid": "Bu tanlov noto‘g‘ri yoki muddati tugagan.",
+            "inactive": "Bu tanlov endi faol emas. Admin sizga yordam beradi.",
+        },
+        "ru": {
+            "invalid": "Этот вариант недействителен или срок его действия истёк.",
+            "inactive": "Этот вариант больше не активен. Вам поможет администратор.",
+        },
+    }
+    locale = normalized_telegram_locale(locale)
+    return copy[locale][key]

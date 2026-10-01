@@ -78,7 +78,11 @@ from payment_destinations import (
     payment_choice_keyboard,
 )
 from telegram_inquiries import TelegramDeliveryError, bot_request
-from telegram_inbox_service import record_outgoing_message
+from telegram_inbox_service import (
+    active_locale_for_chat,
+    normalized_telegram_locale,
+    record_outgoing_message,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["manual-orders"])
 require_admin = require_roles("admin")
@@ -100,6 +104,47 @@ ORDER_NOTIFICATION_LABELS = {
     "received_by_admin": "Barang diterima admin",
     "customer_shipping": "Barang dikirim ke customer",
     "delivered": "Barang diterima customer",
+}
+ORDER_NOTIFICATION_COPY = {
+    "id": {
+        "payment_confirmed": "Pembayaran order {order_number} telah dikonfirmasi. Pesanan sedang diproses.",
+        "payment_rejected": "Bukti pembayaran order {order_number} belum dapat diverifikasi. Alasan: {reason}",
+        "fulfillment_prefix": "Update order {order_number}: {stage}.",
+        "stages": ORDER_NOTIFICATION_LABELS,
+    },
+    "en": {
+        "payment_confirmed": "Payment for order {order_number} has been confirmed. Your order is being processed.",
+        "payment_rejected": "We could not verify the payment proof for order {order_number}. Reason: {reason}",
+        "fulfillment_prefix": "Order {order_number} update: {stage}.",
+        "stages": {
+            "supplier_shipping": "The item has been shipped to our team",
+            "received_by_admin": "The item has been received by our team",
+            "customer_shipping": "The item has been shipped to you",
+            "delivered": "The item has been delivered to you",
+        },
+    },
+    "uz": {
+        "payment_confirmed": "{order_number} buyurtmasi uchun to‘lov tasdiqlandi. Buyurtmangiz qayta ishlanmoqda.",
+        "payment_rejected": "{order_number} buyurtmasi uchun to‘lov chekini tasdiqlay olmadik. Sabab: {reason}",
+        "fulfillment_prefix": "{order_number} buyurtma yangilanishi: {stage}.",
+        "stages": {
+            "supplier_shipping": "Mahsulot admin tomon yuborildi",
+            "received_by_admin": "Mahsulot admin tomonidan qabul qilindi",
+            "customer_shipping": "Mahsulot sizga yuborildi",
+            "delivered": "Mahsulot sizga yetkazildi",
+        },
+    },
+    "ru": {
+        "payment_confirmed": "Оплата заказа {order_number} подтверждена. Заказ передан в обработку.",
+        "payment_rejected": "Не удалось проверить подтверждение оплаты заказа {order_number}. Причина: {reason}",
+        "fulfillment_prefix": "Обновление по заказу {order_number}: {stage}.",
+        "stages": {
+            "supplier_shipping": "Товар отправлен администратору",
+            "received_by_admin": "Товар получен администратором",
+            "customer_shipping": "Товар отправлен вам",
+            "delivered": "Товар доставлен",
+        },
+    },
 }
 ALLOWED_EVIDENCE = {"image/jpeg", "image/png", "image/webp", "application/pdf"}
 PUBLIC_ORDER_STAGES = {
@@ -273,19 +318,35 @@ async def _telegram_target_for_order(session: AsyncSession, order_id: str):
         select(TelegramCartInquiry).where(TelegramCartInquiry.order_id == order_id)
     )
     if inquiry and inquiry.telegram_connection_id and inquiry.telegram_chat_id:
-        return inquiry.telegram_connection_id, inquiry.telegram_chat_id, inquiry.locale
+        locale = await active_locale_for_chat(
+            session,
+            inquiry.telegram_connection_id,
+            inquiry.telegram_chat_id,
+            inquiry.locale,
+        )
+        return inquiry.telegram_connection_id, inquiry.telegram_chat_id, locale
     order = await session.get(Order, order_id)
     if order and order.telegram_conversation_id:
         conversation = await session.get(
             TelegramConversation, order.telegram_conversation_id
         )
         if conversation:
-            return conversation.connection_id, conversation.chat_id, conversation.locale
+            return (
+                conversation.connection_id,
+                conversation.chat_id,
+                normalized_telegram_locale(conversation.locale),
+            )
     return None
 
 
 async def _queue_order_notification(
-    order_id: str, event_key: str, text: str, session: AsyncSession
+    order_id: str,
+    event_key: str,
+    text: str,
+    session: AsyncSession,
+    *,
+    event_type: str | None = None,
+    event_payload: dict | None = None,
 ) -> TelegramOrderNotificationOutbox:
     """Persist a deduplicated Telegram send in the same transaction as its event."""
     existing = await session.scalar(
@@ -296,14 +357,67 @@ async def _queue_order_notification(
     )
     if existing:
         return existing
+    if event_type is None:
+        if event_key == "payment_confirmed":
+            event_type = "payment_confirmed"
+        elif event_key.startswith("payment_rejected:"):
+            event_type = "payment_rejected"
+            reason = text.partition("Alasan: ")[2]
+            event_payload = {"reason": reason}
+        elif event_key.startswith("fulfillment:"):
+            event_type = "fulfillment"
+            event_payload = {"stage": event_key.partition(":")[2]}
+        else:
+            event_type = "legacy"
     notification = TelegramOrderNotificationOutbox(
         order_id=order_id,
         event_key=event_key,
+        event_type=event_type,
+        event_payload=event_payload or {},
         message_text=text[:3900],
         status="pending",
     )
     session.add(notification)
     return notification
+
+
+def _render_order_notification(notification, order, locale: str) -> str:
+    """Render a queued order event with the chat's active locale at send time."""
+    event_type = getattr(notification, "event_type", None) or "legacy"
+    payload = getattr(notification, "event_payload", None)
+    payload = payload if isinstance(payload, dict) else {}
+    event_key = str(getattr(notification, "event_key", "") or "")
+    message_text = str(getattr(notification, "message_text", "") or "")
+    if event_type == "legacy":
+        if event_key == "payment_confirmed":
+            event_type = "payment_confirmed"
+        elif event_key.startswith("payment_rejected:"):
+            event_type = "payment_rejected"
+            if "reason" not in payload:
+                payload = {**payload, "reason": message_text.partition("Alasan: ")[2]}
+        elif event_key.startswith("fulfillment:"):
+            event_type = "fulfillment"
+            payload = {**payload, "stage": event_key.partition(":")[2]}
+        else:
+            return message_text
+
+    locale = normalized_telegram_locale(locale)
+    copy = ORDER_NOTIFICATION_COPY[locale]
+    order_number = str(getattr(order, "order_number", "") or "")
+    if event_type == "payment_confirmed":
+        return copy["payment_confirmed"].format(order_number=order_number)
+    if event_type == "payment_rejected":
+        reason = str(payload.get("reason") or "")
+        return copy["payment_rejected"].format(
+            order_number=order_number, reason=reason
+        )[:3900]
+    if event_type == "fulfillment":
+        stage = copy["stages"].get(str(payload.get("stage") or ""))
+        if stage:
+            return copy["fulfillment_prefix"].format(
+                order_number=order_number, stage=stage
+            )
+    return message_text
 
 
 async def _recover_stale_order_notifications(session: AsyncSession) -> None:
@@ -351,7 +465,6 @@ async def _dispatch_one_order_notification() -> bool:
         await session.commit()
 
         order_id = notification.order_id
-        message_text = notification.message_text
         order = await session.get(Order, order_id)
         if not order:
             # The order may have been permanently deleted while this row was
@@ -365,7 +478,8 @@ async def _dispatch_one_order_notification() -> bool:
             await session.commit()
             return True
 
-        connection_id, chat_id, _locale = target
+        connection_id, chat_id, locale = target
+        message_text = _render_order_notification(notification, order, locale)
         try:
             result = await bot_request(
                 TELEGRAM_BOT_TOKEN,
@@ -1484,6 +1598,7 @@ async def confirm_manual_payment(
         "payment_confirmed",
         f"Pembayaran order {order.order_number} telah dikonfirmasi. Pesanan sedang diproses.",
         session,
+        event_type="payment_confirmed",
     )
     await audit(
         session,
@@ -1535,6 +1650,8 @@ async def reject_manual_payment(
         f"payment_rejected:{latest.id}:{reason_digest}",
         f"Bukti pembayaran order {order.order_number} belum dapat diverifikasi. Alasan: {payload.reason}",
         session,
+        event_type="payment_rejected",
+        event_payload={"reason": payload.reason},
     )
     await audit(
         session,
@@ -1606,6 +1723,8 @@ async def update_manual_fulfillment(
         f"fulfillment:{payload.stage}",
         f"Update order {order.order_number}: {ORDER_NOTIFICATION_LABELS[payload.stage]}.",
         session,
+        event_type="fulfillment",
+        event_payload={"stage": payload.stage},
     )
     await audit(
         session,

@@ -3,6 +3,7 @@
 import os
 import sys
 import unittest
+from datetime import timedelta
 from importlib.util import module_from_spec, spec_from_file_location
 from io import StringIO
 from pathlib import Path
@@ -17,6 +18,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://unused:unused@127.0.
 os.environ.setdefault("JWT_SECRET", "isolated-test-secret-never-used-for-real-auth")
 
 import routers.telegram as telegram_router
+import routers.telegram_inbox as telegram_inbox_router
 import telegram_inbox_service as inbox
 import telegram_inquiries
 from routers.telegram_inbox import _message_payload, _reconstructed_cart_message
@@ -24,6 +26,52 @@ from db.models import utcnow
 
 
 class TelegramInboxTests(unittest.IsolatedAsyncioTestCase):
+    async def test_valid_web_inquiry_sets_the_conversation_locale_for_future_replies(self):
+        reference = f"SC-{'A' * 32}"
+        connection = SimpleNamespace(
+            connection_id="bc-1",
+            username=telegram_router._normalized_username(
+                telegram_router.TELEGRAM_STORE_USERNAME
+            ),
+            is_enabled=True,
+            can_reply=True,
+            can_read_messages=True,
+            business_user_id="999",
+        )
+        inquiry = SimpleNamespace(
+            reference=reference,
+            locale="ru",
+            status="pending",
+            expires_at=utcnow() + timedelta(days=1),
+            snapshot={"items": []},
+            telegram_chat_id=None,
+            telegram_connection_id=None,
+            cart_id="cart-1",
+        )
+        conversation = SimpleNamespace(
+            locale="uz", locale_source="direct_default", updated_at=utcnow()
+        )
+        session = SimpleNamespace(
+            get=AsyncMock(return_value=connection),
+            scalar=AsyncMock(side_effect=[inquiry, conversation, None]),
+            commit=AsyncMock(),
+        )
+        message = {
+            "business_connection_id": "bc-1",
+            "chat": {"type": "private", "id": 123},
+            "from": {"id": 123},
+            "text": reference,
+        }
+
+        with patch.object(telegram_router, "TELEGRAM_BOT_TOKEN", "fake-token"), patch.object(
+            telegram_router, "send_inquiry", new_callable=AsyncMock, return_value="rich"
+        ):
+            await telegram_router._handle_business_message(session, message, 55)
+
+        self.assertEqual((conversation.locale, conversation.locale_source), ("ru", "web"))
+        self.assertEqual(inquiry.status, "sent")
+        self.assertEqual(inquiry.telegram_chat_id, 123)
+
     async def test_rich_message_schema_migration_compiles_in_both_directions(self):
         migration_path = (
             Path(__file__).resolve().parents[1]
@@ -51,6 +99,35 @@ class TelegramInboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ADD COLUMN media_group_id VARCHAR(255)", upgrade_sql)
         self.assertIn("DROP COLUMN media_group_id", downgrade_sql)
         self.assertIn("DROP COLUMN rich_content", downgrade_sql)
+
+    async def test_locale_and_notification_migration_backfills_legacy_rows(self):
+        migration_path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic"
+            / "versions"
+            / "x3y4z5a6b7c_telegram_locale_and_typed_notifications.py"
+        )
+        spec = spec_from_file_location("telegram_locale_migration_test", migration_path)
+        migration = module_from_spec(spec)
+        spec.loader.exec_module(migration)
+
+        def render(operation):
+            output = StringIO()
+            context = MigrationContext.configure(
+                dialect_name="postgresql",
+                opts={"as_sql": True, "output_buffer": output},
+            )
+            with Operations.context(context):
+                operation()
+            return output.getvalue()
+
+        upgrade_sql = render(migration.upgrade)
+        downgrade_sql = render(migration.downgrade)
+        self.assertIn("locale_source VARCHAR(20) DEFAULT 'legacy' NOT NULL", upgrade_sql)
+        self.assertIn("event_type = CASE", upgrade_sql)
+        self.assertIn("jsonb_build_object", upgrade_sql)
+        self.assertIn("DROP COLUMN locale_source", downgrade_sql)
+        self.assertIn("DROP COLUMN event_payload", downgrade_sql)
 
     async def test_rich_cart_message_normalizes_slides_without_html_or_file_ids(self):
         telegram_message = {
@@ -217,6 +294,52 @@ class TelegramInboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(buttons[0]["text"], "Да, верно")
         self.assertEqual(buttons[1]["callback_data"], "CAT:abcdefghijklmnop:no")
         self.assertLessEqual(len(buttons[1]["callback_data"].encode()), 64)
+        self.assertEqual(
+            inbox.candidate_callback_error("uz", "invalid"),
+            "Bu tanlov noto‘g‘ri yoki muddati tugagan.",
+        )
+        for locale in ("id", "en", "uz", "ru"):
+            with self.subTest(locale=locale):
+                self.assertTrue(inbox.candidate_callback_error(locale, "inactive"))
+
+    async def test_locale_sources_follow_web_direct_and_admin_precedence(self):
+        conversation = SimpleNamespace(locale="ru", locale_source="web")
+        self.assertEqual(inbox.apply_direct_default_locale(conversation), "uz")
+        self.assertEqual(conversation.locale_source, "direct_default")
+
+        conversation.locale = "ru"
+        conversation.locale_source = "admin"
+        self.assertEqual(inbox.apply_direct_default_locale(conversation), "ru")
+        self.assertEqual(conversation.locale_source, "admin")
+
+        inbox.apply_web_locale(conversation, "en")
+        self.assertEqual((conversation.locale, conversation.locale_source), ("en", "web"))
+
+    async def test_admin_locale_selector_marks_the_locale_as_an_override(self):
+        conversation = SimpleNamespace(
+            id="conversation-1", locale="uz", locale_source="direct_default"
+        )
+        session = SimpleNamespace(
+            scalar=AsyncMock(return_value=conversation), commit=AsyncMock()
+        )
+        with (
+            patch.object(telegram_inbox_router, "audit", new_callable=AsyncMock),
+            patch.object(
+                telegram_inbox_router,
+                "_conversation_order_context",
+                new_callable=AsyncMock,
+                return_value=("inquiry", 0, None, []),
+            ),
+            patch.object(telegram_inbox_router, "_conversation_payload", return_value={}),
+        ):
+            await telegram_inbox_router.update_conversation(
+                "conversation-1",
+                telegram_inbox_router.ConversationUpdateIn(locale="ru"),
+                SimpleNamespace(id="admin-1"),
+                session,
+                None,
+            )
+        self.assertEqual((conversation.locale, conversation.locale_source), ("ru", "admin"))
 
     async def test_business_message_edit_updates_existing_transcript_row(self):
         connection = SimpleNamespace(
