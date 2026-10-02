@@ -128,6 +128,7 @@ def make_snapshot(cart: dict, locale: str) -> dict:
                 "_cart_product_id": str(source.get("product_id") or "")[:32],
                 "_cart_variant_id": str(source.get("variant_id") or "")[:32],
                 "variant": variant[:255],
+                "option_values": dict(options) if isinstance(options, dict) else {},
                 "sku": str(source.get("sku") or "")[:80],
                 "quantity": int(source.get("quantity") or 0),
                 "unit_price": int(source.get("unit_price") or 0),

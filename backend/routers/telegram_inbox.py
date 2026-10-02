@@ -1199,6 +1199,7 @@ async def add_conversation_candidates_to_pending_orders(
                 "unit_price": unit_price,
                 "line_total": line_total,
                 "variant": _option_label(candidate.option_values or {}),
+                "option_values": candidate.option_values or {},
                 "image_url": candidate.image_url,
                 "availability": "pre_order",
                 "_candidate_id": candidate.id,

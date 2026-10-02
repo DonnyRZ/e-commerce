@@ -7,6 +7,7 @@ import { createAdminOrderFromInquiry, getAdminTelegramInquiry } from "@/lib/api"
 import { Skeleton } from "@/components/ui/skeleton";
 import { fmtDate, fmtMoney } from "./adminUtils";
 import { OrderProgress } from "./OrderProgress";
+import { countOrderItemUnits, formatOrderItemOptions } from "./orderItemUtils";
 
 const fieldClass = "h-11 w-full border border-neutral-300 bg-white px-3 text-sm outline-none focus:border-[#02422C] focus:ring-1 focus:ring-[#02422C]";
 
@@ -59,6 +60,7 @@ export default function AdminInquiryDetailPage() {
 
   const items = inquiry.snapshot?.items || [];
   const subtotal = Number(inquiry.subtotal) || 0;
+  const unitCount = countOrderItemUnits(items);
   const shippingAmount = Number(form.shippingAmount) || 0;
   const grandTotal = subtotal + shippingAmount;
 
@@ -98,9 +100,10 @@ export default function AdminInquiryDetailPage() {
                 <div key={item.sku} className="flex items-center justify-between gap-4 px-5 py-4">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-neutral-900">{item.name}</p>
-                    <p className="mt-1 text-xs text-neutral-500">{item.sku} · {item.quantity} item</p>
+                    {formatOrderItemOptions(item) ? <p className="mt-1 text-sm font-semibold text-[#02422C]" data-testid={`inquiry-item-options-${item.sku}`}>{formatOrderItemOptions(item)}</p> : null}
+                    <p className="mt-1 text-xs text-neutral-500">SKU: {item.sku} · Jumlah: {item.quantity} unit · {fmtMoney(item.unit_price, inquiry.currency)} / unit</p>
                   </div>
-                  <span className="shrink-0 text-sm font-semibold text-[#02422C]">{fmtMoney(item.line_total || item.unit_price || 0, inquiry.currency)}</span>
+                  <span className="shrink-0 text-sm font-semibold text-[#02422C]">{fmtMoney(item.line_total ?? item.unit_price ?? 0, inquiry.currency)}</span>
                 </div>
               ))}
             </div>
@@ -112,7 +115,7 @@ export default function AdminInquiryDetailPage() {
               <h2 className="text-sm font-semibold text-[#02422C]">Ringkasan pembayaran</h2>
             </div>
             <div className="mt-4 space-y-3 text-sm">
-              <div className="flex justify-between gap-3"><span className="text-neutral-600">{inquiry.item_count} item · Subtotal</span><span>{fmtMoney(subtotal, inquiry.currency)}</span></div>
+              <div className="flex justify-between gap-3"><span className="text-neutral-600">{items.length} jenis produk · {unitCount} unit · Subtotal</span><span>{fmtMoney(subtotal, inquiry.currency)}</span></div>
               <div className="flex justify-between gap-3"><span className="text-neutral-600">Ongkir</span><span>{fmtMoney(shippingAmount, inquiry.currency)}</span></div>
               <div className="flex justify-between gap-3 border-t border-[#CD9B3A]/30 pt-3 font-semibold"><span>Total transfer</span><span className="text-[#02422C]">{fmtMoney(grandTotal, inquiry.currency)}</span></div>
             </div>

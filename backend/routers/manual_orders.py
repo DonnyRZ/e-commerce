@@ -257,6 +257,17 @@ def _workflow_page(entries: list[dict], stage: Optional[str], page: int, page_si
     return matching[start:start + page_size], total, effective_page
 
 
+def _snapshot_unit_count(items: list[dict]) -> int:
+    return sum(
+        quantity
+        for item in items
+        if isinstance(item, dict)
+        and isinstance((quantity := item.get("quantity")), int)
+        and not isinstance(quantity, bool)
+        and quantity > 0
+    )
+
+
 def _customer_name(user: Optional[User], address: dict) -> str:
     recipient = str(address.get("recipient_name") or "").strip()
     if recipient:
@@ -967,6 +978,7 @@ async def get_telegram_inquiry(
             "username": conversation.customer_username if conversation else None,
         },
         "item_count": len(items),
+        "unit_count": _snapshot_unit_count(items),
         "subtotal": snapshot.get("subtotal", 0),
         "currency": snapshot.get("currency", "UZS"),
         "snapshot": snapshot,
@@ -1119,6 +1131,7 @@ async def list_order_workflow(
                         "city": None,
                     },
                     "item_count": len(snapshot_items),
+                    "unit_count": _snapshot_unit_count(snapshot_items),
                     "subtotal": snapshot.get("subtotal", 0),
                     "grand_total": snapshot.get("subtotal", 0),
                     "currency": snapshot.get("currency", "UZS"),
@@ -1334,6 +1347,30 @@ async def create_manual_order(
     if len(variants) != len(skus):
         raise _error(409, "catalog_item_missing")
 
+    candidate_ids = []
+    candidates_by_id = {}
+    if inquiry_source == "telegram_inbox":
+        candidate_ids = snapshot.get("_candidate_ids") or [
+            item.get("_candidate_id") for item in snapshot_items
+            if isinstance(item, dict) and item.get("_candidate_id")
+        ]
+        if candidate_ids:
+            candidate_query = select(TelegramProductCandidate).where(
+                TelegramProductCandidate.id.in_(candidate_ids),
+                TelegramProductCandidate.status == "pending_order",
+                TelegramProductCandidate.order_id.is_(None),
+            )
+            if getattr(inquiry, "conversation_id", None):
+                candidate_query = candidate_query.where(
+                    TelegramProductCandidate.conversation_id == inquiry.conversation_id
+                )
+            candidates = (
+                await session.execute(candidate_query.with_for_update())
+            ).scalars().all()
+            if getattr(inquiry, "conversation_id", None) and len(candidates) != len(set(candidate_ids)):
+                raise _error(409, "pending_order_candidate_unavailable")
+            candidates_by_id = {candidate.id: candidate for candidate in candidates}
+
     subtotal = 0
     order_lines = []
     for raw in snapshot_items:
@@ -1355,7 +1392,20 @@ async def create_manual_order(
         )
         line_total = int(unit_price) * quantity
         subtotal += line_total
-        order_lines.append((raw, product, variant, unit_price, line_total, quantity))
+        candidate = candidates_by_id.get(raw.get("_candidate_id"))
+        if isinstance(raw.get("option_values"), dict):
+            option_values = raw["option_values"]
+        elif candidate and isinstance(getattr(candidate, "option_values", None), dict):
+            # Older Inbox inquiries only stored a text label in their snapshot.
+            # The candidate retains the exact options previously confirmed.
+            option_values = getattr(candidate, "option_values", None) or {}
+        elif isinstance(raw.get("variant"), str):
+            # Preserve legacy web inquiry variants even if the live catalog has
+            # since been edited. The original string cannot safely be parsed.
+            option_values = {"Variant": raw["variant"]} if raw["variant"].strip() else {}
+        else:
+            option_values = variant.option_values or {}
+        order_lines.append((raw, product, variant, unit_price, line_total, quantity, option_values))
 
     order_number = f"MC-{uuid.uuid4().hex[:10].upper()}"
     linked_user = await session.get(User, inquiry.user_id) if inquiry.user_id else None
@@ -1384,7 +1434,7 @@ async def create_manual_order(
     )
     session.add(order)
     await session.flush()
-    for raw, product, variant, unit_price, line_total, quantity in order_lines:
+    for raw, product, variant, unit_price, line_total, quantity, option_values in order_lines:
         session.add(
             OrderItem(
                 order_id=order.id,
@@ -1393,7 +1443,7 @@ async def create_manual_order(
                 seller_id=product.seller_id,
                 sku=variant.sku,
                 product_name=str(raw.get("name") or product.slug)[:255],
-                option_values=variant.option_values or {},
+                option_values=option_values,
                 image_url=raw.get("image_url"),
                 unit_price=unit_price,
                 quantity=quantity,
@@ -1401,28 +1451,9 @@ async def create_manual_order(
             )
         )
     if inquiry_source == "telegram_inbox":
-        candidate_ids = snapshot.get("_candidate_ids") or [
-            item.get("_candidate_id") for item in snapshot_items
-            if isinstance(item, dict) and item.get("_candidate_id")
-        ]
-        if candidate_ids:
-            candidate_query = select(TelegramProductCandidate).where(
-                TelegramProductCandidate.id.in_(candidate_ids),
-                TelegramProductCandidate.status == "pending_order",
-                TelegramProductCandidate.order_id.is_(None),
-            )
-            if getattr(inquiry, "conversation_id", None):
-                candidate_query = candidate_query.where(
-                    TelegramProductCandidate.conversation_id == inquiry.conversation_id
-                )
-            candidates = (
-                await session.execute(candidate_query.with_for_update())
-            ).scalars().all()
-            if getattr(inquiry, "conversation_id", None) and len(candidates) != len(set(candidate_ids)):
-                raise _error(409, "pending_order_candidate_unavailable")
-            for candidate in candidates:
-                candidate.status = "ordered"
-                candidate.order_id = order.id
+        for candidate in candidates_by_id.values():
+            candidate.status = "ordered"
+            candidate.order_id = order.id
     payment = Payment(
         order_id=order.id,
         provider="manual_transfer",
