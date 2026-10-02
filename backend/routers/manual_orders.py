@@ -119,6 +119,7 @@ ORDER_STAGES = {
     "customer_shipping": {"from": "received_by_admin", "to": "customer_shipping"},
     "delivered": {"from": "customer_shipping", "to": "delivered"},
 }
+SHIPPING_DOCUMENT_STAGES = {"supplier_shipping", "customer_shipping"}
 ORDER_NOTIFICATION_LABELS = {
     "supplier_shipping": "Barang dikirim menuju admin",
     "received_by_admin": "Barang diterima admin",
@@ -1924,7 +1925,7 @@ async def update_manual_fulfillment(
     )
     if payload.stage not in ORDER_STAGES:
         raise _error(422, "invalid_fulfillment_stage")
-    if document_data and payload.stage != "customer_shipping":
+    if document_data and payload.stage not in SHIPPING_DOCUMENT_STAGES:
         raise _error(422, "shipping_document_stage_not_supported")
     order = await _load_admin_order(order_number, session)
     transition = ORDER_STAGES[payload.stage]

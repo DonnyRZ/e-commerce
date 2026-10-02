@@ -341,7 +341,7 @@ export default function AdminOrderDetailPage() {
         shipping_document_too_large: "Ukuran dokumen resi maksimal 8 MB.",
         empty_shipping_document: "Dokumen resi kosong. Pilih file lain.",
         shipping_document_content_mismatch: "Isi file tidak sesuai dengan formatnya.",
-        shipping_document_stage_not_supported: "Dokumen resi hanya dapat ditambahkan saat pengiriman ke customer.",
+        shipping_document_stage_not_supported: "Dokumen resi hanya dapat ditambahkan saat supplier atau admin mengirim barang.",
       };
       toast.error(messages[code] || "Perubahan order gagal. Periksa koneksi lalu coba lagi.");
       return null;
@@ -454,7 +454,7 @@ export default function AdminOrderDetailPage() {
       tracking_number: tracking_number || undefined,
       note: note || undefined,
     };
-    if (nextStage === "customer_shipping" && selectedShippingDocument) {
+    if (["supplier_shipping", "customer_shipping"].includes(nextStage) && selectedShippingDocument) {
       payload.document = selectedShippingDocument;
     }
     const saved = await run(
@@ -521,9 +521,9 @@ export default function AdminOrderDetailPage() {
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <input disabled={busy || isArchived} className="h-10 border border-neutral-300 bg-white px-3 text-sm disabled:bg-neutral-100" placeholder="Carrier (opsional)" id="fulfillment-carrier" />
                 <input disabled={busy || isArchived} className="h-10 border border-neutral-300 bg-white px-3 text-sm disabled:bg-neutral-100" placeholder="Nomor resi (opsional)" id="fulfillment-tracking" />
-                {nextStage === "customer_shipping" ? <div className="flex min-w-0 items-center gap-2 sm:col-span-2" data-testid="shipping-document-upload">
+                {["supplier_shipping", "customer_shipping"].includes(nextStage) ? <div className="flex min-w-0 items-center gap-2 sm:col-span-2" data-testid="shipping-document-upload" data-shipping-stage={nextStage}>
                   <input ref={shippingDocumentRef} type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" className="sr-only" disabled={busy || isArchived} onChange={(event) => { handleShippingDocumentSelect(event.target.files?.[0]); }} data-testid="shipping-document-input" />
-                  <button type="button" disabled={busy || isArchived} onClick={() => shippingDocumentRef.current?.click()} className="inline-flex h-9 shrink-0 items-center gap-1.5 border border-neutral-300 bg-white px-3 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50" data-testid="shipping-document-select"><Paperclip className="h-3.5 w-3.5" aria-hidden="true" />{selectedShippingDocument ? "Ganti resi" : "Upload resi"}</button>
+                  <button type="button" disabled={busy || isArchived} onClick={() => shippingDocumentRef.current?.click()} className="inline-flex h-9 shrink-0 items-center gap-1.5 border border-neutral-300 bg-white px-3 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50" data-testid="shipping-document-select" aria-label={nextStage === "supplier_shipping" ? "Upload resi dari supplier ke admin" : "Upload resi dari admin ke customer"}><Paperclip className="h-3.5 w-3.5" aria-hidden="true" />{selectedShippingDocument ? "Ganti resi" : nextStage === "supplier_shipping" ? "Resi supplier → admin" : "Resi admin → customer"}</button>
                   {selectedShippingDocument ? <><span className="min-w-0 flex-1 truncate text-xs text-neutral-600" title={selectedShippingDocument.name}>{selectedShippingDocument.name}</span><button type="button" disabled={busy || isArchived} onClick={clearSelectedShippingDocument} className="inline-flex h-9 w-9 shrink-0 items-center justify-center text-neutral-500 hover:bg-neutral-100 disabled:opacity-50" aria-label="Hapus dokumen resi" title="Hapus resi" data-testid="shipping-document-clear"><X className="h-4 w-4" aria-hidden="true" /></button></> : <span className="truncate text-[11px] text-neutral-400">JPG, PNG, WebP, atau PDF · maks. 8 MB</span>}
                 </div> : null}
                 <input disabled={busy || isArchived} className="h-10 border border-neutral-300 bg-white px-3 text-sm disabled:bg-neutral-100 sm:col-span-2" placeholder="Catatan internal (opsional)" id="fulfillment-note" />
