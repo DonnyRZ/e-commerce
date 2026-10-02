@@ -142,6 +142,7 @@ async def _expire_old_snapshots(session: AsyncSession) -> None:
     await session.execute(
         update(TelegramCartInquiry)
         .where(
+            TelegramCartInquiry.source == "web",
             TelegramCartInquiry.expires_at <= now,
             TelegramCartInquiry.status.in_(["pending", "sending", "sent", "unknown"]),
         )
@@ -297,7 +298,7 @@ async def inquiry_status(reference: str, request: Request, guest: bool = False,
     if not row:
         raise HTTPException(status_code=404, detail="inquiry_not_found")
     state = row.status
-    if row.expires_at <= utcnow() and state != "order_created":
+    if row.expires_at and row.expires_at <= utcnow() and state != "order_created":
         state = "expired"
     elif state == "sending" and time.time() - (row.snapshot or {}).get("_delivery", {}).get("started", 0) >= 300:
         state = "unknown"
@@ -487,7 +488,12 @@ async def _handle_business_message(session: AsyncSession, message: dict, update_
     if not inquiry:
         logger.info("inquiry ignored: reference_not_found")
         return
-    if inquiry.status == "expired" or inquiry.expires_at <= utcnow():
+    if getattr(inquiry, "source", "web") != "web":
+        logger.info("inquiry ignored: not_a_web_cart_reference")
+        return
+    if inquiry.status == "expired" or (
+        inquiry.expires_at is not None and inquiry.expires_at <= utcnow()
+    ):
         locale = inquiry.locale
         if inquiry.status != "expired":
             inquiry.status = "expired"
@@ -571,9 +577,10 @@ async def _handle_business_message(session: AsyncSession, message: dict, update_
         raise
     inquiry.status = "sent"
     inquiry.delivered_at = utcnow()
-    await _remove_submitted_cart_quantities(
-        session, inquiry.cart_id, snapshot.get("items", [])
-    )
+    if inquiry.cart_id:
+        await _remove_submitted_cart_quantities(
+            session, inquiry.cart_id, snapshot.get("items", [])
+        )
     await session.commit()
 
 

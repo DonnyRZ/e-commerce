@@ -70,7 +70,7 @@ export default function AdminInquiryDetailPage() {
       <header className="mt-5">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#CD9B3A]">Telegram inquiry</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight text-[#02422C]">Buat order manual</h1>
-        <p className="mt-2 text-sm text-neutral-600">Lengkapi data penerima dan ongkir. Setelah dibuat, customer menerima pilihan bank di Telegram.</p>
+        <p className="mt-2 text-sm text-neutral-600">{inquiry.customer?.name ? <>Customer: {inquiry.customer.name}{inquiry.customer.username ? ` (@${inquiry.customer.username})` : ""}. </> : null}Lengkapi data penerima dan ongkir. Setelah dibuat, customer menerima pilihan bank di Telegram.</p>
       </header>
 
       <OrderProgress currentStage="inquiry" className="mt-6 rounded border border-[#CD9B3A]/30 bg-[#FDF7E9] p-4" />

@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -23,11 +23,14 @@ from order_workflow import (  # noqa: E402
     workflow_stage_for_status,
 )  # noqa: E402
 from routers.manual_orders import _workflow_stage  # noqa: E402
+from routers import telegram_inbox as telegram_inbox_router  # noqa: E402
 from routers.telegram_inbox import (  # noqa: E402
     _conversation_stage_cte,
     _conversation_order_context,
     _cursor_decode,
     _cursor_encode,
+    InboxPendingOrderCreateIn,
+    add_conversation_candidates_to_pending_orders,
     list_conversations,
 )  # noqa: E402
 
@@ -44,6 +47,138 @@ class FakeResult:
 
 
 class TelegramInboxWorkflowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_confirmed_inbox_candidates_are_queued_as_pending_order(self):
+        conversation = SimpleNamespace(
+            id="conversation-1",
+            connection_id="connection-1",
+            chat_id=123,
+            locale="uz",
+            customer_name="Customer One",
+            customer_username="customerone",
+            status="ready_for_order",
+            last_message_at=None,
+        )
+        candidate = SimpleNamespace(
+            id="candidate-1",
+            status="confirmed",
+            order_id=None,
+            product_id="product-1",
+            variant_id="variant-1",
+            sku="SKU-1",
+            quantity=2,
+            product_name="Product One",
+            option_values={"Size": "M"},
+            image_url=None,
+        )
+        product = SimpleNamespace(
+            id="product-1",
+            status="active",
+            is_demo=False,
+            category_id="category-1",
+            currency="UZS",
+            seller_id="seller-1",
+            base_price=10000,
+        )
+        variant = SimpleNamespace(
+            id="variant-1",
+            product_id="product-1",
+            is_active=True,
+            sale_price_override=None,
+            price_override=None,
+            sku="SKU-1",
+            option_values={"Size": "M"},
+        )
+        category = SimpleNamespace(id="category-1")
+        events = []
+        added = []
+
+        def add(row):
+            added.append(row)
+
+        async def get(model, _row_id):
+            return {
+                telegram_inbox_router.Product: product,
+                telegram_inbox_router.ProductVariant: variant,
+                telegram_inbox_router.Category: category,
+            }.get(model)
+
+        async def commit():
+            events.append("commit")
+
+        session = SimpleNamespace(
+            scalar=AsyncMock(return_value=None),
+            execute=AsyncMock(return_value=FakeResult([candidate])),
+            get=AsyncMock(side_effect=get),
+            add=add,
+            flush=AsyncMock(),
+            commit=AsyncMock(side_effect=commit),
+            rollback=AsyncMock(),
+        )
+
+        payload = InboxPendingOrderCreateIn(
+            candidate_ids=[candidate.id],
+        )
+        with (
+            patch.object(
+                telegram_inbox_router,
+                "_load_conversation",
+                new=AsyncMock(return_value=conversation),
+            ),
+            patch.object(telegram_inbox_router, "audit", new=AsyncMock()),
+        ):
+            result = await add_conversation_candidates_to_pending_orders(
+                "conversation-1",
+                payload,
+                user=SimpleNamespace(id="admin-1"),
+                session=session,
+                idempotency_key="inbox-pending-test-001",
+            )
+
+        inquiry = next(row for row in added if isinstance(row, telegram_inbox_router.TelegramCartInquiry))
+        self.assertEqual(result["reference"], inquiry.reference)
+        self.assertEqual(result["status"], "pending_order")
+        self.assertEqual(events, ["commit"])
+        self.assertIsNone(inquiry.order_id)
+        self.assertEqual(inquiry.source, "telegram_inbox")
+        self.assertEqual(inquiry.conversation_id, conversation.id)
+        self.assertEqual(inquiry.snapshot["items"][0]["sku"], candidate.sku)
+        self.assertEqual(candidate.status, "pending_order")
+        self.assertIsNone(candidate.order_id)
+        self.assertEqual(conversation.status, "waiting_customer")
+
+    async def test_pending_order_retry_returns_existing_inquiry_before_candidate_check(self):
+        conversation = SimpleNamespace(id="conversation-1")
+        existing = SimpleNamespace(
+            reference="SC-EXISTING1",
+            status="sent",
+        )
+        session = SimpleNamespace(
+            scalar=AsyncMock(return_value=existing),
+            execute=AsyncMock(),
+        )
+        payload = InboxPendingOrderCreateIn(candidate_ids=["candidate-already-queued"])
+        with patch.object(
+            telegram_inbox_router,
+            "_load_conversation",
+            new=AsyncMock(return_value=conversation),
+        ):
+            result = await add_conversation_candidates_to_pending_orders(
+                "conversation-1",
+                payload,
+                user=SimpleNamespace(id="admin-1"),
+                session=session,
+                idempotency_key="inbox-pending-test-001",
+            )
+
+        self.assertEqual(
+            result,
+            {
+                "reference": "SC-EXISTING1",
+                "status": "pending_order",
+            },
+        )
+        session.execute.assert_not_awaited()
+
     def test_order_and_inbox_share_status_stage_mapping(self):
         statuses = {
             "pending_payment": "payment",

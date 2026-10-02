@@ -22,7 +22,7 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { ORDER_STEPS, workflowStageForStatus } from "./OrderProgress";
 import {
-  createAdminTelegramOrder,
+  addAdminTelegramCandidatesToPendingOrders,
   getAdminTelegramConversation,
   getAdminTelegramInbox,
   reviewAdminTelegramCandidate,
@@ -49,6 +49,7 @@ const STATUS_LABELS = {
   pending: "Menunggu konfirmasi",
   confirmed: "Terkonfirmasi",
   rejected: "Tidak cocok",
+  pending_order: "Pending Order",
   ordered: "Masuk order",
   send_failed: "Gagal dikirim",
   send_unknown: "Status pengiriman belum pasti",
@@ -61,8 +62,10 @@ function errorMessage(error) {
     telegram_reply_window_expired: "Batas balas bot 24 jam sudah lewat. Lanjutkan chat dari aplikasi Telegram.",
     telegram_business_reply_unavailable: "Bot tidak memiliki izin untuk membalas chat ini.",
     conversation_archived: "Buka arsip chat ini sebelum mengirim pesan.",
-    only_confirmed_candidates_can_be_ordered: "Order hanya dapat dibuat dari produk yang sudah dikonfirmasi.",
+    only_confirmed_candidates_can_be_added_to_pending_orders: "Pilih produk yang sudah dikonfirmasi customer.",
+    pending_order_creation_conflict: "Permintaan tidak dapat dimasukkan. Muat ulang chat lalu coba lagi.",
     catalog_item_unavailable: "Produk atau variannya sudah tidak aktif.",
+    mixed_currency_order_unsupported: "Produk dengan mata uang berbeda tidak bisa digabung dalam satu Pending Order.",
     candidate_delivery_unknown: "Telegram belum memberi kepastian apakah konfirmasi terkirim. Jangan kirim ulang dulu.",
   };
   return messages[code] || error?.response?.data?.detail?.error || "Tindakan gagal. Coba lagi.";
@@ -210,54 +213,15 @@ function ConversationList({ items, selectedId, onSelect, loading, loadingMore, h
   );
 }
 
-function OrderForm({ conversation, candidateIds, onClose, onCreated }) {
-  const [form, setForm] = useState({ recipient: conversation.customer_name || "", phone: "", email: "", address: "", city: "", shippingAmount: "0" });
-  const [key] = useState(() => `inbox-${crypto.randomUUID()}`);
-  const [busy, setBusy] = useState(false);
-  const update = (name, value) => setForm((current) => ({ ...current, [name]: value }));
-  const submit = async (event) => {
-    event.preventDefault();
-    if (!candidateIds.length || !form.recipient.trim() || !form.phone.trim() || !form.address.trim() || !form.city.trim()) return;
-    setBusy(true);
-    try {
-      const result = await createAdminTelegramOrder(conversation.id, {
-        candidate_ids: candidateIds,
-        guest_email: form.email.trim() || undefined,
-        shipping_method: "manual",
-        shipping_amount: Number(form.shippingAmount) || 0,
-        shipping_address: { recipient_name: form.recipient.trim(), phone: form.phone.trim(), address_line_1: form.address.trim(), city: form.city.trim(), country_code: "UZ" },
-      }, key);
-      onCreated(result);
-    } catch (error) {
-      toast.error(errorMessage(error));
-      setBusy(false);
-    }
-  };
-  return (
-    <form onSubmit={submit} className="border-t border-neutral-200 bg-[#FDFBF6] p-3" data-testid="telegram-inbox-order-form">
-      <div className="flex items-start justify-between gap-2"><div><p className="text-sm font-semibold text-[#02422C]">Data pengiriman</p><p className="mt-1 text-[10px] leading-4 text-neutral-500">Order baru dibuat setelah produk dikonfirmasi customer.</p></div><button type="button" onClick={onClose} aria-label="Tutup form order"><X className="h-4 w-4" /></button></div>
-      <div className="mt-3 space-y-2">
-        <input required className="h-9 w-full border border-neutral-300 bg-white px-2.5 text-xs" placeholder="Nama penerima *" value={form.recipient} onChange={(event) => update("recipient", event.target.value)} />
-        <input required className="h-9 w-full border border-neutral-300 bg-white px-2.5 text-xs" placeholder="Nomor telepon *" value={form.phone} onChange={(event) => update("phone", event.target.value)} />
-        <input className="h-9 w-full border border-neutral-300 bg-white px-2.5 text-xs" placeholder="Email (opsional)" value={form.email} onChange={(event) => update("email", event.target.value)} />
-        <input required className="h-9 w-full border border-neutral-300 bg-white px-2.5 text-xs" placeholder="Alamat lengkap *" value={form.address} onChange={(event) => update("address", event.target.value)} />
-        <div className="grid grid-cols-2 gap-2"><input required className="h-9 min-w-0 border border-neutral-300 bg-white px-2.5 text-xs" placeholder="Kota *" value={form.city} onChange={(event) => update("city", event.target.value)} /><input className="h-9 min-w-0 border border-neutral-300 bg-white px-2.5 text-xs" inputMode="numeric" aria-label="Ongkir UZS" placeholder="Ongkir UZS" value={form.shippingAmount} onChange={(event) => update("shippingAmount", event.target.value.replace(/[^0-9]/g, ""))} /></div>
-      </div>
-      <button type="submit" disabled={busy || !candidateIds.length} className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 bg-[#02422C] px-3 text-xs font-semibold text-white disabled:opacity-50">
-        {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ShoppingBag className="h-4 w-4" />}{busy ? "Membuat order…" : "Buat order menunggu pembayaran"}
-      </button>
-    </form>
-  );
-}
-
-function ProductWorkspace({ conversation, detail, onInvalidate, onOrderCreated, sourceMessageId, setSourceMessageId, compact = false }) {
+function ProductWorkspace({ conversation, detail, onInvalidate, onPendingOrderAdded, sourceMessageId, setSourceMessageId, compact = false }) {
   const [search, setSearch] = useState("");
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [variantId, setVariantId] = useState("");
   const [quantity, setQuantity] = useState(1);
-  const [makeOrder, setMakeOrder] = useState(false);
   const [selectedCandidates, setSelectedCandidates] = useState([]);
   const [sending, setSending] = useState(false);
+  const [addingPendingOrder, setAddingPendingOrder] = useState(false);
+  const pendingOrderIdempotencyKey = useRef(null);
   const selectedCandidatesInitialized = useRef(false);
   const previousConfirmedCandidates = useRef([]);
   const { data, isFetching } = useQuery({
@@ -307,9 +271,23 @@ function ProductWorkspace({ conversation, detail, onInvalidate, onOrderCreated, 
       toast.error(errorMessage(error));
     }
   };
-  const onCreated = (result) => {
-    toast.success(`Order ${result.order_number} berhasil dibuat.`);
-    onOrderCreated(result);
+  const addToPendingOrders = async () => {
+    if (!selectedCandidates.length || addingPendingOrder) return;
+    setAddingPendingOrder(true);
+    try {
+      pendingOrderIdempotencyKey.current ||= `inbox-${crypto.randomUUID()}`;
+      const result = await addAdminTelegramCandidatesToPendingOrders(
+        conversation.id,
+        { candidate_ids: selectedCandidates },
+        pendingOrderIdempotencyKey.current,
+      );
+      toast.success("Permintaan masuk ke Pending Order. Lengkapi data customer di halaman Orders.");
+      onPendingOrderAdded(result);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setAddingPendingOrder(false);
+    }
   };
 
   return (
@@ -349,13 +327,13 @@ function ProductWorkspace({ conversation, detail, onInvalidate, onOrderCreated, 
                 <p className="mt-1 text-[10px] text-neutral-500">{candidate.sku} · qty {candidate.quantity}{candidate.option_values && Object.keys(candidate.option_values).length ? ` · ${Object.values(candidate.option_values).join(" / ")}` : ""}</p>
                 {candidate.status === "confirmed" ? <p className="mt-1 text-[10px] text-emerald-700">Dikonfirmasi oleh {candidate.confirmation_source === "customer" ? "customer di Telegram" : "admin setelah verifikasi chat"}</p> : null}
                 {["pending", "send_unknown"].includes(candidate.status) ? <div className="mt-2 rounded bg-amber-50 p-2 text-[10px] leading-4 text-amber-900"><p>{candidate.status === "send_unknown" ? "Status kirim tidak pasti. Cek chat Telegram dahulu; jika customer membalas teks, verifikasi lalu catat hasilnya." : "Jika customer menjawab lewat teks, verifikasi jawabannya lalu catat di sini."}</p><div className="mt-2 flex flex-wrap gap-2"><button type="button" onClick={() => reviewCandidate(candidate, "confirmed")} className="inline-flex min-h-11 items-center gap-1 rounded bg-[#02422C] px-3 text-white"><CheckCircle2 className="h-3 w-3" />Konfirmasi</button><button type="button" onClick={() => reviewCandidate(candidate, "rejected")} className="inline-flex min-h-11 items-center gap-1 rounded border border-amber-300 bg-white px-3 text-amber-900"><X className="h-3 w-3" />Tidak cocok</button></div></div> : null}
-                {candidate.status === "confirmed" ? <label className="mt-2 flex items-center gap-2 text-[10px] text-neutral-600"><input type="checkbox" checked={selectedCandidates.includes(candidate.id)} onChange={(event) => setSelectedCandidates((current) => event.target.checked ? [...current, candidate.id] : current.filter((id) => id !== candidate.id))} />Masukkan ke order</label> : null}
+                {candidate.status === "confirmed" ? <label className="mt-2 flex items-center gap-2 text-[10px] text-neutral-600"><input type="checkbox" checked={selectedCandidates.includes(candidate.id)} onChange={(event) => setSelectedCandidates((current) => event.target.checked ? [...current, candidate.id] : current.filter((id) => id !== candidate.id))} />Pilih untuk Pending Order</label> : null}
+                {candidate.status === "pending_order" ? <p className="mt-2 text-[10px] text-amber-700">Menunggu dilengkapi di Orders.</p> : null}
               </div>
             ))}
           </div>
-          {confirmed.length ? <button type="button" onClick={() => setMakeOrder((value) => !value)} disabled={!selectedCandidates.length} className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 border border-[#145A46] text-xs font-semibold text-[#145A46] disabled:opacity-40"><ShoppingBag className="h-4 w-4" />{makeOrder ? "Tutup form order" : `Buat order (${selectedCandidates.length} produk)`}</button> : null}
+          {confirmed.length ? <button type="button" onClick={addToPendingOrders} disabled={!selectedCandidates.length || addingPendingOrder} className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 bg-[#02422C] px-3 text-xs font-semibold text-white disabled:opacity-40" data-testid="add-telegram-candidates-to-pending-orders">{addingPendingOrder ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ShoppingBag className="h-4 w-4" />}{addingPendingOrder ? "Memasukkan…" : `Masukkan ke Pending Order (${selectedCandidates.length} produk)`}</button> : null}
         </div>
-        {makeOrder ? <OrderForm conversation={conversation} candidateIds={selectedCandidates} onClose={() => setMakeOrder(false)} onCreated={onCreated} /> : null}
       </div>
     </section>
   );
@@ -470,11 +448,11 @@ export default function AdminTelegramInboxPage() {
       setSending(false);
     }
   };
-  const handleOrderCreated = (result) => {
+  const handlePendingOrderAdded = () => {
     setSelectedId(null);
     setMobileThread(false);
     queryClient.invalidateQueries({ queryKey: ["admin-telegram-inbox"] });
-    window.location.assign(`/admin/orders/${result.order_number}`);
+    window.location.assign("/admin/orders?stage=inquiry");
   };
   const setConversationStatus = async (status) => {
     try {
@@ -548,7 +526,7 @@ export default function AdminTelegramInboxPage() {
           <div className="hidden flex-1 flex-col items-center justify-center bg-[#FAFBFA] px-8 text-center lg:flex">
             <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#EAF3EF]"><MessageCircle className="h-6 w-6 text-[#145A46]" /></div>
             <h2 className="mt-4 text-base font-semibold text-[#02422C]">Pilih percakapan</h2>
-            <p className="mt-1 max-w-sm text-xs leading-5 text-neutral-500">Chat baru yang diterima Telegram Business akan muncul di sini. Admin bisa bantu customer mencari produk dan membuat order secara manual.</p>
+            <p className="mt-1 max-w-sm text-xs leading-5 text-neutral-500">Chat baru yang diterima Telegram Business akan muncul di sini. Setelah customer mengonfirmasi produk, masukkan permintaannya ke Pending Order untuk melengkapi data di Orders.</p>
           </div>
         ) : null}
         {selectedId ? (
@@ -593,12 +571,12 @@ export default function AdminTelegramInboxPage() {
               ) : (
                 <div className="border-t border-amber-200 bg-amber-50 px-3 py-3 text-[11px] leading-5 text-amber-900"><div className="flex gap-2"><ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" /><p>{detail.status === "archived" ? "Chat ini diarsipkan. Buka kembali untuk melanjutkan dari Inbox." : "Batas balas bot 24 jam telah lewat atau izin Business tidak tersedia. Lanjutkan percakapan dari aplikasi Telegram."}</p></div></div>
               )}
-              <div className="border-t border-neutral-200 bg-white p-2 lg:hidden"><button type="button" onClick={() => setProductPanelOpen((value) => !value)} className="flex min-h-11 w-full items-center justify-center gap-2 text-sm font-semibold text-[#145A46]"><PackageSearch className="h-4 w-4" />{productPanelOpen ? "Tutup panel produk" : "Cari produk / buat order"}</button></div>
-              {productPanelOpen ? <div className="max-h-[55vh] overflow-y-auto lg:hidden"><ProductWorkspace conversation={detail} detail={detail} onInvalidate={invalidate} onOrderCreated={handleOrderCreated} sourceMessageId={sourceMessageId} setSourceMessageId={setSourceMessageId} compact /></div> : null}
+              <div className="border-t border-neutral-200 bg-white p-2 lg:hidden"><button type="button" onClick={() => setProductPanelOpen((value) => !value)} className="flex min-h-11 w-full items-center justify-center gap-2 text-sm font-semibold text-[#145A46]"><PackageSearch className="h-4 w-4" />{productPanelOpen ? "Tutup panel produk" : "Cari produk / Pending Order"}</button></div>
+              {productPanelOpen ? <div className="max-h-[55vh] overflow-y-auto lg:hidden"><ProductWorkspace conversation={detail} detail={detail} onInvalidate={invalidate} onPendingOrderAdded={handlePendingOrderAdded} sourceMessageId={sourceMessageId} setSourceMessageId={setSourceMessageId} compact /></div> : null}
             </>}
           </section>
         ) : null}
-        {selectedId && detail ? <div className="hidden min-h-0 lg:col-start-3 lg:col-end-4 lg:flex"><ProductWorkspace conversation={detail} detail={detail} onInvalidate={invalidate} onOrderCreated={handleOrderCreated} sourceMessageId={sourceMessageId} setSourceMessageId={setSourceMessageId} /></div> : null}
+        {selectedId && detail ? <div className="hidden min-h-0 lg:col-start-3 lg:col-end-4 lg:flex"><ProductWorkspace conversation={detail} detail={detail} onInvalidate={invalidate} onPendingOrderAdded={handlePendingOrderAdded} sourceMessageId={sourceMessageId} setSourceMessageId={setSourceMessageId} /></div> : null}
       </div>
     </div>
   );

@@ -68,7 +68,7 @@ jest.mock("react-router-dom", () => ({
   Link: ({ children, to }) => <a href={to}>{children}</a>,
 }), { virtual: true });
 jest.mock("@/lib/api", () => ({
-  createAdminTelegramOrder: jest.fn(),
+  addAdminTelegramCandidatesToPendingOrders: jest.fn(),
   getAdminTelegramConversation: jest.fn(),
   getAdminTelegramInbox: jest.fn(),
   reviewAdminTelegramCandidate: jest.fn(),
@@ -88,6 +88,7 @@ beforeEach(() => {
   inboxQueryOptions = null;
   mockSelectedId = null;
   mockConversation.messages = [];
+  mockConversation.candidates = [];
   mockQueryClient.invalidateQueries.mockReset();
   Element.prototype.scrollIntoView = jest.fn();
   container = document.createElement("div");
@@ -146,6 +147,27 @@ test("shows a conversation once with related orders linked from the selected thr
     "/admin/orders/MC-LATEST-1",
     "/admin/orders/MC-OLDER-1",
   ]);
+});
+
+test("confirmed product requests move to Pending Orders without customer data fields in Inbox", async () => {
+  mockConversation.candidates = [{
+    id: "candidate-confirmed-1",
+    product_name: "Product One",
+    sku: "SKU-1",
+    quantity: 1,
+    status: "confirmed",
+    confirmation_source: "customer",
+  }];
+
+  await act(async () => root.render(<AdminTelegramInboxPage />));
+  await act(async () => container.querySelector('[data-testid="telegram-conversation-conversation-1"]').click());
+
+  expect(container.querySelector('[data-testid="add-telegram-candidates-to-pending-orders"]').textContent)
+    .toContain("Masukkan ke Pending Order");
+  expect(container.textContent).toContain("Pilih untuk Pending Order");
+  expect(container.querySelector('[data-testid="telegram-inbox-order-form"]')).toBeNull();
+  expect(container.querySelector('input[placeholder="Nomor telepon *"]')).toBeNull();
+  expect(container.querySelector('input[placeholder="Alamat lengkap *"]')).toBeNull();
 });
 
 test("renders the cart response as one safe carousel and lets the admin navigate its products", async () => {

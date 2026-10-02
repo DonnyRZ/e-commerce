@@ -942,18 +942,29 @@ async def get_telegram_inquiry(
             select(Order.order_number).where(Order.id == inquiry.order_id)
         )
     linked_user = await session.get(User, inquiry.user_id) if inquiry.user_id else None
+    conversation = (
+        await session.get(TelegramConversation, inquiry.conversation_id)
+        if inquiry.conversation_id
+        else None
+    )
     snapshot = inquiry.snapshot or {}
     items = snapshot.get("items") or []
     return {
         "reference": inquiry.reference,
+        "source": inquiry.source,
         "status": inquiry.status,
         "created_at": inquiry.created_at,
         "expires_at": inquiry.expires_at,
         "order_id": inquiry.order_id,
         "order_number": order_number,
         "customer": {
-            "name": _customer_name(linked_user, {}),
+            "name": (
+                conversation.customer_name
+                if conversation and conversation.customer_name
+                else _customer_name(linked_user, {})
+            ),
             "email": linked_user.email if linked_user else None,
+            "username": conversation.customer_username if conversation else None,
         },
         "item_count": len(items),
         "subtotal": snapshot.get("subtotal", 0),
@@ -980,6 +991,43 @@ async def permanently_delete_admin_telegram_inquiry(
         raise _error(409, "inquiry_already_converted")
 
     snapshot = inquiry.snapshot if isinstance(inquiry.snapshot, dict) else {}
+    inquiry_source = getattr(inquiry, "source", "web")
+    if inquiry_source == "telegram_inbox":
+        candidate_ids = snapshot.get("_candidate_ids") or [
+            item.get("_candidate_id") for item in snapshot.get("items", [])
+            if isinstance(item, dict) and item.get("_candidate_id")
+        ]
+        if candidate_ids:
+            candidate_query = select(TelegramProductCandidate).where(
+                TelegramProductCandidate.id.in_(candidate_ids),
+                TelegramProductCandidate.status == "pending_order",
+                TelegramProductCandidate.order_id.is_(None),
+            )
+            if inquiry.conversation_id:
+                candidate_query = candidate_query.where(
+                    TelegramProductCandidate.conversation_id == inquiry.conversation_id
+                )
+            candidates = (
+                await session.execute(candidate_query.with_for_update())
+            ).scalars().all()
+            for candidate in candidates:
+                candidate.status = "confirmed"
+        if getattr(inquiry, "conversation_id", None):
+            conversation = await session.get(TelegramConversation, inquiry.conversation_id)
+            if conversation and conversation.status != "archived":
+                another_pending_order = await session.scalar(
+                    select(TelegramProductCandidate.id)
+                    .where(
+                        TelegramProductCandidate.conversation_id == conversation.id,
+                        TelegramProductCandidate.status == "pending_order",
+                        TelegramProductCandidate.order_id.is_(None),
+                    )
+                    .limit(1)
+                )
+                conversation.status = (
+                    "waiting_customer" if another_pending_order else "ready_for_order"
+                )
+
     delivery = snapshot.get("_delivery") if isinstance(snapshot.get("_delivery"), dict) else {}
     try:
         delivery_age = time.time() - float(delivery.get("started", 0))
@@ -1026,7 +1074,10 @@ async def list_order_workflow(
     inquiry_query = select(TelegramCartInquiry).where(
         TelegramCartInquiry.order_id.is_(None),
         TelegramCartInquiry.status.in_(["pending", "sending", "sent", "unknown"]),
-        TelegramCartInquiry.expires_at > utcnow(),
+        or_(
+            TelegramCartInquiry.source == "telegram_inbox",
+            TelegramCartInquiry.expires_at > utcnow(),
+        ),
     )
     if q:
         inquiry_query = inquiry_query.where(
@@ -1046,6 +1097,11 @@ async def list_order_workflow(
         active_inquiries.append((inquiry, snapshot, snapshot_items))
         if selected_stage in {None, "inquiry"}:
             linked_user = await session.get(User, inquiry.user_id) if inquiry.user_id else None
+            conversation = (
+                await session.get(TelegramConversation, inquiry.conversation_id)
+                if inquiry.conversation_id
+                else None
+            )
             entries.append(
                 {
                     "kind": "inquiry",
@@ -1054,7 +1110,11 @@ async def list_order_workflow(
                     "status": inquiry.status,
                     "created_at": inquiry.created_at,
                     "customer": {
-                        "name": _customer_name(linked_user, {}),
+                        "name": (
+                            conversation.customer_name
+                            if conversation and conversation.customer_name
+                            else _customer_name(linked_user, {})
+                        ),
                         "email": linked_user.email if linked_user else None,
                         "city": None,
                     },
@@ -1231,7 +1291,12 @@ async def create_manual_order(
         order = await session.get(Order, inquiry.order_id)
         if order:
             return await _admin_order_payload(session, order)
-    if inquiry.status == "expired" or inquiry.expires_at <= utcnow():
+    inquiry_source = getattr(inquiry, "source", "web")
+    if inquiry.status == "expired" or (
+        inquiry_source == "web"
+        and inquiry.expires_at is not None
+        and inquiry.expires_at <= utcnow()
+    ):
         raise _error(409, "inquiry_expired")
     if not inquiry.telegram_chat_id or not inquiry.telegram_connection_id or inquiry.status not in ("sent", "unknown"):
         raise _error(409, "inquiry_not_received")
@@ -1308,9 +1373,14 @@ async def create_manual_order(
         payment_state="unpaid",
         status="pending_payment",
         idempotency_key=idempotency_key,
-        order_source="telegram_manual",
+        order_source=(
+            "telegram_inbox"
+            if inquiry_source == "telegram_inbox"
+            else "telegram_manual"
+        ),
         fulfillment_mode="pre_order",
         preorder_estimate_days=PREORDER_ESTIMATE_DAYS,
+        telegram_conversation_id=getattr(inquiry, "conversation_id", None),
     )
     session.add(order)
     await session.flush()
@@ -1330,6 +1400,29 @@ async def create_manual_order(
                 line_total=line_total,
             )
         )
+    if inquiry_source == "telegram_inbox":
+        candidate_ids = snapshot.get("_candidate_ids") or [
+            item.get("_candidate_id") for item in snapshot_items
+            if isinstance(item, dict) and item.get("_candidate_id")
+        ]
+        if candidate_ids:
+            candidate_query = select(TelegramProductCandidate).where(
+                TelegramProductCandidate.id.in_(candidate_ids),
+                TelegramProductCandidate.status == "pending_order",
+                TelegramProductCandidate.order_id.is_(None),
+            )
+            if getattr(inquiry, "conversation_id", None):
+                candidate_query = candidate_query.where(
+                    TelegramProductCandidate.conversation_id == inquiry.conversation_id
+                )
+            candidates = (
+                await session.execute(candidate_query.with_for_update())
+            ).scalars().all()
+            if getattr(inquiry, "conversation_id", None) and len(candidates) != len(set(candidate_ids)):
+                raise _error(409, "pending_order_candidate_unavailable")
+            for candidate in candidates:
+                candidate.status = "ordered"
+                candidate.order_id = order.id
     payment = Payment(
         order_id=order.id,
         provider="manual_transfer",

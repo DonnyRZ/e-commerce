@@ -6,7 +6,6 @@ import base64
 import json
 import re
 import secrets
-import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, Optional
 from urllib.parse import urljoin, urlparse
@@ -21,12 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import csrf_protect, require_roles
 from cms.service import audit
-from config import APP_ENV, FRONTEND_URL, TELEGRAM_BOT_TOKEN
+from config import FRONTEND_URL, TELEGRAM_BOT_TOKEN
 from db.models import (
     Category,
     Order,
-    OrderItem,
-    Payment,
     Product,
     ProductTranslation,
     ProductVariant,
@@ -87,12 +84,8 @@ class ConversationUpdateIn(BaseModel):
     status: Optional[Literal["needs_admin", "waiting_customer", "ready_for_order", "archived"]] = None
 
 
-class InboxOrderCreateIn(BaseModel):
+class InboxPendingOrderCreateIn(BaseModel):
     candidate_ids: list[str] = Field(min_length=1, max_length=50)
-    guest_email: Optional[str] = Field(default=None, max_length=255)
-    shipping_address: dict[str, Any] = Field(default_factory=dict)
-    shipping_method: str = Field(default="manual", min_length=1, max_length=80)
-    shipping_amount: int = Field(default=0, ge=0)
 
 
 def _error(status: int, code: str, **extra: Any) -> HTTPException:
@@ -680,6 +673,7 @@ async def get_conversation(
                 .where(
                     TelegramCartInquiry.telegram_connection_id == row.connection_id,
                     TelegramCartInquiry.telegram_chat_id == row.chat_id,
+                    TelegramCartInquiry.source == "web",
                     TelegramCartInquiry.reference.in_(inbound_references),
                     TelegramCartInquiry.status == "sent",
                     TelegramCartInquiry.snapshot.is_not(None),
@@ -1131,20 +1125,31 @@ async def review_candidate(
     return {"id": candidate.id, "status": candidate.status, "confirmation_source": candidate.confirmation_source}
 
 
-@router.post("/{conversation_id}/orders", status_code=201)
-async def create_order_from_conversation(
+@router.post("/{conversation_id}/pending-orders", status_code=201)
+async def add_conversation_candidates_to_pending_orders(
     conversation_id: str,
-    payload: InboxOrderCreateIn,
+    payload: InboxPendingOrderCreateIn,
     user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ):
     conversation = await _load_conversation(session, conversation_id)
-    if not payload.shipping_address.get("recipient_name") or not payload.shipping_address.get("phone"):
-        raise _error(422, "shipping_recipient_required")
-    if idempotency_key is not None and not 16 <= len(idempotency_key) <= 80:
+    if not idempotency_key or not 16 <= len(idempotency_key) <= 80:
         raise _error(422, "invalid_idempotency_key")
+
+    existing = await session.scalar(
+        select(TelegramCartInquiry)
+        .where(
+            TelegramCartInquiry.source == "telegram_inbox",
+            TelegramCartInquiry.conversation_id == conversation.id,
+            TelegramCartInquiry.idempotency_key == idempotency_key,
+        )
+        .with_for_update()
+    )
+    if existing:
+        return {"reference": existing.reference, "status": "pending_order"}
+
     candidate_ids = list(dict.fromkeys(payload.candidate_ids))
     if len(candidate_ids) != len(payload.candidate_ids):
         raise _error(422, "duplicate_candidate")
@@ -1161,18 +1166,14 @@ async def create_order_from_conversation(
         )
     ).scalars().all()
     if len(candidates) != len(candidate_ids):
-        raise _error(409, "only_confirmed_candidates_can_be_ordered")
-    if idempotency_key:
-        existing = await session.scalar(select(Order).where(Order.idempotency_key == idempotency_key))
-        if existing:
-            if existing.telegram_conversation_id != conversation.id:
-                raise _error(409, "idempotency_key_conflict")
-            return {"order_number": existing.order_number, "order_id": existing.id, "status": existing.status}
+        raise _error(409, "only_confirmed_candidates_can_be_added_to_pending_orders")
 
-    order_lines = []
+    candidates_by_id = {candidate.id: candidate for candidate in candidates}
+    items = []
     subtotal = 0
     currencies = set()
-    for candidate in candidates:
+    for candidate_id in candidate_ids:
+        candidate = candidates_by_id[candidate_id]
         product = await session.get(Product, candidate.product_id)
         variant = await session.get(ProductVariant, candidate.variant_id)
         category = await session.get(Category, product.category_id) if product else None
@@ -1190,83 +1191,72 @@ async def create_order_from_conversation(
         line_total = unit_price * candidate.quantity
         subtotal += line_total
         currencies.add(product.currency)
-        order_lines.append((candidate, product, variant, unit_price, line_total))
+        items.append(
+            {
+                "name": candidate.product_name,
+                "sku": variant.sku,
+                "quantity": candidate.quantity,
+                "unit_price": unit_price,
+                "line_total": line_total,
+                "variant": _option_label(candidate.option_values or {}),
+                "image_url": candidate.image_url,
+                "availability": "pre_order",
+                "_candidate_id": candidate.id,
+            }
+        )
     if len(currencies) != 1:
         raise _error(409, "mixed_currency_order_unsupported")
 
-    order_number = f"MC-{uuid.uuid4().hex[:10].upper()}"
-    order = Order(
-        order_number=order_number,
-        guest_email=payload.guest_email,
-        guest_access_token=secrets.token_urlsafe(24),
-        shipping_address=payload.shipping_address,
-        shipping_method=payload.shipping_method,
-        subtotal=subtotal,
-        shipping_amount=payload.shipping_amount,
-        grand_total=subtotal + payload.shipping_amount,
-        currency=next(iter(currencies)),
-        payment_state="unpaid",
-        status="pending_payment",
+    reference = f"SC-{secrets.token_hex(16).upper()}"
+    inquiry = TelegramCartInquiry(
+        reference=reference,
+        cart_id=None,
+        source="telegram_inbox",
+        conversation_id=conversation.id,
         idempotency_key=idempotency_key,
-        order_source="telegram_inbox",
-        fulfillment_mode="pre_order",
-        telegram_conversation_id=conversation.id,
+        locale=conversation.locale,
+        snapshot={
+            "locale": conversation.locale,
+            "items": items,
+            "subtotal": subtotal,
+            "currency": next(iter(currencies)),
+            "item_count": sum(item["quantity"] for item in items),
+            "_candidate_ids": candidate_ids,
+            "_customer": {
+                "name": conversation.customer_name,
+                "username": conversation.customer_username,
+            },
+        },
+        status="sent",
+        telegram_connection_id=conversation.connection_id,
+        telegram_chat_id=conversation.chat_id,
+        delivered_at=utcnow(),
     )
-    session.add(order)
-    await session.flush()
-    for candidate, product, variant, unit_price, line_total in order_lines:
-        session.add(
-            OrderItem(
-                order_id=order.id,
-                product_id=product.id,
-                variant_id=variant.id,
-                seller_id=product.seller_id,
-                sku=variant.sku,
-                product_name=candidate.product_name,
-                option_values=candidate.option_values or {},
-                image_url=candidate.image_url,
-                unit_price=unit_price,
-                quantity=candidate.quantity,
-                line_total=line_total,
-            )
-        )
-        candidate.status = "ordered"
-        candidate.order_id = order.id
-    session.add(
-        Payment(
-            order_id=order.id,
-            provider="manual_transfer",
-            environment=APP_ENV,
-            currency=order.currency,
-            amount=order.grand_total,
-            status="pending",
-            merchant_trans_id=f"MANUAL-{uuid.uuid4().hex[:20].upper()}",
-        )
-    )
+    session.add(inquiry)
+    for candidate in candidates:
+        candidate.status = "pending_order"
     conversation.status = "waiting_customer"
-    conversation.last_message_at = utcnow()
     await audit(
         session,
         user.id,
-        "admin.telegram_inbox.order.create",
-        "order",
-        order.order_number,
+        "admin.telegram_inbox.pending_order.create",
+        "telegram_inquiry",
+        reference,
         {"conversation_id": conversation.id, "candidate_ids": candidate_ids},
     )
     try:
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        if idempotency_key:
-            existing = await session.scalar(
-                select(Order).where(Order.idempotency_key == idempotency_key)
+        existing = await session.scalar(
+            select(TelegramCartInquiry).where(
+                TelegramCartInquiry.source == "telegram_inbox",
+                TelegramCartInquiry.conversation_id == conversation.id,
+                TelegramCartInquiry.idempotency_key == idempotency_key,
             )
-            if existing and existing.telegram_conversation_id == conversation.id:
-                return {"order_number": existing.order_number, "order_id": existing.id, "status": existing.status}
-        raise _error(409, "order_creation_conflict") from exc
+        )
+        if existing:
+            return {"reference": existing.reference, "status": "pending_order"}
+        raise _error(409, "pending_order_creation_conflict") from exc
 
-    # Reuse the same manual-transfer notification workflow as website inquiries.
-    from routers.manual_orders import _send_payment_prompt
-
-    await _send_payment_prompt(order.order_number, session)
-    return {"order_number": order.order_number, "order_id": order.id, "status": order.status}
+    return {"reference": inquiry.reference, "status": "pending_order"}

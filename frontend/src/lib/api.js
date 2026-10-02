@@ -291,8 +291,8 @@ export const sendAdminTelegramCandidate = (id, data) =>
   api.post(`/v1/admin/telegram-inbox/${id}/candidates`, data).then((r) => r.data);
 export const reviewAdminTelegramCandidate = (conversationId, candidateId, status) =>
   api.patch(`/v1/admin/telegram-inbox/${conversationId}/candidates/${candidateId}`, { status }).then((r) => r.data);
-export const createAdminTelegramOrder = (id, data, idempotencyKey) =>
-  api.post(`/v1/admin/telegram-inbox/${id}/orders`, data, {
+export const addAdminTelegramCandidatesToPendingOrders = (id, data, idempotencyKey) =>
+  api.post(`/v1/admin/telegram-inbox/${id}/pending-orders`, data, {
     headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
   }).then((r) => r.data);
 export const uploadAdminPaymentEvidence = (orderNumber, file, onProgress) => {

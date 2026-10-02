@@ -241,7 +241,10 @@ async def admin_dashboard(
             .where(
                 TelegramCartInquiry.order_id.is_(None),
                 TelegramCartInquiry.status.in_(["pending", "sending", "sent"]),
-                TelegramCartInquiry.expires_at > _now(),
+                or_(
+                    TelegramCartInquiry.source == "telegram_inbox",
+                    TelegramCartInquiry.expires_at > _now(),
+                ),
             )
             .order_by(TelegramCartInquiry.created_at.desc())
         )

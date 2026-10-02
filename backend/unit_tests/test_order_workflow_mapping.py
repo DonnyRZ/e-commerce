@@ -14,12 +14,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://unused:unused@127.0.0.1:1/audit")
 os.environ.setdefault("JWT_SECRET", "isolated-test-secret-never-used-for-real-auth")
 
+from routers import manual_orders as orders  # noqa: E402
 from routers.manual_orders import (
     _workflow_counts,
     _workflow_filter_stage,
     _workflow_page,
     _workflow_stage,
+    ManualOrderCreateIn,
     archive_admin_order,
+    create_manual_order,
     list_order_workflow,
     permanently_delete_admin_order,
     permanently_delete_admin_telegram_inquiry,
@@ -514,6 +517,109 @@ class TelegramInquiryDeletionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.detail["error"], "inquiry_already_converted")
         session.delete.assert_not_awaited()
         session.commit.assert_not_awaited()
+
+
+class TelegramInboxPendingConversionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pending_inbox_request_converts_through_shared_manual_order_flow(self):
+        inquiry = SimpleNamespace(
+            id="inquiry-1",
+            reference="SC-INBOX-1",
+            order_id=None,
+            status="sent",
+            source="telegram_inbox",
+            expires_at=None,
+            telegram_chat_id=123,
+            telegram_connection_id="connection-1",
+            conversation_id="conversation-1",
+            user_id=None,
+            snapshot={
+                "currency": "UZS",
+                "subtotal": 100,
+                "items": [{
+                    "sku": "SKU-1",
+                    "name": "Product One",
+                    "quantity": 1,
+                    "unit_price": 100,
+                    "line_total": 100,
+                    "_candidate_id": "candidate-1",
+                }],
+                "_candidate_ids": ["candidate-1"],
+            },
+        )
+        variant = SimpleNamespace(
+            id="variant-1",
+            sku="SKU-1",
+            product_id="product-1",
+            is_active=True,
+            sale_price_override=None,
+            price_override=None,
+            option_values={},
+        )
+        product = SimpleNamespace(
+            id="product-1",
+            status="active",
+            base_price=100,
+            slug="product-one",
+            seller_id="seller-1",
+        )
+        candidate = SimpleNamespace(
+            id="candidate-1",
+            conversation_id="conversation-1",
+            status="pending_order",
+            order_id=None,
+        )
+        added = []
+
+        def add(row):
+            if isinstance(row, orders.Order) and row.id is None:
+                row.id = "order-1"
+            added.append(row)
+
+        session = SimpleNamespace(
+            scalar=AsyncMock(return_value=inquiry),
+            execute=AsyncMock(side_effect=[FakeResult([variant]), FakeResult([candidate])]),
+            get=AsyncMock(return_value=product),
+            add=add,
+            flush=AsyncMock(),
+            commit=AsyncMock(),
+            rollback=AsyncMock(),
+        )
+        payload = ManualOrderCreateIn(
+            guest_email="customer@example.com",
+            shipping_address={
+                "recipient_name": "Customer One",
+                "phone": "+998901234567",
+                "address_line_1": "Tashkent",
+                "city": "Tashkent",
+                "country_code": "UZ",
+            },
+        )
+        expected = {"order_number": "MC-ORDER-1", "status": "pending_payment"}
+
+        with (
+            patch("routers.manual_orders._queue_payment_prompt") as queue_prompt,
+            patch("routers.manual_orders.audit", new_callable=AsyncMock),
+            patch("routers.manual_orders._admin_order_payload", new_callable=AsyncMock, return_value=expected),
+        ):
+            result = await create_manual_order(
+                "SC-INBOX-1",
+                payload,
+                user=SimpleNamespace(id="admin-1"),
+                session=session,
+                idempotency_key=None,
+            )
+
+        order = next(row for row in added if isinstance(row, orders.Order))
+        self.assertEqual(result, expected)
+        self.assertEqual(order.order_source, "telegram_inbox")
+        self.assertEqual(order.telegram_conversation_id, "conversation-1")
+        self.assertEqual(candidate.status, "ordered")
+        self.assertEqual(candidate.order_id, "order-1")
+        self.assertEqual(inquiry.order_id, "order-1")
+        self.assertEqual(inquiry.status, "order_created")
+        self.assertIsNone(inquiry.snapshot)
+        queue_prompt.assert_called_once()
+        session.commit.assert_awaited_once()
 
     async def test_permanent_delete_waits_while_telegram_is_sending(self):
         import time

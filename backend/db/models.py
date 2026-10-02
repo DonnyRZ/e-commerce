@@ -247,17 +247,32 @@ class TelegramBusinessConnection(Base):
 
 
 class TelegramCartInquiry(Base):
-    """Short-lived, server-priced cart snapshot awaiting a customer Telegram send."""
+    """Server-priced Telegram request awaiting admin conversion into an order."""
 
     __tablename__ = "telegram_cart_inquiries"
     __table_args__ = (
+        CheckConstraint(
+            "source IN ('web', 'telegram_inbox')",
+            name="ck_telegram_cart_inquiries_source",
+        ),
         UniqueConstraint("cart_id", "idempotency_key", name="uq_telegram_inquiry_cart_idempotency"),
+        UniqueConstraint(
+            "conversation_id",
+            "idempotency_key",
+            name="uq_telegram_inquiry_conversation_idempotency",
+        ),
         Index("ix_telegram_cart_inquiries_expires_status", "expires_at", "status"),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
     reference: Mapped[str] = mapped_column(String(40), unique=True)
-    cart_id: Mapped[str] = mapped_column(String(32), index=True)
+    cart_id: Mapped[Optional[str]] = mapped_column(String(32), index=True, nullable=True)
+    source: Mapped[str] = mapped_column(String(20), default="web", server_default="web")
+    conversation_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("telegram_conversations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     user_id: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
     idempotency_key: Mapped[str] = mapped_column(String(80))
     locale: Mapped[str] = mapped_column(String(5), default="en")
@@ -273,7 +288,9 @@ class TelegramCartInquiry(Base):
         BigInteger, nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

@@ -274,7 +274,7 @@ export default function AdminOrderDetailPage() {
       const notificationIsActive = current?.telegram_notifications?.some(
         (notification) => ["pending", "sending"].includes(notification.status),
       );
-      return current?.order_source === "telegram_manual"
+      return ["telegram_manual", "telegram_inbox"].includes(current?.order_source)
         && (["pending_payment", "payment_review"].includes(current.status) || notificationIsActive)
         ? 3000
         : false;
@@ -391,7 +391,7 @@ export default function AdminOrderDetailPage() {
   const legacyNext = LEGACY_NEXT[order.status];
   const payment = order.payment;
   const address = order.shipping_address || {};
-  const isManual = order.order_source === "telegram_manual";
+  const isManual = ["telegram_manual", "telegram_inbox"].includes(order.order_source);
   const isArchived = Boolean(order.archived_at);
   const isPaymentStage = isManual && ["pending_payment", "payment_review"].includes(order.status);
   const routeState = location.state || {};
