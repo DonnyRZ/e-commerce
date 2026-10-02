@@ -33,6 +33,7 @@ export default function BrandLogo({
   size = "md",
   to = "/",
   className = "",
+  wordmarkClassName = "",
   testId = "brand-logo",
   priority = false,
 }) {
@@ -57,7 +58,7 @@ export default function BrandLogo({
         className={`${styles.mark} shrink-0 object-contain`}
       />
       {!isMarkOnly ? (
-        <span className={`brand-wordmark min-w-0 whitespace-nowrap font-brand font-semibold leading-none text-brand-forest ${styles.wordmark}`}>
+        <span className={`brand-wordmark min-w-0 whitespace-nowrap font-brand font-semibold leading-none text-brand-forest ${styles.wordmark} ${wordmarkClassName}`}>
           {label}
         </span>
       ) : null}

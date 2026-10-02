@@ -10,6 +10,7 @@ import {
   Menu,
   Package,
   Settings,
+  Store,
   Users,
   X,
 } from "lucide-react";
@@ -105,9 +106,9 @@ export default function AdminLayout() {
 
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900" data-testid="admin-layout">
-      <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-neutral-200 bg-white px-4 lg:px-6">
+      <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-neutral-200 bg-white px-2 sm:gap-3 sm:px-4 lg:px-6">
         <button
-          className="inline-flex h-11 w-11 items-center justify-center lg:hidden"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center lg:hidden"
           onClick={() => setDrawer(true)}
           aria-label="Buka menu navigasi CMS"
           aria-expanded={drawer}
@@ -116,13 +117,14 @@ export default function AdminLayout() {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <div className="flex items-center gap-2">
-          <BrandLogo size="sm" to="/" testId="admin-brand" priority />
-          <span className="text-xs font-medium text-neutral-400">Admin</span>
+        <div className="flex min-w-0 items-center gap-2">
+          <BrandLogo size="sm" to="/" wordmarkClassName="hidden sm:inline" testId="admin-brand" priority />
+          <span className="hidden text-xs font-medium text-neutral-400 sm:inline">Admin</span>
         </div>
-        <div className="ml-auto flex items-center gap-3">
-          <a href="/" className="text-xs text-neutral-500 hover:text-neutral-900" data-testid="admin-view-store">
-            View Store
+        <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-3">
+          <a href="/" aria-label="Lihat toko" title="Lihat toko" className="inline-flex h-10 w-10 items-center justify-center text-xs text-neutral-500 hover:text-neutral-900 sm:h-auto sm:w-auto sm:justify-start" data-testid="admin-view-store">
+            <Store className="h-4 w-4 sm:hidden" aria-hidden="true" />
+            <span className="hidden whitespace-nowrap sm:inline">View Store</span>
           </a>
           <span className="hidden text-xs text-neutral-400 sm:block" data-testid="admin-user-email">
             {user.email}
@@ -132,10 +134,12 @@ export default function AdminLayout() {
             onClick={handleLogout}
             disabled={loggingOut}
             data-testid="admin-logout"
-            className="inline-flex h-10 items-center gap-1.5 border border-neutral-200 px-2.5 text-xs font-medium text-neutral-600 transition-colors hover:border-neutral-900 hover:text-neutral-900 disabled:cursor-wait disabled:opacity-50"
+            aria-label={loggingOut ? t("common.loading") : t("auth.logout")}
+            title={loggingOut ? t("common.loading") : t("auth.logout")}
+            className="inline-flex h-10 w-10 items-center justify-center gap-1.5 border border-neutral-200 px-0 text-xs font-medium text-neutral-600 transition-colors hover:border-neutral-900 hover:text-neutral-900 disabled:cursor-wait disabled:opacity-50 sm:w-auto sm:px-2.5"
           >
             <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-            {loggingOut ? t("common.loading") : t("auth.logout")}
+            <span className="hidden whitespace-nowrap sm:inline">{loggingOut ? t("common.loading") : t("auth.logout")}</span>
           </button>
         </div>
       </header>

@@ -31,7 +31,7 @@ export function formatOrderItemOptions(item) {
 
   if (entries.length) {
     if (entries.length === 1 && ["variant", "varian"].includes(String(entries[0][0]).trim().toLocaleLowerCase())) {
-      return String(entries[0][1]);
+      return `${optionLabel(entries[0][0])}: ${entries[0][1]}`;
     }
     return entries.map(([key, value]) => `${optionLabel(key) || "Opsi"}: ${value}`).join(" · ");
   }
