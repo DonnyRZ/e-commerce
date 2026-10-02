@@ -67,6 +67,12 @@ PAYMENT_EVIDENCE_ROOT = os.environ.get(
 PAYMENT_EVIDENCE_MAX_BYTES = int(
     os.environ.get("PAYMENT_EVIDENCE_MAX_BYTES", str(8 * 1024 * 1024))
 )
+SHIPPING_DOCUMENT_ROOT = os.environ.get(
+    "SHIPPING_DOCUMENT_ROOT", "/var/lib/marketplace/shipping-documents"
+)
+SHIPPING_DOCUMENT_MAX_BYTES = int(
+    os.environ.get("SHIPPING_DOCUMENT_MAX_BYTES", str(8 * 1024 * 1024))
+)
 SUPPLIER_TO_ADMIN_TRANSIT_DAYS = int(
     os.environ.get("SUPPLIER_TO_ADMIN_TRANSIT_DAYS", "14")
 )

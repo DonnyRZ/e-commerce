@@ -315,8 +315,16 @@ export const retryAdminPaymentNotification = (orderNumber, data = {}) =>
   api.post(`/v1/admin/orders/${orderNumber}/payment-notification`, data).then((r) => r.data);
 export const rejectAdminPayment = (orderNumber, reason) =>
   api.post(`/v1/admin/orders/${orderNumber}/payment/reject`, { reason }).then((r) => r.data);
-export const updateAdminFulfillment = (orderNumber, data) =>
-  api.post(`/v1/admin/orders/${orderNumber}/fulfillment`, data).then((r) => r.data);
+export const updateAdminFulfillment = (orderNumber, data) => {
+  const url = `/v1/admin/orders/${orderNumber}/fulfillment`;
+  if (!data?.document) return api.post(url, data).then((r) => r.data);
+  const fd = new FormData();
+  Object.entries(data).forEach(([key, value]) => {
+    if (key !== "document" && value !== undefined && value !== null) fd.append(key, value);
+  });
+  fd.append("document", data.document);
+  return api.post(url, fd, { headers: { "Content-Type": undefined } }).then((r) => r.data);
+};
 export const updateAdminOrderStatus = (orderNumber, status) =>
   api.patch(`/v1/admin/orders/${orderNumber}/status`, { status }).then((r) => r.data);
 export const getAdminCustomers = (params) =>

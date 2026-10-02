@@ -15,6 +15,7 @@ is native on the host and is shared by database/role, never by a public port.
 └── shared/acme/
 
 /var/lib/marketplace/media/
+/var/lib/marketplace/shipping-documents/
 /etc/marketplace/marketplace.env  # chmod 600
 ```
 
@@ -96,10 +97,10 @@ purchase is unavailable and that `/api/ready` remains 200 with
 ## Backup and rollback
 
 Before and after migration, create PostgreSQL custom-format and globals backups.
-Back up `/var/lib/marketplace/media` and copy backups outside the VPS. Application
-rollback is a symlink switch to the previous release followed by a Compose rebuild
-and health check. Database rollback uses a verified backup restore, not Alembic
-downgrade.
+Back up `/var/lib/marketplace/media` and `/var/lib/marketplace/shipping-documents`
+and copy backups outside the VPS. Application rollback is a symlink switch to the
+previous release followed by a Compose rebuild and health check. Database rollback
+uses a verified backup restore, not Alembic downgrade.
 
 Only ports 22, 80, and 443 should be publicly reachable. Redis, backend,
 PostgreSQL, and the frontend's 8080 listener remain private.

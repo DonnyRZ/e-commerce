@@ -65,6 +65,7 @@ services:
     volumes:
       - /var/lib/marketplace/media:/app/uploads
       - /var/lib/marketplace/payment-evidence:/var/lib/marketplace/payment-evidence
+      - /var/lib/marketplace/shipping-documents:/var/lib/marketplace/shipping-documents
     depends_on:
       redis:
         condition: service_healthy

@@ -105,7 +105,7 @@ export default function AdminLayout() {
   );
 
   return (
-    <div className="min-h-screen bg-neutral-50 text-neutral-900" data-testid="admin-layout">
+    <div className="min-h-dvh bg-neutral-50 text-neutral-900" data-testid="admin-layout">
       <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-neutral-200 bg-white px-2 sm:gap-3 sm:px-4 lg:px-6">
         <button
           className="inline-flex h-10 w-10 shrink-0 items-center justify-center lg:hidden"

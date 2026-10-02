@@ -17,12 +17,22 @@ import uuid
 from datetime import timedelta
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from auth import csrf_protect, require_roles
 from cms.service import audit
@@ -32,6 +42,7 @@ from config import (
     FRONTEND_URL,
     PAYMENT_EVIDENCE_MAX_BYTES,
     PREORDER_ESTIMATE_DAYS,
+    SHIPPING_DOCUMENT_MAX_BYTES,
     SUPPLIER_TO_ADMIN_TRANSIT_DAYS,
     TELEGRAM_BOT_TOKEN,
 )
@@ -69,6 +80,9 @@ from order_workflow import (
 from storage.payment_evidence import delete as delete_evidence_file
 from storage.payment_evidence import resolve as resolve_evidence_file
 from storage.payment_evidence import save as save_evidence_file
+from storage.shipping_documents import delete as delete_shipping_document_file
+from storage.shipping_documents import resolve as resolve_shipping_document_file
+from storage.shipping_documents import save as save_shipping_document_file
 from payment_destinations import (
     MAX_PAYMENT_DESTINATIONS,
     destination_admin_payload,
@@ -88,6 +102,12 @@ router = APIRouter(prefix="/api/v1", tags=["manual-orders"])
 require_admin = require_roles("admin")
 logger = logging.getLogger("muslimah_cantik.payment_notifications")
 order_notification_logger = logging.getLogger("muslimah_cantik.order_notifications")
+ALLOWED_SHIPPING_DOCUMENT_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "application/pdf",
+}
 PAYMENT_NOTIFICATION_POLL_SECONDS = 1
 PAYMENT_NOTIFICATION_STALE_AFTER = timedelta(minutes=2)
 ORDER_NOTIFICATION_POLL_SECONDS = 1
@@ -205,6 +225,96 @@ def _evidence_content_matches(data: bytes, mime: str) -> bool:
     return signatures.get(mime, False)
 
 
+async def _fulfillment_submission(request: Request):
+    content_type = request.headers.get("content-type", "").lower()
+    if not content_type.startswith("multipart/form-data"):
+        try:
+            data = await request.json()
+            if not isinstance(data, dict):
+                raise ValueError("expected_object")
+            return FulfillmentIn(**data), None, None, None
+        except (ValueError, ValidationError) as exc:
+            raise HTTPException(
+                status_code=422, detail={"error": "invalid_fulfillment_payload"}
+            ) from exc
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > SHIPPING_DOCUMENT_MAX_BYTES + 1024 * 1024:
+                raise _error(
+                    413,
+                    "shipping_document_too_large",
+                    max_bytes=SHIPPING_DOCUMENT_MAX_BYTES,
+                )
+        except ValueError as exc:
+            raise _error(400, "invalid_content_length") from exc
+
+    form = await request.form()
+    try:
+        values = {
+            field: form.get(field)
+            for field in (
+                "stage",
+                "carrier",
+                "tracking_number",
+                "shipped_at",
+                "received_at",
+                "note",
+            )
+            if form.get(field) is not None
+        }
+        try:
+            payload = FulfillmentIn(**values)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+        document = form.get("document")
+        if document is None:
+            return payload, None, None, None
+        if not isinstance(document, StarletteUploadFile):
+            raise _error(422, "invalid_shipping_document")
+
+        mime = (document.content_type or "").lower()
+        if mime not in ALLOWED_SHIPPING_DOCUMENT_TYPES:
+            mime = (mimetypes.guess_type(document.filename or "")[0] or "").lower()
+        if mime not in ALLOWED_SHIPPING_DOCUMENT_TYPES:
+            raise _error(415, "unsupported_shipping_document_type")
+
+        chunks: list[bytes] = []
+        size = 0
+        while True:
+            chunk = await document.read(
+                min(64 * 1024, SHIPPING_DOCUMENT_MAX_BYTES + 1 - size)
+            )
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > SHIPPING_DOCUMENT_MAX_BYTES:
+                raise _error(
+                    413,
+                    "shipping_document_too_large",
+                    max_bytes=SHIPPING_DOCUMENT_MAX_BYTES,
+                )
+        data = b"".join(chunks)
+        if not data:
+            raise _error(400, "empty_shipping_document")
+        if not _evidence_content_matches(data, mime):
+            raise _error(415, "shipping_document_content_mismatch")
+
+        filename = str(document.filename or "resi").replace("\\", "/")
+        filename = filename.rsplit("/", 1)[-1]
+        filename = "".join(
+            character
+            for character in filename
+            if ord(character) >= 32 and ord(character) != 127
+        ).strip()[:255] or "resi"
+        return payload, data, mime, filename
+    finally:
+        await form.close()
+
+
 def _order_public_status(order: Order) -> str:
     return PUBLIC_ORDER_STAGES.get(order.status, order.status)
 
@@ -318,6 +428,18 @@ def _stage_payload(
         "received_at": stage.received_at,
         "expected_at": stage.expected_at,
         "note": stage.note,
+        "shipping_document": (
+            {
+                "original_filename": stage.shipping_document_filename,
+                "mime_type": stage.shipping_document_mime_type,
+                "file_size": stage.shipping_document_size,
+                "download_url": (
+                    f"/api/v1/admin/fulfillment-documents/{stage.id}/download"
+                ),
+            }
+            if stage.shipping_document_key
+            else None
+        ),
         "telegram_notification": (
             _order_notification_payload(notification) if notification else None
         ),
@@ -1792,13 +1914,18 @@ async def reject_manual_payment(
 @router.post("/admin/orders/{order_number}/fulfillment")
 async def update_manual_fulfillment(
     order_number: str,
-    payload: FulfillmentIn,
+    request: Request,
     user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
+    payload, document_data, document_mime, document_filename = (
+        await _fulfillment_submission(request)
+    )
     if payload.stage not in ORDER_STAGES:
         raise _error(422, "invalid_fulfillment_stage")
+    if document_data and payload.stage != "customer_shipping":
+        raise _error(422, "shipping_document_stage_not_supported")
     order = await _load_admin_order(order_number, session)
     transition = ORDER_STAGES[payload.stage]
     if order.payment_state != "paid":
@@ -1841,6 +1968,14 @@ async def update_manual_fulfillment(
         stage.expected_at = stage.shipped_at + timedelta(
             days=ADMIN_TO_CUSTOMER_TRANSIT_DAYS
         )
+    document_key = None
+    if document_data:
+        document_key = f"{uuid.uuid4().hex}{mimetypes.guess_extension(document_mime) or '.bin'}"
+        stage.shipping_document_key = document_key
+        stage.shipping_document_filename = document_filename
+        stage.shipping_document_mime_type = document_mime
+        stage.shipping_document_size = len(document_data)
+        stage.shipping_document_checksum = hashlib.sha256(document_data).hexdigest()
     order.status = transition["to"]
     await _queue_order_notification(
         order.id,
@@ -1856,10 +1991,50 @@ async def update_manual_fulfillment(
         "admin.order.fulfillment",
         "order",
         order.order_number,
-        {"stage": payload.stage, "tracking": payload.tracking_number},
+        {
+            "stage": payload.stage,
+            "tracking": payload.tracking_number,
+            "shipping_document_uploaded": bool(document_key),
+        },
     )
-    await session.commit()
+    if document_key:
+        try:
+            save_shipping_document_file(document_data, document_key)
+        except Exception:
+            await session.rollback()
+            delete_shipping_document_file(document_key)
+            raise
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        # Keep the durable file if commit outcome is uncertain: the database
+        # may have committed before the connection failed to return its result.
+        raise
     return await _admin_order_payload(session, order)
+
+
+@router.get("/admin/fulfillment-documents/{stage_id}/download")
+async def download_fulfillment_document(
+    stage_id: str,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    stage = await session.get(OrderFulfillmentStage, stage_id)
+    if not stage or not stage.shipping_document_key:
+        raise _error(404, "shipping_document_not_found")
+    path = resolve_shipping_document_file(stage.shipping_document_key)
+    if not path.is_file():
+        raise _error(404, "shipping_document_file_missing")
+    return FileResponse(
+        path,
+        media_type=stage.shipping_document_mime_type or "application/octet-stream",
+        filename=stage.shipping_document_filename or "resi",
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 async def _admin_order_payload(session: AsyncSession, order: Order) -> dict:

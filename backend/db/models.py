@@ -722,6 +722,9 @@ class OrderFulfillmentStage(TimestampMixin, Base):
     __tablename__ = "order_fulfillment_stages"
     __table_args__ = (
         UniqueConstraint("order_id", "stage", name="uq_order_fulfillment_stage"),
+        UniqueConstraint(
+            "shipping_document_key", name="uq_order_fulfillment_shipping_document_key"
+        ),
         Index("ix_order_fulfillment_order_stage", "order_id", "stage"),
     )
 
@@ -734,6 +737,21 @@ class OrderFulfillmentStage(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")
     carrier: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
     tracking_number: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    shipping_document_key: Mapped[Optional[str]] = mapped_column(
+        String(180), nullable=True
+    )
+    shipping_document_filename: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True
+    )
+    shipping_document_mime_type: Mapped[Optional[str]] = mapped_column(
+        String(80), nullable=True
+    )
+    shipping_document_size: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True
+    )
+    shipping_document_checksum: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True
+    )
     shipped_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     received_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     expected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

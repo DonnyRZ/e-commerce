@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronDown, Clock3, FileText, Landmark, MapPin, Package, RotateCw, ShieldCheck, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, Clock3, FileText, Landmark, MapPin, Package, Paperclip, RotateCw, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
 import { confirmAdminPayment, getAdminOrder, retryAdminPaymentNotification, updateAdminOrderStatus, updateAdminFulfillment, uploadAdminPaymentEvidence } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,6 +11,8 @@ import { countOrderItemUnits, formatOrderItemOptions } from "./orderItemUtils";
 
 const MAX_EVIDENCE_BYTES = 8 * 1024 * 1024;
 const ALLOWED_EVIDENCE_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+const MAX_SHIPPING_DOCUMENT_BYTES = 8 * 1024 * 1024;
+const ALLOWED_SHIPPING_DOCUMENT_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
 const MANUAL_STATUS_LABELS = {
   pending_payment: "Menunggu pembayaran",
   payment_review: "Menunggu konfirmasi admin",
@@ -263,8 +265,10 @@ export default function AdminOrderDetailPage() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const fileRef = useRef(null);
+  const shippingDocumentRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const [selectedEvidence, setSelectedEvidence] = useState(null);
+  const [selectedShippingDocument, setSelectedShippingDocument] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(null);
   const [localPreviewUrl, setLocalPreviewUrl] = useState(null);
   const { data: order, isLoading } = useQuery({
@@ -292,6 +296,11 @@ export default function AdminOrderDetailPage() {
     setLocalPreviewUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [selectedEvidence]);
+
+  useEffect(() => {
+    setSelectedShippingDocument(null);
+    if (shippingDocumentRef.current) shippingDocumentRef.current.value = "";
+  }, [orderNumber]);
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["admin-order", orderNumber] });
@@ -328,6 +337,11 @@ export default function AdminOrderDetailPage() {
         payment_notification_outcome_uncertain: "Konfirmasi hasil pengiriman diperlukan sebelum mencoba ulang.",
         payment_destination_already_selected: "Customer sudah memilih rekening.",
         payment_notification_in_progress: "Pilihan bank sedang dikirim ke Telegram.",
+        unsupported_shipping_document_type: "Pilih dokumen resi dalam format JPG, PNG, WebP, atau PDF.",
+        shipping_document_too_large: "Ukuran dokumen resi maksimal 8 MB.",
+        empty_shipping_document: "Dokumen resi kosong. Pilih file lain.",
+        shipping_document_content_mismatch: "Isi file tidak sesuai dengan formatnya.",
+        shipping_document_stage_not_supported: "Dokumen resi hanya dapat ditambahkan saat pengiriman ke customer.",
       };
       toast.error(messages[code] || "Perubahan order gagal. Periksa koneksi lalu coba lagi.");
       return null;
@@ -385,6 +399,32 @@ export default function AdminOrderDetailPage() {
     if (fileRef.current) fileRef.current.value = "";
   };
 
+  const handleShippingDocumentSelect = (file) => {
+    if (!file) return;
+    const extension = file.name.split(".").pop()?.toLowerCase();
+    const inferredTypes = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", pdf: "application/pdf" };
+    const declaredType = file.type.toLowerCase();
+    const type = ALLOWED_SHIPPING_DOCUMENT_TYPES.includes(declaredType)
+      ? declaredType
+      : inferredTypes[extension] || "";
+    if (!ALLOWED_SHIPPING_DOCUMENT_TYPES.includes(type)) {
+      toast.error("Pilih resi dalam format JPG, PNG, WebP, atau PDF.");
+      if (shippingDocumentRef.current) shippingDocumentRef.current.value = "";
+      return;
+    }
+    if (file.size > MAX_SHIPPING_DOCUMENT_BYTES) {
+      toast.error("Ukuran dokumen resi maksimal 8 MB.");
+      if (shippingDocumentRef.current) shippingDocumentRef.current.value = "";
+      return;
+    }
+    setSelectedShippingDocument(file);
+  };
+
+  const clearSelectedShippingDocument = () => {
+    setSelectedShippingDocument(null);
+    if (shippingDocumentRef.current) shippingDocumentRef.current.value = "";
+  };
+
   if (isLoading) return <div data-testid="admin-order-loading"><Skeleton className="h-8 w-64" /><Skeleton className="mt-6 h-96 w-full" /></div>;
   if (!order) return <p className="text-sm text-neutral-500" data-testid="admin-order-missing">Order tidak ditemukan.</p>;
 
@@ -404,6 +444,26 @@ export default function AdminOrderDetailPage() {
   const currentWorkflowLabel = ORDER_STEPS.find(([key]) => key === currentWorkflowStage)?.[1]
     || MANUAL_STATUS_LABELS[order.status]
     || order.status;
+  const submitFulfillment = async () => {
+    const carrier = document.getElementById("fulfillment-carrier")?.value;
+    const tracking_number = document.getElementById("fulfillment-tracking")?.value;
+    const note = document.getElementById("fulfillment-note")?.value;
+    const payload = {
+      stage: nextStage,
+      carrier: carrier || undefined,
+      tracking_number: tracking_number || undefined,
+      note: note || undefined,
+    };
+    if (nextStage === "customer_shipping" && selectedShippingDocument) {
+      payload.document = selectedShippingDocument;
+    }
+    const saved = await run(
+      () => updateAdminFulfillment(orderNumber, payload),
+      NEXT_LABEL[nextStage],
+      `Simpan tahap ${NEXT_LABEL[nextStage]}?`,
+    );
+    if (saved && payload.document) clearSelectedShippingDocument();
+  };
   if (routeState.workflowFilter && !["all", "archived"].includes(routeState.workflowFilter) && currentWorkflowStage !== routeState.workflowFilter) {
     const [path, search = ""] = workflowReturnTo.split("?", 2);
     const returnParams = new URLSearchParams(search);
@@ -461,11 +521,16 @@ export default function AdminOrderDetailPage() {
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <input disabled={busy || isArchived} className="h-10 border border-neutral-300 bg-white px-3 text-sm disabled:bg-neutral-100" placeholder="Carrier (opsional)" id="fulfillment-carrier" />
                 <input disabled={busy || isArchived} className="h-10 border border-neutral-300 bg-white px-3 text-sm disabled:bg-neutral-100" placeholder="Nomor resi (opsional)" id="fulfillment-tracking" />
+                {nextStage === "customer_shipping" ? <div className="flex min-w-0 items-center gap-2 sm:col-span-2" data-testid="shipping-document-upload">
+                  <input ref={shippingDocumentRef} type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" className="sr-only" disabled={busy || isArchived} onChange={(event) => { handleShippingDocumentSelect(event.target.files?.[0]); }} data-testid="shipping-document-input" />
+                  <button type="button" disabled={busy || isArchived} onClick={() => shippingDocumentRef.current?.click()} className="inline-flex h-9 shrink-0 items-center gap-1.5 border border-neutral-300 bg-white px-3 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:opacity-50" data-testid="shipping-document-select"><Paperclip className="h-3.5 w-3.5" aria-hidden="true" />{selectedShippingDocument ? "Ganti resi" : "Upload resi"}</button>
+                  {selectedShippingDocument ? <><span className="min-w-0 flex-1 truncate text-xs text-neutral-600" title={selectedShippingDocument.name}>{selectedShippingDocument.name}</span><button type="button" disabled={busy || isArchived} onClick={clearSelectedShippingDocument} className="inline-flex h-9 w-9 shrink-0 items-center justify-center text-neutral-500 hover:bg-neutral-100 disabled:opacity-50" aria-label="Hapus dokumen resi" title="Hapus resi" data-testid="shipping-document-clear"><X className="h-4 w-4" aria-hidden="true" /></button></> : <span className="truncate text-[11px] text-neutral-400">JPG, PNG, WebP, atau PDF · maks. 8 MB</span>}
+                </div> : null}
                 <input disabled={busy || isArchived} className="h-10 border border-neutral-300 bg-white px-3 text-sm disabled:bg-neutral-100 sm:col-span-2" placeholder="Catatan internal (opsional)" id="fulfillment-note" />
-                <button type="button" disabled={busy || isArchived} onClick={() => { const carrier = document.getElementById("fulfillment-carrier")?.value; const tracking_number = document.getElementById("fulfillment-tracking")?.value; const note = document.getElementById("fulfillment-note")?.value; run(() => updateAdminFulfillment(orderNumber, { stage: nextStage, carrier: carrier || undefined, tracking_number: tracking_number || undefined, note: note || undefined }), NEXT_LABEL[nextStage], `Simpan tahap ${NEXT_LABEL[nextStage]}?`); }} className="h-10 bg-[#02422C] px-4 text-sm font-semibold text-white disabled:opacity-50 sm:w-fit" data-testid="fulfillment-advance" data-next-stage={nextStage}>{busy ? "Menyimpan…" : NEXT_LABEL[nextStage]}</button>
+                <button type="button" disabled={busy || isArchived} onClick={submitFulfillment} className="h-10 bg-[#02422C] px-4 text-sm font-semibold text-white disabled:opacity-50 sm:w-fit" data-testid="fulfillment-advance" data-next-stage={nextStage}>{busy ? "Menyimpan…" : NEXT_LABEL[nextStage]}</button>
               </div>
             ) : null}
-            <div className="mt-5 space-y-2">{(order.fulfillment || []).map((item) => <div key={item.stage} className="flex flex-wrap justify-between gap-2 border-t border-[#02422C]/10 pt-3 text-xs"><span className="font-medium text-[#02422C]">{ORDER_STEPS.find(([key]) => key === item.stage)?.[1] || item.stage}</span><span className="text-neutral-600">{item.tracking_number || "Tanpa resi"} · {fmtDate(item.shipped_at || item.received_at)}</span></div>)}</div>
+            <div className="mt-5 space-y-2">{(order.fulfillment || []).map((item) => <div key={item.stage} className="flex flex-wrap items-center justify-between gap-2 border-t border-[#02422C]/10 pt-3 text-xs"><span className="font-medium text-[#02422C]">{ORDER_STEPS.find(([key]) => key === item.stage)?.[1] || item.stage}</span><span className="text-neutral-600">{item.tracking_number || "Tanpa resi"} · {fmtDate(item.shipped_at || item.received_at)}</span>{item.shipping_document ? <a href={item.shipping_document.download_url} target="_blank" rel="noreferrer" className="inline-flex min-w-0 items-center gap-1.5 text-[#145A46] hover:underline" title={item.shipping_document.original_filename} data-testid={`shipping-document-${item.stage}`}><FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /><span className="max-w-56 truncate">{item.shipping_document.original_filename || "Lihat resi"}</span></a> : null}</div>)}</div>
           </section>
         ) : null}
 
