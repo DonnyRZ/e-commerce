@@ -65,7 +65,7 @@ export const CMS_TRANSLATION_FIELDS = {
   department_visual: ["alt_text"],
 };
 
-export const CMS_MEDIA_TYPES = ["banner", "story", "page", "department_visual"];
+export const CMS_MEDIA_TYPES = ["hero", "banner", "story", "page", "department_visual"];
 
 export const cmsTypeLabel = (value) =>
   CMS_CONTENT_TYPES.find((type) => type.value === value)?.label || value?.replaceAll("_", " ") || "Konten";

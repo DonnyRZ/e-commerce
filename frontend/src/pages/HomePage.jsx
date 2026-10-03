@@ -87,7 +87,7 @@ export default function HomePage() {
     if (!isLegacySection || section.payload?.product_ids?.length) return [];
     return [section.payload?.sort === "featured" || (!section.payload?.sort && canonicalKey === "best_sellers") ? "featured" : "newest"];
   }))];
-  if (hero && !hero.payload?.hero_asset_url) fallbackSorts.push(heroProductId ? "newest" : "featured");
+  if (hero && !hero.image_url && !hero.payload?.hero_asset_url) fallbackSorts.push(heroProductId ? "newest" : "featured");
   const productsByIdQuery = useQuery({
     queryKey: ["products", "home-selected", selectedProductIds.join(",")],
     queryFn: () => getProducts({ ids: selectedProductIds.join(","), limit: selectedProductIds.length }),
@@ -118,13 +118,14 @@ export default function HomePage() {
   const heroProduct = allLoadedProducts.get(heroProductId) || featuredProducts[0] || fallbackProducts[0];
   const heroMedia = heroProduct?.media?.[0];
   const catalogHeroImage = typeof heroMedia === "string" ? heroMedia : heroMedia?.url || "";
-  const heroImage = hero?.payload?.hero_asset_url || catalogHeroImage;
-  const heroMediaType = hero?.payload?.hero_media_type || (/\.(mp4|webm|mov)(\?|$)/i.test(heroImage) ? "video" : "image");
+  const heroImage = hero?.image_url || hero?.payload?.hero_asset_url || catalogHeroImage;
+  const heroMediaType = hero?.image_url ? "image" : hero?.payload?.hero_media_type || (/\.(mp4|webm|mov)(\?|$)/i.test(heroImage) ? "video" : "image");
   const heroMobileImage = heroMediaType === "image" ? hero?.payload?.hero_mobile_asset_url || "" : "";
   const heroTitle = pickCmsLocalized(hero?.translations, locale) || (cmsFailed ? t("page.home.heroTitle") : "");
   const heroEyebrow = pickCmsLocalized(hero?.translations, locale, "eyebrow") || (cmsFailed ? t("brand.tagline") : "");
   const heroSubtitle = pickCmsLocalized(hero?.translations, locale, "subtitle") || (cmsFailed ? t("page.home.heroSubtitle") : "");
-  const heroAlt = heroProduct ? `${heroProduct.brand || ""} ${pickLocalized(heroProduct.translations, locale)}`.trim() : heroTitle;
+  const heroAlt = pickCmsLocalized(hero?.translations, locale, "alt_text")
+    || (heroProduct ? `${heroProduct.brand || ""} ${pickLocalized(heroProduct.translations, locale)}`.trim() : heroTitle);
   const heroPrimary = { label: pickCmsLocalized(hero?.translations, locale, "cta_label") || (cmsFailed ? t("home.shopNow") : ""), to: hero?.cta_url || "/shop" };
   const heroSecondary = { label: pickCmsLocalized(hero?.translations, locale, "secondary_cta_label") || (cmsFailed ? t("home.allDepartments") : ""), to: hero?.secondary_cta_url || "/shop" };
   const sectionOrder = useMemo(() => {

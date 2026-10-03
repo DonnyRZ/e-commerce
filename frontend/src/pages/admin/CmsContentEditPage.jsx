@@ -50,7 +50,7 @@ const LABELS = {
 const LOCALE_LABELS = { en: "English", id: "Indonesia", uz: "O'zbek", ru: "Русский" };
 const REVISION_LABELS = { created: "dibuat", saved_draft: "draft disimpan", published: "diterbitkan", unpublished: "dijadikan draft", archived: "diarsipkan", restored: "dipulihkan" };
 const TYPE_DESCRIPTIONS = {
-  hero: "Area pembuka di beranda. Pilih produk aktif dari katalog sebagai visual hero; gambar tidak diunggah ulang.",
+  hero: "Area pembuka di beranda. Unggah gambar hero sendiri atau gunakan gambar dari produk katalog.",
   announcement: "Pesan singkat yang muncul di bar paling atas toko.",
   banner: "Materi promosi yang tampil tepat setelah hero beranda.",
   story: "Cerita editorial atau panduan yang tampil di bagian inspirasi.",
@@ -199,7 +199,7 @@ function CatalogProductPicker({ contentType, payload, setPayload }) {
   return (
     <FormSection
       title={multiple ? "Produk homepage" : "Produk hero"}
-      description={multiple ? "Pilih produk yang sudah ada di katalog. Gambar, nama, dan harga tetap mengikuti halaman produk." : "Pilih satu produk aktif sebagai visual hero. CMS hanya menyimpan referensinya, bukan salinan gambar."}
+      description={multiple ? "Pilih produk yang sudah ada di katalog. Gambar, nama, dan harga tetap mengikuti halaman produk." : "Pilih produk aktif sebagai sumber gambar hero jika gambar khusus di atas tidak digunakan."}
       testId="cms-editor-catalog-products"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -229,7 +229,7 @@ function CatalogProductPicker({ contentType, payload, setPayload }) {
       </> : null}
       <input value={search} onChange={(event) => setSearch(event.target.value)} className="mt-4 h-11 w-full rounded-lg border border-[#E4DED2] bg-white px-3 text-sm outline-none focus:border-[#02422C]" placeholder="Cari produk yang sudah ada…" aria-label="Cari produk katalog" data-testid="cms-catalog-search" />
       {query.isError ? <p className="py-6 text-center text-sm text-red-700">Produk katalog gagal dimuat. Coba lagi setelah memuat ulang halaman.</p> : <div className="mt-4 grid max-h-[28rem] gap-3 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">{query.isLoading ? Array.from({ length: 6 }).map((_, index) => <Skeleton key={index} className="h-24 rounded-lg" />) : (products || []).map((product) => { const selected = selectedIds.includes(product.id); return <button key={product.id} type="button" onClick={() => selectProduct(product)} className={`flex gap-3 rounded-lg border p-2 text-left transition ${selected ? "border-[#02422C] bg-[#F0F5EF] ring-1 ring-[#02422C]" : "border-[#E4DED2] bg-white hover:border-[#02422C]"}`} data-testid={`cms-catalog-product-${product.id}`}><ImageWithFallback src={mediaUrl(product.image_url)} alt={product.name} className="h-16 w-14 shrink-0 bg-stone-100 object-contain" /><span className="min-w-0"><span className="block truncate text-xs font-semibold text-[#17392C]">{product.name}</span><span className="mt-1 block text-[10px] uppercase tracking-wide text-stone-500">{product.brand || "Katalog"}</span><span className="mt-1 block text-xs text-[#02422C]">UZS {Number(product.base_price || 0).toLocaleString("en-US")}</span></span></button>; })}</div>}
-      {selectedProducts.length ? <p className="mt-3 text-[11px] text-[#315347]">Pilihan disimpan sebagai referensi produk. Jika gambar produk diperbarui di Products, homepage ikut berubah otomatis.</p> : null}
+      {selectedProducts.length ? <p className="mt-3 text-[11px] text-[#315347]">{contentType === "hero" ? "Gambar produk digunakan jika gambar khusus di atas dilepas." : "Pilihan disimpan sebagai referensi produk. Jika gambar produk diperbarui di Products, homepage ikut berubah otomatis."}</p> : null}
     </FormSection>
   );
 }
@@ -297,7 +297,10 @@ export default function CmsContentEditPage() {
     setForm(nextForm);
     setTranslations(nextTranslations);
     setPayload(nextPayload);
-    setImagePreview(working.image_url || "");
+    const legacyHeroImage = nextType === "hero" && working.payload?.hero_media_type !== "video"
+      ? working.payload?.hero_asset_url || ""
+      : "";
+    setImagePreview(working.image_url || legacyHeroImage);
     const nextBaseline = JSON.stringify({ type: nextType, form: nextForm, translations: nextTranslations, payload: nextPayload });
     baselineRef.current = nextBaseline;
     setBaseline(nextBaseline);
@@ -316,6 +319,37 @@ export default function CmsContentEditPage() {
     ...current,
     [activeLocale]: { ...EMPTY_TRANSLATION, ...(current[activeLocale] || {}), [field]: value },
   }));
+  const heroHasCustomImage = Boolean(
+    form.media_id || (contentType === "hero" && payload.hero_asset_url && payload.hero_media_type !== "video"),
+  );
+  const selectMedia = (asset) => {
+    setFormValue("media_id", asset.id);
+    setImagePreview(asset.url);
+    if (contentType === "hero") {
+      setPayload((current) => {
+        const next = { ...current, hero_media_type: "image" };
+        delete next.hero_asset_url;
+        delete next.hero_mobile_asset_url;
+        delete next.hero_poster_url;
+        return next;
+      });
+    }
+    setPickerOpen(false);
+  };
+  const removeSelectedMedia = () => {
+    setFormValue("media_id", null);
+    setImagePreview("");
+    if (contentType === "hero") {
+      setPayload((current) => {
+        const next = { ...current };
+        delete next.hero_asset_url;
+        delete next.hero_mobile_asset_url;
+        delete next.hero_poster_url;
+        delete next.hero_media_type;
+        return next;
+      });
+    }
+  };
 
   function invalidateCms() {
     queryClient.invalidateQueries({ queryKey: ["cms-content"] });
@@ -328,6 +362,12 @@ export default function CmsContentEditPage() {
   function buildPayload() {
     const nextPayload = { ...payload };
     delete nextPayload.image_url;
+    if (contentType === "hero" && form.media_id) {
+      nextPayload.hero_media_type = "image";
+      delete nextPayload.hero_asset_url;
+      delete nextPayload.hero_mobile_asset_url;
+      delete nextPayload.hero_poster_url;
+    }
     if (contentType === "footer_item") nextPayload.group = form.group;
     else delete nextPayload.group;
     if (contentType === "homepage_section") {
@@ -510,12 +550,18 @@ export default function CmsContentEditPage() {
           </FormSection>
 
           {MEDIA_TYPES.has(contentType) ? (
-            <FormSection title="Gambar & media" description="Gunakan gambar lokal agar cepat, aman, dan bisa dikelola dari satu pustaka." testId="cms-editor-media">
+            <FormSection
+              title="Gambar & media"
+              description={contentType === "hero"
+                ? "Unggah atau pilih gambar khusus untuk hero. Gambar ini menggantikan gambar produk katalog; lepas gambar untuk kembali memakai gambar produk."
+                : "Gunakan gambar lokal agar cepat, aman, dan bisa dikelola dari satu pustaka."}
+              testId="cms-editor-media"
+            >
               <div className="flex flex-wrap items-center gap-4">
-                {imagePreview ? <ImageWithFallback src={mediaUrl(imagePreview)} alt="Pratinjau media terpilih" className="h-28 w-28 rounded-lg border border-[#E4DED2] bg-stone-100 object-cover" data-testid="cms-media-preview" /> : <div className="flex h-28 w-28 items-center justify-center rounded-lg border border-dashed border-[#D8D0C1] bg-[#FDFBF6] px-3 text-center text-[10px] font-semibold uppercase tracking-wide text-stone-400" data-testid="cms-media-empty">Belum ada gambar</div>}
-                <div className="space-y-2"><button type="button" onClick={() => setPickerOpen((open) => !open)} className="inline-flex h-10 items-center gap-2 rounded-lg border border-[#CFC7B7] bg-white px-4 text-sm font-semibold text-[#02422C] transition hover:border-[#02422C]" data-testid="cms-media-choose"><ImagePlus className="h-4 w-4" aria-hidden="true" />{pickerOpen ? "Tutup pustaka" : "Pilih gambar"}</button>{form.media_id ? <button type="button" onClick={() => { setFormValue("media_id", null); setImagePreview(""); }} className="block text-left text-xs font-medium text-red-700 hover:underline" data-testid="cms-media-remove">Lepas gambar</button> : <p className="text-xs text-stone-500">Belum ada gambar dipilih.</p>}</div>
+                {imagePreview ? <ImageWithFallback src={mediaUrl(imagePreview)} alt="Pratinjau media terpilih" className="h-28 w-28 rounded-lg border border-[#E4DED2] bg-stone-100 object-cover" data-testid="cms-media-preview" /> : <div className="flex h-28 w-28 items-center justify-center rounded-lg border border-dashed border-[#D8D0C1] bg-[#FDFBF6] px-3 text-center text-[10px] font-semibold uppercase tracking-wide text-stone-400" data-testid="cms-media-empty">{contentType === "hero" ? "Mengikuti gambar produk di bawah" : "Belum ada gambar"}</div>}
+                <div className="space-y-2"><button type="button" onClick={() => setPickerOpen((open) => !open)} className="inline-flex h-10 items-center gap-2 rounded-lg border border-[#CFC7B7] bg-white px-4 text-sm font-semibold text-[#02422C] transition hover:border-[#02422C]" data-testid="cms-media-choose"><ImagePlus className="h-4 w-4" aria-hidden="true" />{pickerOpen ? "Tutup pustaka" : "Pilih gambar"}</button>{heroHasCustomImage || (contentType !== "hero" && form.media_id) ? <button type="button" onClick={removeSelectedMedia} className="block text-left text-xs font-medium text-red-700 hover:underline" data-testid="cms-media-remove">Lepas gambar</button> : <p className="text-xs text-stone-500">{contentType === "hero" ? "Hero menggunakan gambar produk katalog." : "Belum ada gambar dipilih."}</p>}</div>
               </div>
-              {pickerOpen ? <MediaPicker onClose={() => setPickerOpen(false)} onSelect={(asset) => { setFormValue("media_id", asset.id); setImagePreview(asset.url); setPickerOpen(false); }} /> : null}
+              {pickerOpen ? <MediaPicker onClose={() => setPickerOpen(false)} onSelect={selectMedia} /> : null}
             </FormSection>
           ) : null}
 
