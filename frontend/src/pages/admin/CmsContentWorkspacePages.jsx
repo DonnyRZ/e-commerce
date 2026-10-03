@@ -119,6 +119,44 @@ function HomepageRow({ icon: Icon, label, description, entry, createType, create
   );
 }
 
+function DepartmentVisualManager({ entries }) {
+  return (
+    <section data-testid="cms-homepage-row-department" className="rounded-xl border border-[#E9E3D7] bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-4">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#F4F1E9] text-[#8A6420]">
+            <Store className="h-4 w-4" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold text-[#17392C]">Gambar department</p>
+            <p className="mt-1 text-xs text-stone-500">Ganti foto setiap kartu department yang tampil di homepage.</p>
+          </div>
+        </div>
+        <span className="rounded-full bg-[#F0F5EF] px-3 py-1.5 text-xs font-semibold text-[#02422C]">
+          {entries.length} gambar
+        </span>
+      </div>
+      <div className="mt-4 space-y-2">
+        {entries.map((entry) => (
+          <div key={entry.id} className="flex flex-wrap items-center gap-3 rounded-lg border border-[#F0ECE4] px-3 py-2.5">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium text-[#17392C]">{entry.internal_name || entry.slug}</p>
+              <p className="text-[11px] text-stone-500">{entry.slug}</p>
+            </div>
+            <StatusPill status={entry.status} />
+            <Link to={"/cms/" + entry.id} className="inline-flex items-center gap-1 text-sm font-semibold text-[#02422C] hover:underline">
+              Edit <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          </div>
+        ))}
+        <Link to="/cms/new?type=department_visual" className="inline-flex min-h-10 items-center gap-1 text-sm font-semibold text-[#02422C] hover:underline">
+          Tambah gambar department <ArrowRight className="h-4 w-4" aria-hidden="true" />
+        </Link>
+      </div>
+    </section>
+  );
+}
+
 export function CmsHomepageWorkspace() {
   const query = useQuery({
     queryKey: ["cms-homepage-workspace"],
@@ -127,7 +165,9 @@ export function CmsHomepageWorkspace() {
   const entries = useMemo(() => query.data?.items || [], [query.data?.items]);
   const hero = entries.find((entry) => entry.content_type === "hero");
   const departmentVisuals = useMemo(
-    () => entries.filter((entry) => entry.content_type === "department_visual"),
+    () => entries
+      .filter((entry) => entry.content_type === "department_visual")
+      .sort((a, b) => a.sort_order - b.sort_order || a.slug.localeCompare(b.slug)),
     [entries],
   );
   const productSections = useMemo(() => {
@@ -192,15 +232,7 @@ export function CmsHomepageWorkspace() {
               createSlug="home-hero"
               testId="cms-homepage-row-hero"
             />
-            <HomepageRow
-              icon={Store}
-              label="Department"
-              description="Visual kartu departemen yang tampil di homepage."
-              entry={department}
-              createType="department_visual"
-              meta={departmentVisuals.length ? departmentVisuals.length + " visual departemen" : null}
-              testId="cms-homepage-row-department"
-            />
+            <DepartmentVisualManager entries={departmentVisuals} />
             {productSections.map(({ key, entry }, index) => (
               <HomepageRow
                 key={key}

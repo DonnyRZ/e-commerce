@@ -297,10 +297,7 @@ export default function CmsContentEditPage() {
     setForm(nextForm);
     setTranslations(nextTranslations);
     setPayload(nextPayload);
-    const legacyHeroImage = nextType === "hero" && working.payload?.hero_media_type !== "video"
-      ? working.payload?.hero_asset_url || ""
-      : "";
-    setImagePreview(working.image_url || legacyHeroImage);
+    setImagePreview(working.image_url || "");
     const nextBaseline = JSON.stringify({ type: nextType, form: nextForm, translations: nextTranslations, payload: nextPayload });
     baselineRef.current = nextBaseline;
     setBaseline(nextBaseline);
@@ -319,9 +316,7 @@ export default function CmsContentEditPage() {
     ...current,
     [activeLocale]: { ...EMPTY_TRANSLATION, ...(current[activeLocale] || {}), [field]: value },
   }));
-  const heroHasCustomImage = Boolean(
-    form.media_id || (contentType === "hero" && payload.hero_asset_url && payload.hero_media_type !== "video"),
-  );
+  const heroHasCustomImage = Boolean(form.media_id);
   const selectMedia = (asset) => {
     setFormValue("media_id", asset.id);
     setImagePreview(asset.url);

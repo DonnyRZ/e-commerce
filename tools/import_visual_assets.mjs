@@ -98,6 +98,18 @@ function withoutImageUrl(payload) {
   return value;
 }
 
+function cmsMediaPayload(entry) {
+  const payload = withoutImageUrl(entry.payload);
+  if (entry.content_type === "hero") {
+    // The CMS media relation is authoritative for the homepage hero at every
+    // breakpoint; do not leave frontend-static paths in the content payload.
+    delete payload.hero_asset_url;
+    delete payload.hero_mobile_asset_url;
+    delete payload.hero_poster_url;
+  }
+  return payload;
+}
+
 function assertNoRemoteImage(value, label) {
   const serialized = JSON.stringify(value || {});
   const origin = new URL(apiBase).origin;
@@ -193,7 +205,7 @@ async function main() {
     const asset = assets.get(entry.asset_key);
     await patch(`/admin/cms/content/${cmsEntry.id}`, {
       media_id: asset.media_id,
-      payload: withoutImageUrl(cmsEntry.payload),
+      payload: cmsMediaPayload(cmsEntry),
     });
   }
 

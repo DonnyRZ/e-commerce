@@ -1,7 +1,3 @@
-// Local resilience fallbacks. The CMS-imported asset is authoritative; these
-// files keep the first paint usable if the CMS bundle is temporarily empty.
-export const HERO_IMAGE = "/brand/generated/home-hero.jpg";
-
 export const EDITORIALS = [
   {
     id: "e1",

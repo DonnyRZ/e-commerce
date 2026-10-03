@@ -87,7 +87,7 @@ export default function HomePage() {
     if (!isLegacySection || section.payload?.product_ids?.length) return [];
     return [section.payload?.sort === "featured" || (!section.payload?.sort && canonicalKey === "best_sellers") ? "featured" : "newest"];
   }))];
-  if (hero && !hero.image_url && !hero.payload?.hero_asset_url) fallbackSorts.push(heroProductId ? "newest" : "featured");
+  if (hero && !hero.image_url) fallbackSorts.push(heroProductId ? "newest" : "featured");
   const productsByIdQuery = useQuery({
     queryKey: ["products", "home-selected", selectedProductIds.join(",")],
     queryFn: () => getProducts({ ids: selectedProductIds.join(","), limit: selectedProductIds.length }),
@@ -118,9 +118,9 @@ export default function HomePage() {
   const heroProduct = allLoadedProducts.get(heroProductId) || featuredProducts[0] || fallbackProducts[0];
   const heroMedia = heroProduct?.media?.[0];
   const catalogHeroImage = typeof heroMedia === "string" ? heroMedia : heroMedia?.url || "";
-  const heroImage = hero?.image_url || hero?.payload?.hero_asset_url || catalogHeroImage;
+  const heroImage = hero?.image_url || catalogHeroImage;
   const heroMediaType = hero?.image_url ? "image" : hero?.payload?.hero_media_type || (/\.(mp4|webm|mov)(\?|$)/i.test(heroImage) ? "video" : "image");
-  const heroMobileImage = heroMediaType === "image" ? hero?.payload?.hero_mobile_asset_url || "" : "";
+  const heroMobileImage = "";
   const heroTitle = pickCmsLocalized(hero?.translations, locale) || (cmsFailed ? t("page.home.heroTitle") : "");
   const heroEyebrow = pickCmsLocalized(hero?.translations, locale, "eyebrow") || (cmsFailed ? t("brand.tagline") : "");
   const heroSubtitle = pickCmsLocalized(hero?.translations, locale, "subtitle") || (cmsFailed ? t("page.home.heroSubtitle") : "");
@@ -181,13 +181,13 @@ export default function HomePage() {
     <div data-testid="home-page">
       {hero || cmsFailed ? (
         <section data-testid="home-hero" className="relative left-1/2 w-screen -translate-x-1/2 overflow-hidden bg-brand-ivory">
-          <div className="relative">
+          <div className="relative lg:h-[min(90vh,900px)]">
             {heroImage ? heroMediaType === "video" ? (
-              <video src={mediaUrl(heroImage)} poster={hero?.payload?.hero_poster_url ? mediaUrl(hero.payload.hero_poster_url) : undefined} autoPlay muted loop playsInline preload="metadata" aria-label={heroAlt} className="block h-auto w-full object-contain" />
+              <video src={mediaUrl(heroImage)} poster={hero?.payload?.hero_poster_url ? mediaUrl(hero.payload.hero_poster_url) : undefined} autoPlay muted loop playsInline preload="metadata" aria-label={heroAlt} className="block h-auto w-full object-contain lg:h-full" />
             ) : (
-              <picture className="block">
+              <picture className="block lg:absolute lg:inset-0">
                 {heroMobileImage ? <source media="(max-width: 1023px)" srcSet={mediaVariantUrl(heroMobileImage, 1280)} /> : null}
-                <ImageWithFallback src={mediaVariantUrl(heroImage, 1920)} alt={heroAlt} className="block h-auto w-full object-contain" />
+                <ImageWithFallback src={mediaVariantUrl(heroImage, 1920)} alt={heroAlt} className="block h-auto w-full object-contain lg:h-full" />
               </picture>
             ) : <div data-testid="home-hero-placeholder" className="hidden bg-brand-ivory lg:block lg:h-[min(44vh,560px)] lg:min-h-[340px]" />}
             <div className="bg-brand-ivory px-4 pb-8 pt-7 text-foreground sm:px-8 sm:pb-12 lg:absolute lg:inset-0 lg:flex lg:items-end lg:bg-transparent lg:bg-gradient-to-r lg:from-black/45 lg:via-black/10 lg:to-transparent lg:px-12 lg:pb-16 lg:pt-20 lg:text-white">

@@ -3,7 +3,8 @@ the CMS (draft->published), so the storefront can switch to CMS authority
 without any visual change.
 
 Reads the 4-locale strings straight from the frontend translations file to
-avoid duplicating content. Skips entirely if CMS entries already exist.
+avoid duplicating content. Existing operator-managed entries are preserved;
+missing CMS homepage department visuals are added when their media is linked.
 """
 
 import asyncio
@@ -16,7 +17,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sqlalchemy import func, select
 
-from db.models import CmsContentEntry, CmsContentTranslation, Product
+from db.models import (
+    Category,
+    CategoryTranslation,
+    CmsContentEntry,
+    CmsContentTranslation,
+    CmsMediaAsset,
+    CmsMediaTranslation,
+    Product,
+)
 from db.session import SessionLocal
 
 TRANSLATIONS_PATH = os.environ.get(
@@ -260,6 +269,92 @@ def _tr(strings: dict, key: str, locale: str) -> str:
     return strings.get(key, {}).get(locale) or strings.get(key, {}).get("en") or ""
 
 
+DEPARTMENT_VISUAL_SLUGS = (
+    "women-muslimah",
+    "uniqlo-products",
+    "tropical-halal-skincare",
+)
+
+
+async def _seed_missing_department_visuals(session) -> int:
+    """Expose linked generated department media as editable CMS entries."""
+    categories = (
+        await session.execute(
+            select(Category).where(
+                Category.kind == "department",
+                Category.slug.in_(DEPARTMENT_VISUAL_SLUGS),
+                Category.is_active.is_(True),
+                Category.media_id.is_not(None),
+            )
+        )
+    ).scalars().all()
+    if not categories:
+        return 0
+
+    existing_slugs = set(
+        (
+            await session.execute(
+                select(CmsContentEntry.slug).where(
+                    CmsContentEntry.content_type == "department_visual",
+                    CmsContentEntry.slug.in_([category.slug for category in categories]),
+                )
+            )
+        ).scalars().all()
+    )
+    media_ids = [category.media_id for category in categories]
+    media_translations = (
+        await session.execute(
+            select(CmsMediaTranslation).where(CmsMediaTranslation.media_id.in_(media_ids))
+        )
+    ).scalars().all()
+    category_translations = (
+        await session.execute(
+            select(CategoryTranslation).where(
+                CategoryTranslation.category_id.in_([category.id for category in categories])
+            )
+        )
+    ).scalars().all()
+    media_alt = {(item.media_id, item.locale): item.alt_text for item in media_translations}
+    category_name = {
+        (item.category_id, item.locale): item.name for item in category_translations
+    }
+
+    created = 0
+    for category in categories:
+        if category.slug in existing_slugs:
+            continue
+        english_name = category_name.get((category.id, "en")) or category.slug
+        entry = CmsContentEntry(
+            content_type="department_visual",
+            internal_name=f"Homepage department: {english_name}",
+            slug=category.slug,
+            status="published",
+            placement="homepage",
+            sort_order=category.sort_order,
+            is_visible=True,
+            media_id=category.media_id,
+            payload={},
+        )
+        session.add(entry)
+        await session.flush()
+        for locale in LOCALES:
+            alt_text = (
+                media_alt.get((category.media_id, locale))
+                or category_name.get((category.id, locale))
+                or english_name
+            )
+            session.add(
+                CmsContentTranslation(
+                    entry_id=entry.id,
+                    locale=locale,
+                    alt_text=alt_text[:255],
+                )
+            )
+        existing_slugs.add(category.slug)
+        created += 1
+    return created
+
+
 async def seed():
     strings = _load_translations()
     async with SessionLocal() as session:
@@ -315,22 +410,28 @@ async def seed():
                             translation.title = fields["title"]
                             translation.body = fields["body"]
                             changed = True
+            created_visuals = await _seed_missing_department_visuals(session)
+            if created_visuals:
+                changed = True
             if changed:
                 await session.commit()
-            print("cms seed: entries already exist, skipping (idempotent)")
+            print(
+                "cms seed: entries already exist, preserving them"
+                + (f"; added {created_visuals} department visuals" if created_visuals else "")
+            )
             return
 
         created = 0
 
         async def add_entry(content_type, name, slug, translations, sort_order=0,
                             placement="", cta_url=None, secondary_cta_url=None,
-                            payload=None, status="published"):
+                            payload=None, status="published", media_id=None):
             nonlocal created
             entry = CmsContentEntry(
                 content_type=content_type, internal_name=name, slug=slug,
                 status=status, placement=placement, sort_order=sort_order,
                 cta_url=cta_url, secondary_cta_url=secondary_cta_url,
-                payload=payload or {},
+                payload=payload or {}, media_id=media_id,
             )
             session.add(entry)
             await session.flush()
@@ -359,6 +460,12 @@ async def seed():
                 .order_by(Product.featured.desc(), Product.created_at.desc(), Product.id.desc())
                 .limit(1)
             )
+        hero_media = await session.scalar(
+            select(CmsMediaAsset)
+            .where(CmsMediaAsset.original_filename == "home-hero.jpg")
+            .order_by(CmsMediaAsset.created_at.desc(), CmsMediaAsset.id.desc())
+            .limit(1)
+        )
         await add_entry(
             "hero", "Homepage hero", "home-hero",
             {
@@ -372,11 +479,8 @@ async def seed():
                 for loc in LOCALES
             },
             cta_url="/shop", secondary_cta_url="/shop",
-            payload={
-                "product_id": hero_product_id,
-                "hero_asset_url": "/brand/generated/home-hero-smooth-cotton-collection.png",
-                "hero_mobile_asset_url": "/brand/generated/home-hero-smooth-cotton-mobile.png",
-            } if hero_product_id else {},
+            payload={"product_id": hero_product_id} if hero_product_id else {},
+            media_id=hero_media.id if hero_media else None,
         )
 
         catalog_product_ids = {
@@ -470,6 +574,7 @@ async def seed():
                 sort_order=f_idx,
             )
 
+        created += await _seed_missing_department_visuals(session)
         await session.commit()
         print(f"cms seed: created {created} published entries")
 
