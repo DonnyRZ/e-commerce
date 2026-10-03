@@ -357,8 +357,10 @@ export const getCmsContentEntry = (id) =>
   api.get(`/v1/admin/cms/content/${id}`).then((r) => r.data);
 export const getCmsCatalogProducts = (params = {}) =>
   api.get("/v1/admin/cms/catalog-products", { params: clean(params) }).then((r) => r.data);
-export const updateCmsContent = (id, data) =>
-  api.patch(`/v1/admin/cms/content/${id}`, data).then((r) => r.data);
+export const updateCmsContent = (id, data, { publishImmediately = false } = {}) =>
+  api.patch(`/v1/admin/cms/content/${id}`, data, {
+    params: publishImmediately ? { publish_immediately: true } : {},
+  }).then((r) => r.data);
 export const deleteCmsContent = (id) =>
   api.delete(`/v1/admin/cms/content/${id}`).then((r) => r.data);
 export const setCmsContentStatus = (id, action) =>

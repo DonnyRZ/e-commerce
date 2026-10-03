@@ -524,11 +524,17 @@ async def get_content(
 async def update_content(
     entry_id: str,
     payload: CmsContentPatchIn,
+    publish_immediately: bool = Query(default=False),
     user: User = Depends(require_admin),
     session: AsyncSession = Depends(get_session),
     _: None = Depends(csrf_protect),
 ):
     entry = await _get_entry(session, entry_id, lock=True)
+    if publish_immediately and (entry.content_type != "hero" or entry.status != "published"):
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "immediate_publish_only_for_published_hero"},
+        )
     data = payload.model_dump(exclude_unset=True)
     translations = data.pop("translations", None)
     if "translations" in payload.model_fields_set and translations is None:
@@ -578,8 +584,17 @@ async def update_content(
             and await _footer_group_in_use(session, entry.slug)
         ):
             raise HTTPException(status_code=409, detail={"error": "footer_group_in_use"})
-        entry.draft_snapshot = working
-        await cms.add_revision(session, entry, "saved_draft", user.id, snapshot_override=working)
+        if publish_immediately:
+            await _validate_publish(session, entry.content_type, working, entry.id)
+            cms.apply_snapshot(entry, working)
+            await _replace_translations(session, entry.id, working.get("translations") or {})
+            entry.draft_snapshot = None
+            from datetime import datetime, timezone
+            entry.published_at = datetime.now(timezone.utc)
+            await cms.add_revision(session, entry, "published", user.id)
+        else:
+            entry.draft_snapshot = working
+            await cms.add_revision(session, entry, "saved_draft", user.id, snapshot_override=working)
     else:
         _validate_content(entry.content_type, data.get("slug", entry.slug),
                           translations or {}, data.get("cta_url", entry.cta_url),
@@ -611,7 +626,8 @@ async def update_content(
             await _upsert_translations(session, entry.id, translations)
         await cms.add_revision(session, entry, "saved_draft", user.id)
     entry.updated_by = user.id
-    await cms.audit(session, user.id, "cms.content.update", entry.content_type, entry.id, None)
+    audit_action = "cms.content.publish" if publish_immediately else "cms.content.update"
+    await cms.audit(session, user.id, audit_action, entry.content_type, entry.id, None)
     await session.commit()
     return await cms.entry_detail(session, entry)
 

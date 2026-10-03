@@ -405,10 +405,11 @@ export default function CmsContentEditPage() {
     return messages[code] || (typeof detail === "string" ? detail : "Terjadi kesalahan. Periksa isian lalu coba lagi.");
   };
 
-  async function persistDraft() {
+  async function persistChanges() {
+    const publishHeroImmediately = !isNew && contentType === "hero" && status === "published";
     const saved = isNew
       ? await createCmsContent({ content_type: contentType, ...buildPayload() })
-      : await updateCmsContent(entryId, buildPayload());
+      : await updateCmsContent(entryId, buildPayload(), { publishImmediately: publishHeroImmediately });
     if (isNew) {
       toast.success("Draft konten berhasil dibuat");
       invalidateCms();
@@ -418,7 +419,9 @@ export default function CmsContentEditPage() {
     const currentFormState = JSON.stringify({ type: contentType, form, translations: localeText, payload });
     baselineRef.current = currentFormState;
     setBaseline(currentFormState);
-    toast.success(status === "published" ? "Perubahan tersimpan sebagai draft; versi tayang tetap sama." : "Draft berhasil disimpan.");
+    toast.success(publishHeroImmediately
+      ? "Hero berhasil disimpan dan langsung tayang."
+      : status === "published" ? "Perubahan tersimpan sebagai draft; versi tayang tetap sama." : "Draft berhasil disimpan.");
     invalidateCms();
     await entryQuery.refetch();
     return saved;
@@ -427,12 +430,13 @@ export default function CmsContentEditPage() {
   async function save(event) {
     event?.preventDefault();
     if (saving) return;
+    if (contentType === "hero" && status === "published" && !dirty && !entry?.has_unpublished_changes) return;
     if (!form.internal_name.trim()) {
       toast.error("Nama internal wajib diisi.");
       return;
     }
     setSaving(true);
-    try { await persistDraft(); }
+    try { await persistChanges(); }
     catch (error) { toast.error(errorMessage(error)); }
     finally { setSaving(false); }
   }
@@ -504,7 +508,7 @@ export default function CmsContentEditPage() {
     archived: "bg-amber-50 text-amber-800",
   };
   const localeMissing = activeLocale !== "en" && !Object.values(localeText[activeLocale] || {}).some((value) => String(value || "").trim());
-  const statusActions = status === "draft" ? ["publish", "archive"] : status === "published" ? [...(entry?.has_unpublished_changes ? ["publish"] : []), "unpublish", "archive"] : ["publish"];
+  const statusActions = status === "draft" ? ["publish", "archive"] : status === "published" ? [...(entry?.has_unpublished_changes && contentType !== "hero" ? ["publish"] : []), "unpublish", "archive"] : ["publish"];
 
   return (
     <div data-testid="cms-content-editor" className="mx-auto max-w-7xl space-y-6 pb-28">
@@ -585,9 +589,9 @@ export default function CmsContentEditPage() {
 
         <aside className="space-y-5 xl:sticky xl:top-20 xl:self-start">
           <section className="rounded-xl border border-[#E9E3D7] bg-[#FDFBF6] p-5 shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#8A6420]">Alur publikasi</p>
-            <h2 className="mt-2 font-brand text-xl font-semibold text-[#17392C]">{status === "published" ? "Versi tayang aman" : status === "archived" ? "Konten diarsipkan" : "Siapkan untuk toko"}</h2>
-            <p className="mt-2 text-xs leading-5 text-stone-600">{status === "published" ? "Simpan perubahan sebagai draft. Versi tayang tidak berubah sampai Anda memilih Terbitkan." : status === "archived" ? "Konten tidak terlihat oleh pelanggan. Anda bisa mengedit draft atau menerbitkannya kembali." : "Simpan sebagai draft kapan saja. Publish hanya aktif setelah teks English dan relasi wajib lengkap."}</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#8A6420]">{contentType === "hero" && status === "published" ? "HERO HOMEPAGE" : "Alur publikasi"}</p>
+            <h2 className="mt-2 font-brand text-xl font-semibold text-[#17392C]">{contentType === "hero" && status === "published" ? "Simpan langsung ke toko" : status === "published" ? "Versi tayang aman" : status === "archived" ? "Konten diarsipkan" : "Siapkan untuk toko"}</h2>
+            <p className="mt-2 text-xs leading-5 text-stone-600">{contentType === "hero" && status === "published" ? "Simpan untuk langsung menayangkan perubahan hero di toko." : status === "published" ? "Simpan perubahan sebagai draft. Versi tayang tidak berubah sampai Anda memilih Terbitkan." : status === "archived" ? "Konten tidak terlihat oleh pelanggan. Anda bisa mengedit draft atau menerbitkannya kembali." : "Simpan sebagai draft kapan saja. Publish hanya aktif setelah teks English dan relasi wajib lengkap."}</p>
             {entry?.published_at ? <p className="mt-4 border-t border-[#E9E3D7] pt-3 text-[11px] text-stone-500">Terakhir tayang: {new Date(entry.published_at).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</p> : null}
             <div className="mt-4 flex items-center gap-2 text-xs"><span className={`h-2 w-2 rounded-full ${dirty ? "bg-[#CD9B3A]" : "bg-emerald-600"}`} /><span className="text-stone-600">{dirty ? "Perubahan belum disimpan" : "Semua perubahan tersimpan"}</span></div>
           </section>
@@ -604,7 +608,7 @@ export default function CmsContentEditPage() {
               {!isNew ? statusActions.map((action) => (
                 <button key={action} type="button" onClick={() => changeStatus(action)} disabled={saving || !form.internal_name.trim() || (action === "publish" && required.length > 0)} className={`h-10 rounded-lg px-4 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-45 ${action === "publish" ? "bg-[#02422C] text-white hover:bg-[#063723]" : action === "archive" ? "border border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100" : "border border-[#DDD6C8] bg-white text-stone-700 hover:bg-stone-100"}`} data-testid={`cms-action-${action}`}>{action === "publish" ? "Terbitkan" : action === "archive" ? "Arsipkan" : "Jadikan draft"}</button>
               )) : null}
-              <button type="submit" disabled={saving || !form.internal_name.trim()} data-testid="cms-save" className="inline-flex h-10 items-center gap-2 rounded-lg border border-[#02422C] bg-white px-4 text-xs font-bold text-[#02422C] transition hover:bg-[#02422C]/5 disabled:opacity-50"><Save className="h-4 w-4" aria-hidden="true" />{saving ? "Menyimpan…" : isNew ? "Simpan draft" : status === "published" ? "Simpan perubahan" : "Simpan draft"}</button>
+              <button type="submit" disabled={saving || !form.internal_name.trim()} data-testid="cms-save" className="inline-flex h-10 items-center gap-2 rounded-lg border border-[#02422C] bg-white px-4 text-xs font-bold text-[#02422C] transition hover:bg-[#02422C]/5 disabled:opacity-50"><Save className="h-4 w-4" aria-hidden="true" />{saving ? "Menyimpan…" : isNew ? "Simpan draft" : contentType === "hero" && status === "published" ? "Simpan & tayangkan" : status === "published" ? "Simpan perubahan" : "Simpan draft"}</button>
             </div>
           </div>
         </div>
