@@ -1,0 +1,99 @@
+name: Deploy production
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_confirmed:
+        description: Confirm that database and media backups are verified off-server
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marketplace-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Deploy selected commit to VPS
+    needs: verify
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/codex/deployment-marketplace'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://shanicantik.com
+    timeout-minutes: 35
+    steps:
+      - name: Require verified off-server backups
+        if: ${{ inputs.backup_confirmed != true }}
+        run: |
+          echo "::error::Verify and copy the database and media backups off-server before deployment."
+          exit 1
+
+      - name: Check out selected commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Prepare immutable release archive
+        id: release
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::The selected commit SHA is invalid."
+            exit 1
+          fi
+          archive="$RUNNER_TEMP/$DEPLOY_SHA.tar.gz"
+          git archive --format=tar.gz --output="$archive" "$DEPLOY_SHA"
+          (
+            cd "$RUNNER_TEMP"
+            sha256sum "$DEPLOY_SHA.tar.gz" > "$DEPLOY_SHA.tar.gz.sha256"
+          )
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Configure pinned SSH access
+        env:
+          VPS_DEPLOY_KEY: ${{ secrets.VPS_DEPLOY_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          for name in VPS_DEPLOY_KEY VPS_KNOWN_HOSTS VPS_HOST; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Repository secret $name is missing."
+              exit 1
+            fi
+          done
+          install -m 0700 -d "$HOME/.ssh"
+          printf '%s\n' "$VPS_DEPLOY_KEY" > "$HOME/.ssh/marketplace_deploy_key"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/marketplace_deploy_key" "$HOME/.ssh/known_hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+
+      - name: Upload release and deploy
+        env:
+          DEPLOY_SHA: ${{ steps.release.outputs.sha }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$VPS_USER" ]]; then
+            echo "::error::Repository secret VPS_USER is missing."
+            exit 1
+          fi
+          ssh_options=(-i "$HOME/.ssh/marketplace_deploy_key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+          target="$VPS_USER@$VPS_HOST"
+          ssh "${ssh_options[@]}" "$target" "mkdir -p /var/www/marketplace/incoming"
+          scp "${ssh_options[@]}" "${{ steps.release.outputs.archive }}" "$target:/var/www/marketplace/incoming/$DEPLOY_SHA.tar.gz"
+          scp "${ssh_options[@]}" "${{ steps.release.outputs.archive }}.sha256" "$target:/var/www/marketplace/incoming/$DEPLOY_SHA.tar.gz.sha256"
+          ssh "${ssh_options[@]}" "$target" "sudo -n /usr/local/sbin/marketplace-deploy $DEPLOY_SHA"

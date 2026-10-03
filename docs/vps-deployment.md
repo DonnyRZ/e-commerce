@@ -102,5 +102,56 @@ and copy backups outside the VPS. Application rollback is a symlink switch to th
 previous release followed by a Compose rebuild and health check. Database rollback
 uses a verified backup restore, not Alembic downgrade.
 
+## GitHub Actions deployment
+
+Production deployment is a manual workflow dispatch after the reusable CI
+workflow passes. It packages the selected commit and sends that immutable
+release to the VPS over SSH; the VPS does not need GitHub credentials or a
+`git pull` in the live directory. The dispatch requires confirmation that
+database and media backups have been verified off-server. Backups must not be
+uploaded to GitHub Actions artifacts.
+
+Create the GitHub Actions environment `production`, require a deployment
+reviewer where the repository plan supports it, and add environment secrets
+`VPS_HOST`, `VPS_USER`, `VPS_DEPLOY_KEY`, and `VPS_KNOWN_HOSTS`. The workflow
+expects these values before it can connect. Use a dedicated SSH account with no
+Docker-group membership. Give it write access only to
+`/var/www/marketplace/incoming` and allow passwordless sudo only for the
+root-owned deployment wrapper installed at
+`/usr/local/sbin/marketplace-deploy`. Keep `/var/www/marketplace/releases`,
+`/var/www/marketplace/current`, `/etc/marketplace`, and media directories
+unwritable by that account. Verify the VPS host-key fingerprint out of band
+before saving `VPS_KNOWN_HOSTS`; do not populate it from an unverified
+`ssh-keyscan` result.
+
+Install the wrapper from a reviewed release as root, then restrict its owner
+and permissions:
+
+```bash
+install -o root -g root -m 0750 \
+  deploy/production/marketplace-deploy-vps.sh \
+  /usr/local/sbin/marketplace-deploy
+```
+
+Add a narrowly scoped sudoers rule with `visudo` after confirming the deploy
+account and paths on the VPS:
+
+```sudoers
+marketplace-deploy ALL=(root) NOPASSWD: /usr/local/sbin/marketplace-deploy
+```
+
+The wrapper verifies the uploaded archive checksum, runs the existing
+migration/deploy script, checks `/api/health` and `/api/ready`, and only then
+switches `current`. It attempts to rebuild the previous release if deployment
+or health checks fail. Database migrations are not automatically reversed;
+restore from the verified backup if a migration is incompatible with the old
+application. Keep prior release directories until the rollback window passes.
+
+The current production branch in this repository is
+`codex/deployment-marketplace`; CI also watches `main` for the later branch
+standardization. Dispatch production only from one of those reviewed branches.
+The workflow file must exist on the repository's default branch to appear in
+the Actions tab.
+
 Only ports 22, 80, and 443 should be publicly reachable. Redis, backend,
 PostgreSQL, and the frontend's 8080 listener remain private.
