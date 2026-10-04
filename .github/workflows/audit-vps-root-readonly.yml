@@ -81,6 +81,7 @@ jobs:
           async def main():
               since = utcnow() - timedelta(hours=24)
               kind = AdminPushDelivery.payload["kind"].as_string()
+              tag = AdminPushDelivery.payload["tag"].as_string()
               query = (
                   select(
                       kind.label("kind"),
@@ -93,6 +94,35 @@ jobs:
                   .where(AdminPushDelivery.created_at >= since)
                   .group_by(kind, AdminPushDelivery.status, AdminPushDelivery.last_status)
                   .order_by(kind, AdminPushDelivery.status, AdminPushDelivery.last_status)
+              )
+              tag_counts = (
+                  select(tag.label("tag"), func.count().label("n"))
+                  .where(kind == "telegram", AdminPushDelivery.created_at >= since)
+                  .group_by(tag)
+                  .subquery()
+              )
+              delivery_gap = func.extract(
+                  "epoch", AdminPushDelivery.created_at - TelegramInboxMessage.created_at
+              )
+              delivery_gap_query = (
+                  select(
+                      func.count(),
+                      func.min(delivery_gap),
+                      func.avg(delivery_gap),
+                      func.max(delivery_gap),
+                  )
+                  .select_from(AdminPushDelivery)
+                  .join(
+                      TelegramInboxMessage,
+                      AdminPushDelivery.event_key
+                      == func.concat("telegram-message:", TelegramInboxMessage.id),
+                  )
+                  .where(
+                      TelegramInboxMessage.direction == "inbound",
+                      TelegramInboxMessage.created_at >= since,
+                      kind == "telegram",
+                      AdminPushDelivery.created_at >= since,
+                  )
               )
               async with SessionLocal() as session:
                   inbound = await session.scalar(
@@ -120,10 +150,34 @@ jobs:
                       .group_by(TelegramUpdateReceipt.status)
                       .order_by(TelegramUpdateReceipt.status)
                   )
+                  repeated_tag_groups = await session.scalar(
+                      select(func.count())
+                      .select_from(tag_counts)
+                      .where(tag_counts.c.n > 1)
+                  )
+                  repeated_tag_pushes = await session.scalar(
+                      select(func.coalesce(func.sum(tag_counts.c.n), 0))
+                      .select_from(tag_counts)
+                      .where(tag_counts.c.n > 1)
+                  )
+                  max_same_tag = await session.scalar(
+                      select(func.coalesce(func.max(tag_counts.c.n), 0))
+                      .select_from(tag_counts)
+                  )
                   deliveries = (await session.execute(query)).all()
+                  gap = (await session.execute(delivery_gap_query)).one()
                   receipt_rows = receipts.all()
               print(f"telegram_inbound_messages_last_24h={inbound or 0}")
               print(f"eligible_admin_devices={eligible or 0}")
+              print(
+                  "telegram_tags_reused=%s pushes_on_reused_tags=%s max_pushes_per_tag=%s"
+                  % (repeated_tag_groups or 0, repeated_tag_pushes or 0, max_same_tag or 0)
+              )
+              gap_values = [round(float(value), 2) if value is not None else None for value in gap[1:]]
+              print(
+                  "telegram_message_to_queue_seconds count=%s min=%s avg=%s max=%s"
+                  % (gap[0], *gap_values)
+              )
               for status, count in receipt_rows:
                   print(f"telegram_webhook_receipts status={status} count={count}")
               for row in deliveries:
