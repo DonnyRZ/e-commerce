@@ -66,6 +66,25 @@ test("malformed push still shows a generic notification and only CMS windows are
   expect(storeMessages).toEqual([]);
 });
 
+test("repeated Telegram messages re-alert while keeping the conversation notification tag", async () => {
+  const instance = worker();
+  const payload = {
+    title: "Chat Telegram baru",
+    url: "/admin/telegram-inbox?conversation=123",
+    tag: "cms-telegram:/admin/telegram-inbox?conversation=123",
+    kind: "telegram",
+  };
+
+  await instance.emit("push", { data: { json: () => ({ ...payload, body: "Pesan pertama" }) } });
+  await instance.emit("push", { data: { json: () => ({ ...payload, body: "Pesan susulan" }) } });
+
+  expect(instance.notifications).toHaveLength(2);
+  expect(instance.notifications.map(({ tag, renotify }) => ({ tag, renotify }))).toEqual([
+    { tag: payload.tag, renotify: true },
+    { tag: payload.tag, renotify: true },
+  ]);
+});
+
 test("API, media and store requests are never cached; only CMS navigation has an offline fallback", async () => {
   const instance = worker();
   for (const url of ["/api/v1/admin/orders", "/api/v1/cms/media/file/test", "/account"]) {
