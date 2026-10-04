@@ -83,7 +83,7 @@ jobs:
           VPS_USER: ${{ secrets.VPS_USER }}
         run: |
           set -euo pipefail
-          ssh_options=(-i "$HOME/.ssh/marketplace_deploy_key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+          ssh_options=(-i "$HOME/.ssh/marketplace_deploy_key" -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
           target="$VPS_USER@$VPS_HOST"
           current_release="$(ssh "${ssh_options[@]}" "$target" "readlink -f /var/www/marketplace/current")"
           current_sha="${current_release##*/}"
@@ -135,9 +135,33 @@ jobs:
             echo "::error::Deployment secret VPS_USER is missing (repository or production environment)."
             exit 1
           fi
-          ssh_options=(-i "$HOME/.ssh/marketplace_deploy_key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+          ssh_options=(-i "$HOME/.ssh/marketplace_deploy_key" -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
           target="$VPS_USER@$VPS_HOST"
           ssh "${ssh_options[@]}" "$target" "mkdir -p /var/www/marketplace/incoming"
-          scp "${ssh_options[@]}" "${{ steps.release.outputs.archive }}" "$target:/var/www/marketplace/incoming/$DEPLOY_SHA.tar.gz"
-          scp "${ssh_options[@]}" "${{ steps.release.outputs.archive }}.sha256" "$target:/var/www/marketplace/incoming/$DEPLOY_SHA.tar.gz.sha256"
+          # A broken SFTP stream previously hung after only 783 KB. Bound
+          # transfers and resume with rsync when it is installed on both hosts.
+          printf -v ssh_transport '%q ' ssh "${ssh_options[@]}"
+          archive="${{ steps.release.outputs.archive }}"
+          uploaded=false
+          use_rsync=false
+          if command -v rsync >/dev/null && ssh "${ssh_options[@]}" "$target" 'command -v rsync >/dev/null'; then
+            use_rsync=true
+          fi
+          for attempt in 1 2 3; do
+            echo "Release transfer attempt $attempt (rsync=$use_rsync)"
+            if [[ "$use_rsync" == "true" ]]; then
+              if timeout --kill-after=10s 900s rsync --partial --append-verify --timeout=60 --info=progress2 -e "$ssh_transport" "$archive" "$target:/var/www/marketplace/incoming/$DEPLOY_SHA.tar.gz"; then
+                uploaded=true
+                break
+              fi
+            elif timeout --kill-after=10s 600s scp -O "${ssh_options[@]}" "$archive" "$target:/var/www/marketplace/incoming/$DEPLOY_SHA.tar.gz"; then
+              uploaded=true
+              break
+            fi
+          done
+          if [[ "$uploaded" != "true" ]]; then
+            echo "::error::Release archive transfer failed after three bounded attempts."
+            exit 1
+          fi
+          timeout --kill-after=10s 60s scp -O "${ssh_options[@]}" "$archive.sha256" "$target:/var/www/marketplace/incoming/$DEPLOY_SHA.tar.gz.sha256"
           ssh "${ssh_options[@]}" "$target" "sudo -n /usr/local/sbin/marketplace-deploy $DEPLOY_SHA"
