@@ -23,16 +23,40 @@ function notificationUrl(value) {
   } catch { /* Unsafe links return to the inbox. */ }
   return new URL("/admin/telegram-inbox", self.location.origin).href;
 }
+function reportPushStage(audit, stage) {
+  if (!audit?.delivery_id || !audit?.ack_token) return Promise.resolve();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  return fetch("/api/v1/admin/push/delivery-ack", {
+    method: "POST",
+    credentials: "omit",
+    cache: "no-store",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({delivery_id: audit.delivery_id, ack_token: audit.ack_token, stage}),
+    signal: controller.signal,
+  }).catch(() => {}).finally(() => clearTimeout(timeout));
+}
 self.addEventListener("push", event => {
   let data = {};
   try { data = event.data?.json() || {}; } catch { /* Display a useful generic notification. */ }
   const url = notificationUrl(data.url);
+  const audit = data._audit || {};
+  const receivedAck = reportPushStage(audit, "push_received");
   event.waitUntil(Promise.all([
-    self.registration.showNotification(String(data.title || "CMS memerlukan perhatian").slice(0, 200), {
-      body: String(data.body || "Buka CMS untuk melihat pesan dan order terbaru.").slice(0, 500),
-      icon: "/admin/pwa/icon-192.png", badge: "/admin/pwa/badge-96.png",
-      tag: String(data.tag || "cantik-cms"), renotify: true, data: {url},
-    }),
+    (async () => {
+      try {
+        await self.registration.showNotification(String(data.title || "CMS memerlukan perhatian").slice(0, 200), {
+          body: String(data.body || "Buka CMS untuk melihat pesan dan order terbaru.").slice(0, 500),
+          icon: "/admin/pwa/icon-192.png", badge: "/admin/pwa/badge-96.png",
+          tag: String(data.tag || "cantik-cms"), renotify: true, data: {url},
+        });
+        await reportPushStage(audit, "notification_show_resolved");
+      } catch (error) {
+        await reportPushStage(audit, "notification_show_failed");
+        throw error;
+      }
+    })(),
+    receivedAck,
     self.clients.matchAll({type: "window", includeUncontrolled: true}).then(clients => {
       clients.filter(client => new URL(client.url).pathname.startsWith("/admin/")).forEach(client => client.postMessage({type: "CMS_PUSH", kind: data.kind || "telegram"}));
     }),

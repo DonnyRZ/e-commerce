@@ -5,6 +5,7 @@ import os
 import secrets
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -294,6 +295,66 @@ class AdminDeviceIntegrationTests(unittest.IsolatedAsyncioTestCase):
             ).status_code,
             200,
         )
+
+    async def test_service_worker_ack_is_delivery_scoped_and_never_logs_token(self):
+        await self.register_devices()
+        delivery_id = secrets.token_hex(16)
+        ack_token = secrets.token_urlsafe(32)
+        now = utcnow()
+        async with SessionLocal() as session:
+            subscription = await session.scalar(
+                select(AdminPushSubscription).where(
+                    AdminPushSubscription.endpoint_hash
+                    == admin_push.endpoint_hash(self.endpoints[0])
+                )
+            )
+            session.add(
+                AdminPushDelivery(
+                    id=delivery_id,
+                    subscription_id=subscription.id,
+                    user_id=self.users[0].id,
+                    token_version=self.users[0].token_version,
+                    event_key="ack-test:" + self.prefix,
+                    payload={
+                        "_audit": {
+                            "delivery_id": delivery_id,
+                            "ack_token": ack_token,
+                        }
+                    },
+                    status="sent",
+                    attempts=1,
+                    last_status=201,
+                    created_at=now,
+                    next_attempt_at=now,
+                    expires_at=now + timedelta(days=1),
+                )
+            )
+            await session.commit()
+
+        async with self.assertLogs("routers.admin_push", level="INFO") as captured:
+            response = await self.clients[0].post(
+                "/api/v1/admin/push/delivery-ack",
+                json={
+                    "delivery_id": delivery_id,
+                    "ack_token": ack_token,
+                    "stage": "notification_show_resolved",
+                },
+            )
+        self.assertEqual(response.status_code, 204)
+        output = "\n".join(captured.output)
+        self.assertIn("notification_show_resolved", output)
+        self.assertIn(delivery_id, output)
+        self.assertNotIn(ack_token, output)
+
+        invalid = await self.clients[0].post(
+            "/api/v1/admin/push/delivery-ack",
+            json={
+                "delivery_id": delivery_id,
+                "ack_token": secrets.token_urlsafe(32),
+                "stage": "push_received",
+            },
+        )
+        self.assertEqual(invalid.status_code, 204)
 
     async def test_webhook_fanout_duplicate_edit_outbound_and_unsubscribe(self):
         await self.register_devices()

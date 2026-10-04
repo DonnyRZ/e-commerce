@@ -133,6 +133,16 @@ class PushTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             all(value["title"] == "Chat Telegram baru" for value in payloads)
         )
+        audit_values = [value["_audit"] for value in payloads]
+        self.assertEqual(len({value["delivery_id"] for value in audit_values}), 3)
+        self.assertTrue(
+            all(
+                len(value["delivery_id"]) == 32
+                and len(value["ack_token"]) == 43
+                for value in audit_values
+            )
+        )
+        self.assertEqual(len({value["ack_token"] for value in audit_values}), 3)
         self.assertNotIn("customer_name", json.dumps(payloads))
 
     async def test_disabled_push_does_not_change_existing_business_transactions(self):
@@ -150,8 +160,20 @@ class PushTests(unittest.IsolatedAsyncioTestCase):
     async def test_one_expired_device_does_not_prevent_delivery_to_other_admins(self):
         expired = SimpleNamespace(endpoint="expired", enabled=True)
         healthy = SimpleNamespace(endpoint="healthy", enabled=True)
-        delivery1 = SimpleNamespace(attempts=0, status="pending", payload={})
-        delivery2 = SimpleNamespace(attempts=0, status="pending", payload={})
+        delivery1 = SimpleNamespace(
+            id="delivery-1",
+            created_at=admin_push.utcnow(),
+            attempts=0,
+            status="pending",
+            payload={},
+        )
+        delivery2 = SimpleNamespace(
+            id="delivery-2",
+            created_at=admin_push.utcnow(),
+            attempts=0,
+            status="pending",
+            payload={},
+        )
         result = SimpleNamespace(
             all=lambda: [(delivery1, expired), (delivery2, healthy)]
         )
@@ -176,7 +198,13 @@ class PushTests(unittest.IsolatedAsyncioTestCase):
         self,
     ):
         device = SimpleNamespace(endpoint="retry", enabled=True)
-        row = SimpleNamespace(attempts=0, status="pending", payload={})
+        row = SimpleNamespace(
+            id="delivery-retry",
+            created_at=admin_push.utcnow(),
+            attempts=0,
+            status="pending",
+            payload={},
+        )
         result = SimpleNamespace(all=lambda: [(row, device)])
         session = SimpleNamespace(
             execute=AsyncMock(side_effect=[None, result]), commit=AsyncMock()

@@ -7,6 +7,7 @@ import base64
 import hashlib
 import json
 import logging
+import secrets
 from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlparse
@@ -134,12 +135,18 @@ async def enqueue_admin_notification(
     now = utcnow()
     rows = [
         {
-            "id": uid(),
+            "id": (delivery_id := uid()),
             "subscription_id": sub.id,
             "user_id": sub.user_id,
             "token_version": sub.token_version,
             "event_key": event_key,
-            "payload": payload,
+            "payload": {
+                **payload,
+                "_audit": {
+                    "delivery_id": delivery_id,
+                    "ack_token": secrets.token_urlsafe(32),
+                },
+            },
             "status": "pending",
             "attempts": 0,
             "created_at": now,
@@ -207,10 +214,29 @@ async def dispatch_pending(session) -> int:
     async def deliver(row, subscription):
         async with semaphore:
             row.attempts += 1
+            dispatch_started_at = utcnow()
+            logger.info(
+                "admin_push_dispatch_started delivery_id=%s queued_at_utc=%s "
+                "attempt=%s dispatch_started_at_utc=%s",
+                row.id,
+                row.created_at.isoformat(),
+                row.attempts,
+                dispatch_started_at.isoformat(),
+            )
             try:
-                await asyncio.to_thread(send_delivery, subscription, row.payload)
+                response = await asyncio.to_thread(
+                    send_delivery, subscription, row.payload
+                )
+                status = getattr(response, "status_code", 201)
                 row.status = "sent"
-                row.last_status = 201
+                row.last_status = status
+                logger.info(
+                    "admin_push_provider_accepted delivery_id=%s status=%s "
+                    "accepted_at_utc=%s",
+                    row.id,
+                    status,
+                    utcnow().isoformat(),
+                )
             except Exception as exc:
                 response = exc.response if isinstance(exc, WebPushException) else None
                 status = getattr(response, "status_code", None)
@@ -236,9 +262,12 @@ async def dispatch_pending(session) -> int:
                         pass
                     row.next_attempt_at = utcnow() + timedelta(seconds=retry)
                     logger.warning(
-                        "admin_push_delivery_failed status=%s attempt=%s",
+                        "admin_push_delivery_failed delivery_id=%s status=%s "
+                        "attempt=%s failed_at_utc=%s",
+                        row.id,
                         status,
                         row.attempts,
+                        utcnow().isoformat(),
                     )
 
     await asyncio.gather(*(deliver(row, sub) for row, sub in rows))

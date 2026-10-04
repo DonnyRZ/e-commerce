@@ -1,6 +1,10 @@
 """Only active administrators may register or test their current device."""
 
-from fastapi import APIRouter, Depends, HTTPException
+import hmac
+import logging
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -12,11 +16,12 @@ from admin_push import (
     valid_endpoint,
     valid_key,
 )
-from db.models import AdminPushSubscription, User, uid, utcnow
+from db.models import AdminPushDelivery, AdminPushSubscription, User, uid, utcnow
 from db.session import get_session
 
 router = APIRouter(prefix="/api/v1/admin/push", tags=["admin-push"])
 require_admin = require_roles("admin")
+logger = logging.getLogger(__name__)
 
 
 class KeysIn(BaseModel):
@@ -30,6 +35,38 @@ class EndpointIn(BaseModel):
 
 class SubscriptionIn(EndpointIn):
     keys: KeysIn
+
+
+class DeliveryAckIn(BaseModel):
+    delivery_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    ack_token: str = Field(min_length=43, max_length=43)
+    stage: Literal[
+        "push_received",
+        "notification_show_resolved",
+        "notification_show_failed",
+    ]
+
+
+@router.post("/delivery-ack", status_code=204, response_class=Response)
+async def delivery_ack(payload: DeliveryAckIn, session=Depends(get_session)):
+    """Accept a one-delivery bearer acknowledgment from the service worker."""
+    delivery = await session.get(AdminPushDelivery, payload.delivery_id)
+    audit = (delivery.payload or {}).get("_audit", {}) if delivery else {}
+    saved_token = audit.get("ack_token", "")
+    if (
+        delivery
+        and isinstance(saved_token, str)
+        and hmac.compare_digest(saved_token, payload.ack_token)
+    ):
+        logger.info(
+            "admin_push_device_stage delivery_id=%s stage=%s observed_at_utc=%s",
+            delivery.id,
+            payload.stage,
+            utcnow().isoformat(),
+        )
+    # Keep invalid and unknown delivery IDs indistinguishable. The token is
+    # random, single-delivery scope, and never written to logs.
+    return Response(status_code=204)
 
 
 @router.get("/config")
