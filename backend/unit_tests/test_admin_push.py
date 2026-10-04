@@ -97,7 +97,7 @@ class PushTests(unittest.IsolatedAsyncioTestCase):
         ]
         session = SimpleNamespace(
             scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: devices)),
-            execute=AsyncMock(),
+            execute=AsyncMock(), info={},
         )
         with patch.object(admin_push, "ADMIN_PUSH_ENABLED", True), patch.object(
             admin_push, "send_delivery"
@@ -144,6 +144,35 @@ class PushTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(len({value["ack_token"] for value in audit_values}), 3)
         self.assertNotIn("customer_name", json.dumps(payloads))
+
+    async def test_message_tags_are_unique_per_event_and_stable_for_retries(self):
+        device = SimpleNamespace(id="device", user_id="admin", token_version=1)
+        session = SimpleNamespace(
+            scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [device])),
+            execute=AsyncMock(), info={},
+        )
+        tags = []
+        with patch.object(admin_push, "ADMIN_PUSH_ENABLED", True):
+            for key in ["telegram-message:first", "telegram-message:second", "telegram-message:first"]:
+                await admin_push.enqueue_admin_notification(session, key, "telegram", "/admin/telegram-inbox?conversation=same")
+                statement = session.execute.call_args.args[0].compile(dialect=postgresql.dialect())
+                payload = next(v for k, v in statement.params.items() if k.startswith("payload_"))
+                tags.append(payload["tag"])
+                self.assertIsInstance(payload["timestamp"], int)
+        self.assertNotEqual(tags[0], tags[1])
+        self.assertEqual(tags[0], tags[2])
+
+    def test_committed_queue_wakes_dispatcher_but_rollback_clears_signal(self):
+        wakeup = Mock()
+        with patch.object(admin_push, "_push_wakeup", wakeup):
+            session = SimpleNamespace(info={"admin_push_queued": True})
+            admin_push._discard_rolled_back_push(session)
+            admin_push._wake_committed_push(session)
+            wakeup.set.assert_not_called()
+            session.info["admin_push_queued"] = True
+            admin_push._wake_committed_push(session)
+            wakeup.set.assert_called_once()
+            self.assertNotIn("admin_push_queued", session.info)
 
     async def test_disabled_push_does_not_change_existing_business_transactions(self):
         session = SimpleNamespace(execute=AsyncMock(), scalars=AsyncMock())

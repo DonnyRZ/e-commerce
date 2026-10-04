@@ -94,6 +94,7 @@ jobs:
                               AdminPushSubscription.endpoint,
                               AdminPushDelivery.payload["tag"].as_string().label("notification_tag"),
                               AdminPushDelivery.payload["_audit"]["device_stages"].label("device_stages"),
+                              AdminPushDelivery.payload["_audit"]["device_timings"].label("device_timings"),
                               AdminPushDelivery.payload["_audit"]["telegram_fallback"].label("telegram_fallback"),
                           ).join(AdminPushSubscription, AdminPushSubscription.id == AdminPushDelivery.subscription_id)
                           .where(AdminPushDelivery.event_key == f"telegram-message:{message_id}")
@@ -102,7 +103,7 @@ jobs:
                           detail = "no_delivery_row"
                       else:
                           detail = ";".join(
-                              "delivery_id=%s device=%s provider_host=%s tag_hash=%s queue_utc=%s queue_delay_s=%s status=%s attempts=%s provider_http=%s device_stages=%s telegram_fallback=%s"
+                              "delivery_id=%s device=%s provider_host=%s tag_hash=%s queue_utc=%s queue_delay_s=%s status=%s attempts=%s provider_http=%s device_stages=%s device_timings=%s telegram_fallback=%s"
                               % (
                                   item.id,
                                   item.subscription_id[:12],
@@ -114,6 +115,7 @@ jobs:
                                   item.attempts,
                                   item.last_status,
                                   item.device_stages or {},
+                                  item.device_timings or {},
                                   item.telegram_fallback or {},
                               )
                               for item in deliveries

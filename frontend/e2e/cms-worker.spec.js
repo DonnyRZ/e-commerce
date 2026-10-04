@@ -7,7 +7,7 @@ function worker(clients = []) {
   const handlers = {}, notifications = [], opened = [];
   const cache = { add: async () => {} };
   const scope = {
-    URL, fetch: async () => { throw new Error("offline"); },
+    URL, Date, performance, fetch: async () => { throw new Error("offline"); },
     caches: { open: async () => cache, keys: async () => [], match: async () => "offline page", delete: async () => true },
     self: {
       location: { origin: "https://cms.example.com" },
@@ -53,6 +53,8 @@ test("a Telegram push carries its conversation link through notification click",
     kind: "telegram",
   }) } });
 
+  expect(instance.notifications[0].icon).toMatch(/^data:image\/png;base64,/);
+  expect(instance.notifications[0].badge).toMatch(/^data:image\/png;base64,/);
   expect(instance.notifications[0]).toMatchObject({
     title: "Chat Telegram baru",
     body: "Pesan baru perlu dibalas.",
@@ -95,12 +97,12 @@ test("malformed push still shows a generic notification and only CMS windows are
   expect(storeMessages).toEqual([]);
 });
 
-test("repeated Telegram messages re-alert while keeping the conversation notification tag", async () => {
+test("retries of one Telegram message re-alert with the same event tag", async () => {
   const instance = worker();
   const payload = {
     title: "Chat Telegram baru",
     url: "/admin/telegram-inbox?conversation=123",
-    tag: "cms-telegram:/admin/telegram-inbox?conversation=123",
+    tag: "cms-telegram:event-123",
     kind: "telegram",
   };
 

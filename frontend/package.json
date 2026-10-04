@@ -68,7 +68,8 @@
     "build:cms": "node scripts/build-frontend.mjs cms",
     "test": "craco test",
     "test:ci": "craco test --watchAll=false --passWithNoTests",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "prebuild": "node scripts/embed-notification-assets.mjs"
   },
   "browserslist": {
     "production": [

@@ -15,8 +15,9 @@ from urllib.parse import urlparse
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from pywebpush import WebPushException, webpush
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, event, func, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
 
 from config import (
     ADMIN_PUSH_ENABLED,
@@ -42,6 +43,20 @@ MAX_ATTEMPTS = 6
 RETRY_SECONDS = (15, 60, 300, 900, 3600, 7200)
 TELEGRAM_BACKUP_DELAY = timedelta(seconds=15)
 TELEGRAM_BACKUP_BATCH_SIZE = 20
+_push_wakeup: asyncio.Event | None = None
+
+
+@event.listens_for(Session, "after_commit")
+def _wake_committed_push(session):
+    # SQLAlchemy emits this only after the enclosing transaction commits.
+    # A rollback must never trigger an alert for a discarded business event.
+    if session.info.pop("admin_push_queued", False) and _push_wakeup is not None:
+        _push_wakeup.set()
+
+
+@event.listens_for(Session, "after_rollback")
+def _discard_rolled_back_push(session):
+    session.info.pop("admin_push_queued", None)
 
 
 def public_key() -> str | None:
@@ -141,15 +156,17 @@ async def enqueue_admin_notification(
         "order": "Ada order baru yang perlu ditindaklanjuti di CMS.",
         "test": "Perangkat ini siap menerima notifikasi chat Telegram dan order baru.",
     }
+    now = utcnow()
     # Lock-screen notifications intentionally contain no customer names/chat text.
     payload = {
         "title": titles[kind],
         "body": bodies[kind],
         "url": url,
-        "tag": f"cms-{kind}:{url}",
+        # Each business event remains visible; retries replace only that event.
+        "tag": f"cms-{kind}:{hashlib.sha256(event_key.encode()).hexdigest()[:32]}",
+        "timestamp": int(now.timestamp() * 1000),
         "kind": kind,
     }
-    now = utcnow()
     rows = [
         {
             "id": (delivery_id := uid()),
@@ -177,6 +194,7 @@ async def enqueue_admin_notification(
         .values(rows)
         .on_conflict_do_nothing(constraint="uq_admin_push_delivery_event")
     )
+    session.info["admin_push_queued"] = True
     return len(rows)
 
 
@@ -454,7 +472,7 @@ async def dispatch_telegram_fallbacks(session, *, now=None) -> int:
         result = await session.scalars(
             select(AdminPushDelivery).where(
                 AdminPushDelivery.event_key == event_key
-            )
+            ).with_for_update()
         )
         for delivery in result.all():
             payload = dict(delivery.payload or {})
@@ -482,16 +500,40 @@ async def dispatch_telegram_fallbacks(session, *, now=None) -> int:
     return sent
 
 
-async def admin_push_dispatch_loop():
-    if not public_key():
-        return
+async def _web_push_loop():
+    global _push_wakeup
+    _push_wakeup = asyncio.Event()
+    try:
+        while True:
+            _push_wakeup.clear()
+            try:
+                async with SessionLocal() as session:
+                    await dispatch_pending(session)
+            except Exception:
+                # Never log provider bodies or subscription endpoints.
+                logger.warning("admin_push_dispatch_unavailable")
+            try:
+                # Commits in this process wake us immediately; the one-second
+                # scan also picks up events written by another process.
+                await asyncio.wait_for(_push_wakeup.wait(), timeout=1)
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        _push_wakeup = None
+
+
+async def _telegram_backup_loop():
     while True:
         try:
             async with SessionLocal() as session:
-                count = await dispatch_pending(session)
                 await dispatch_telegram_fallbacks(session)
         except Exception:
-            # Do not log provider response bodies or subscription endpoints.
-            logger.warning("admin_push_dispatch_unavailable")
-            count = 0
-        await asyncio.sleep(1 if count else 5)
+            logger.warning("admin_push_telegram_backup_unavailable")
+        # A slow Telegram API request cannot hold up new native Web Push.
+        await asyncio.sleep(1)
+
+
+async def admin_push_dispatch_loop():
+    if not public_key():
+        return
+    await asyncio.gather(_web_push_loop(), _telegram_backup_loop())

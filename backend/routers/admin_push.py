@@ -6,7 +6,7 @@ import re
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from auth import csrf_protect, require_roles
@@ -42,6 +42,10 @@ class SubscriptionIn(EndpointIn):
 class DeliveryAckIn(BaseModel):
     delivery_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     ack_token: str = Field(min_length=43, max_length=43)
+    client_started_at: AwareDatetime | None = None
+    client_observed_at: AwareDatetime | None = None
+    event_elapsed_ms: int | None = Field(default=None, ge=0, le=86_400_000)
+    worker_version: str | None = Field(default=None, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
     stage: Literal[
         "push_received",
         "notification_show_resolved",
@@ -52,7 +56,13 @@ class DeliveryAckIn(BaseModel):
 @router.post("/delivery-ack", status_code=204, response_class=Response)
 async def delivery_ack(payload: DeliveryAckIn, session=Depends(get_session)):
     """Accept a one-delivery bearer acknowledgment from the service worker."""
-    delivery = await session.get(AdminPushDelivery, payload.delivery_id)
+    # Concurrent receipt/display ACKs and Telegram fallback update this JSON.
+    # Serialize merges so one update cannot erase another observation.
+    delivery = await session.scalar(
+        select(AdminPushDelivery)
+        .where(AdminPushDelivery.id == payload.delivery_id)
+        .with_for_update()
+    )
     audit = (delivery.payload or {}).get("_audit", {}) if delivery else {}
     saved_token = audit.get("ack_token", "")
     if (
@@ -65,14 +75,27 @@ async def delivery_ack(payload: DeliveryAckIn, session=Depends(get_session)):
         # Keep the first observation for each stage so delivery timing stays
         # useful even if a service worker retries its acknowledgment.
         device_stages.setdefault(payload.stage, observed_at)
-        audit = {**audit, "device_stages": device_stages}
+        device_timings = dict(audit.get("device_timings", {}))
+        timing = {
+            "client_started_at": payload.client_started_at.isoformat() if payload.client_started_at else None,
+            "client_observed_at": payload.client_observed_at.isoformat() if payload.client_observed_at else None,
+            "event_elapsed_ms": payload.event_elapsed_ms,
+            "worker_version": payload.worker_version,
+        }
+        if payload.client_started_at is not None:
+            device_timings.setdefault(payload.stage, timing)
+        audit = {**audit, "device_stages": device_stages, "device_timings": device_timings}
         delivery.payload = {**(delivery.payload or {}), "_audit": audit}
         await session.commit()
         logger.info(
-            "admin_push_device_stage delivery_id=%s stage=%s observed_at_utc=%s",
+            "admin_push_device_stage delivery_id=%s stage=%s observed_at_utc=%s client_started_at=%s client_observed_at=%s event_elapsed_ms=%s worker_version=%s",
             delivery.id,
             payload.stage,
             observed_at,
+            timing["client_started_at"],
+            timing["client_observed_at"],
+            payload.event_elapsed_ms,
+            payload.worker_version,
         )
     # Keep invalid and unknown delivery IDs indistinguishable. The token is
     # random, single-delivery scope, and never written to logs.

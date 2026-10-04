@@ -1,5 +1,6 @@
 """Run against an isolated Compose database; never contact Telegram/FCM."""
 
+import asyncio
 import base64
 import os
 import secrets
@@ -338,6 +339,10 @@ class AdminDeviceIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     "delivery_id": delivery_id,
                     "ack_token": ack_token,
                     "stage": "notification_show_resolved",
+                    "client_started_at": now.isoformat(),
+                    "client_observed_at": (now + timedelta(milliseconds=25)).isoformat(),
+                    "event_elapsed_ms": 25,
+                    "worker_version": "inline-icons-v2",
                 },
             )
         self.assertEqual(response.status_code, 204)
@@ -351,6 +356,25 @@ class AdminDeviceIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 "notification_show_resolved"
             ]
             self.assertIsNotNone(datetime.fromisoformat(stage).tzinfo)
+            timing = saved.payload["_audit"]["device_timings"]["notification_show_resolved"]
+            self.assertEqual(timing["event_elapsed_ms"], 25)
+            self.assertEqual(timing["worker_version"], "inline-icons-v2")
+
+        # Simultaneous stage ACKs must merge without erasing each other.
+        responses = await asyncio.gather(*[
+            self.clients[0].post("/api/v1/admin/push/delivery-ack", json={
+                "delivery_id": delivery_id, "ack_token": ack_token, "stage": stage,
+                "client_started_at": now.isoformat(), "client_observed_at": now.isoformat(),
+                "event_elapsed_ms": 0, "worker_version": "inline-icons-v2",
+            }) for stage in ["push_received", "notification_show_failed"]
+        ])
+        self.assertTrue(all(response.status_code == 204 for response in responses))
+        async with SessionLocal() as session:
+            saved = await session.get(AdminPushDelivery, delivery_id)
+            self.assertEqual(set(saved.payload["_audit"]["device_stages"]), {
+                "push_received", "notification_show_resolved", "notification_show_failed",
+            })
+            self.assertEqual(saved.payload["_audit"]["device_timings"]["notification_show_resolved"]["event_elapsed_ms"], 25)
 
         invalid = await self.clients[0].post(
             "/api/v1/admin/push/delivery-ack",
@@ -620,6 +644,23 @@ class AdminDeviceIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 {call.args[0].endpoint for call in send.call_args_list},
                 set(self.endpoints[1:]),
             )
+
+    async def test_committed_outbox_wakes_dispatcher_and_rolled_back_outbox_does_not(self):
+        await self.register_devices()
+        wakeup = asyncio.Event()
+        with patch.object(admin_push, "_push_wakeup", wakeup):
+            async with SessionLocal() as session:
+                await admin_push.enqueue_admin_notification(session, "wake-rollback:" + self.prefix, "telegram", "/admin/telegram-inbox")
+                self.assertFalse(wakeup.is_set())
+                await session.rollback()
+                self.assertFalse(wakeup.is_set())
+                # Reusing the same session must not retain rollback state.
+                await session.commit()
+                self.assertFalse(wakeup.is_set())
+                await admin_push.enqueue_admin_notification(session, "wake-commit:" + self.prefix, "telegram", "/admin/telegram-inbox")
+                self.assertFalse(wakeup.is_set())
+                await session.commit()
+                self.assertTrue(wakeup.is_set())
 
     async def test_transaction_rollback_and_revoked_admin_do_not_notify(self):
         await self.register_devices()

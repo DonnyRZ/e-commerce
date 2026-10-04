@@ -1,3 +1,4 @@
+import "./embed-notification-assets.mjs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
