@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/AuthContext";
 import { getAdminPushConfig, testAdminPushDevice } from "@/lib/api";
@@ -12,6 +12,8 @@ export default function CmsDeviceProvider({ children }) {
   const [installed, setInstalled] = useState(isInstalled);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [registered, setRegistered] = useState(false);
+  const [autoEnrollDisabled, setAutoEnrollDisabled] = useState(isPushAutoEnrollDisabled);
+  const autoEnrollDisabledRef = useRef(autoEnrollDisabled);
   const [permission, setPermission] = useState(() => "Notification" in window ? Notification.permission : "unsupported");
   const [workerError, setWorkerError] = useState(false);
   const config = useQuery({ queryKey: ["admin-push-config", user?.id], queryFn: getAdminPushConfig, enabled: user?.role === "admin", retry: false });
@@ -47,7 +49,7 @@ export default function CmsDeviceProvider({ children }) {
     if (user?.role !== "admin" || !config.data?.enabled || !pushSupported()) return;
     const sync = async () => {
       if (Notification.permission !== "granted") return;
-      if (isPushAutoEnrollDisabled()) return;
+      if (autoEnrollDisabledRef.current || isPushAutoEnrollDisabled()) return;
       const registration = await cmsServiceWorker();
       let subscription = await registration.pushManager.getSubscription();
       if (!active) return;
@@ -81,7 +83,7 @@ export default function CmsDeviceProvider({ children }) {
   }, [queryClient, user?.role]);
 
   const value = {
-    installed, installAvailable: Boolean(installPrompt), registered, permission, workerError,
+    installed, installAvailable: Boolean(installPrompt), registered, permission, workerError, autoEnrollDisabled,
     supported: pushSupported(), config,
     async install() {
       if (!installPrompt) return "unavailable";
@@ -97,6 +99,8 @@ export default function CmsDeviceProvider({ children }) {
       setPermission(granted);
       if (granted !== "granted") return false;
       setPushAutoEnrollDisabled(false);
+      autoEnrollDisabledRef.current = false;
+      setAutoEnrollDisabled(false);
       const registration = await cmsServiceWorker();
       let subscription = await registration.pushManager.getSubscription();
       if (subscription && !matchesPublicKey(subscription, config.data.public_key)) {
@@ -111,6 +115,8 @@ export default function CmsDeviceProvider({ children }) {
     },
     async disable() {
       setPushAutoEnrollDisabled(true);
+      autoEnrollDisabledRef.current = true;
+      setAutoEnrollDisabled(true);
       try { await stopDeviceNotifications(); } finally { setRegistered(false); }
     },
     async test() {
