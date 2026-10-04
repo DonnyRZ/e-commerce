@@ -61,6 +61,8 @@ jobs:
         uptime
         free -m
         df -h /
+        find /var/www/marketplace/incoming -maxdepth 1 -name '*.tar.gz' -printf 'incoming_archive=%f bytes=%s modified=%TY-%Tm-%TdT%TH:%TM:%TS\n'
+        printf 'established_ssh_connections='; ss -Htn state established '( sport = :22 )' | wc -l
         docker stats --no-stream --format '{{.Name}} cpu={{.CPUPerc}} mem={{.MemUsage}}'
         ps -eo comm,%cpu,%mem --sort=-%cpu | head -n 12
         if [[ "$QUEUE_TEST" == "false" ]]; then exit 0; fi
