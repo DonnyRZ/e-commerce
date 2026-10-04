@@ -1,0 +1,145 @@
+name: Read-only production audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    timeout-minutes: 8
+    steps:
+      - name: Configure pinned SSH access
+        env:
+          VPS_DEPLOY_KEY: ${{ secrets.VPS_DEPLOY_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          for name in VPS_DEPLOY_KEY VPS_KNOWN_HOSTS VPS_HOST; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required production secret $name is missing."
+              exit 1
+            fi
+          done
+          install -m 0700 -d "$HOME/.ssh"
+          printf '%s\n' "$VPS_DEPLOY_KEY" > "$HOME/.ssh/audit_key"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/audit_key" "$HOME/.ssh/known_hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+
+      - name: Read production status and Telegram push delivery diagnostics
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_USER"
+          ssh_options=(-i "$HOME/.ssh/audit_key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+          target="$VPS_USER@$VPS_HOST"
+          ssh "${ssh_options[@]}" "$target" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          printf 'audit_time='; date -Is
+          printf 'host='; hostname
+          printf 'active_release='; readlink -f /var/www/marketplace/current
+
+          if docker ps >/dev/null 2>&1; then
+            docker_cmd=(docker)
+          elif sudo -n docker ps >/dev/null 2>&1; then
+            docker_cmd=(sudo -n docker)
+          else
+            echo 'docker_read_access=denied'
+            exit 2
+          fi
+
+          echo 'container_status:'
+          "${docker_cmd[@]}" ps --filter name=marketplace --format '{{.Names}} | {{.Status}}'
+
+          echo 'push_runtime:'
+          "${docker_cmd[@]}" exec marketplace-backend-1 python -c 'from admin_push import ADMIN_PUSH_ENABLED, public_key; print("enabled=%s vapid_key_ready=%s" % (ADMIN_PUSH_ENABLED, bool(public_key())))'
+
+          echo 'telegram_webhook_readiness:'
+          "${docker_cmd[@]}" exec marketplace-backend-1 python scripts/register_telegram_webhook.py --check || echo 'webhook_check_exit=nonzero'
+
+          echo 'push_delivery_counts_last_24h:'
+          "${docker_cmd[@]}" exec -i marketplace-backend-1 python - <<'PY'
+          import asyncio
+          from datetime import timedelta
+          from sqlalchemy import func, select
+          from db.models import (
+              AdminPushDelivery,
+              AdminPushSubscription,
+              TelegramInboxMessage,
+              TelegramUpdateReceipt,
+              User,
+              utcnow,
+          )
+          from db.session import SessionLocal
+
+          async def main():
+              since = utcnow() - timedelta(hours=24)
+              kind = AdminPushDelivery.payload["kind"].as_string()
+              query = (
+                  select(
+                      kind.label("kind"),
+                      AdminPushDelivery.status,
+                      AdminPushDelivery.last_status,
+                      func.count(),
+                      func.max(AdminPushDelivery.attempts),
+                      func.min(AdminPushDelivery.created_at),
+                  )
+                  .where(AdminPushDelivery.created_at >= since)
+                  .group_by(kind, AdminPushDelivery.status, AdminPushDelivery.last_status)
+                  .order_by(kind, AdminPushDelivery.status, AdminPushDelivery.last_status)
+              )
+              async with SessionLocal() as session:
+                  inbound_messages = await session.scalar(
+                      select(func.count())
+                      .select_from(TelegramInboxMessage)
+                      .where(
+                          TelegramInboxMessage.direction == "inbound",
+                          TelegramInboxMessage.created_at >= since,
+                      )
+                  )
+                  eligible = await session.scalar(
+                      select(func.count())
+                      .select_from(AdminPushSubscription)
+                      .join(User, User.id == AdminPushSubscription.user_id)
+                      .where(
+                          AdminPushSubscription.enabled.is_(True),
+                          User.is_active.is_(True),
+                          User.role == "admin",
+                          AdminPushSubscription.token_version == User.token_version,
+                      )
+                  )
+                  receipts = await session.execute(
+                      select(TelegramUpdateReceipt.status, func.count())
+                      .where(TelegramUpdateReceipt.received_at >= since)
+                      .group_by(TelegramUpdateReceipt.status)
+                      .order_by(TelegramUpdateReceipt.status)
+                  )
+                  rows = (await session.execute(query)).all()
+                  receipt_rows = receipts.all()
+              print(f"telegram_inbound_messages_last_24h={inbound_messages or 0}")
+              print(f"eligible_admin_devices={eligible or 0}")
+              for status, count in receipt_rows:
+                  print(f"telegram_webhook_receipts status={status} count={count}")
+              for row in rows:
+                  oldest_age_minutes = max(
+                      0, int((utcnow() - row[5]).total_seconds() // 60)
+                  )
+                  print(
+                      "kind=%s status=%s last_http=%s count=%s max_attempts=%s oldest_created_minutes=%s"
+                      % (row[0], row[1], row[2], row[3], row[4], oldest_age_minutes)
+                  )
+
+          asyncio.run(main())
+          PY
+
+          echo 'recent_push_errors:'
+          "${docker_cmd[@]}" logs --since 24h marketplace-backend-1 2>&1 | grep -E 'admin_push_delivery_failed|admin_push_dispatch_unavailable|telegram_webhook_processing_failed' | tail -n 100 || true
+          REMOTE
