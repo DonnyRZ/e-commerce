@@ -362,10 +362,17 @@ async def seed():
         existing_entries = {
             (entry.content_type, entry.slug): entry for entry in entries
         }
+        existing_translations = (
+            await session.execute(select(CmsContentTranslation))
+        ).scalars().all()
+        translations_by_entry = {}
+        for translation in existing_translations:
+            translations_by_entry.setdefault(translation.entry_id, {})[
+                translation.locale
+            ] = translation
         if ("hero", "home-hero") in existing_entries:
             # Remove only legacy remote image fallbacks. CMS-linked/local media
             # remains authoritative and is never overwritten by a seed rerun.
-            changed = False
             canonical_pages = {
                 slug: {loc: {"title": value[0], "body": value[1]} for loc, value in content.items()}
                 for slug, content in PAGES.items()
@@ -389,21 +396,13 @@ async def seed():
                 if isinstance(image_url, str) and image_url.startswith(("http://", "https://")):
                     payload.pop("image_url", None)
                     entry.payload = payload
-                    changed = True
                 desired = (
                     canonical_pages.get(entry.slug)
                     or canonical_faqs.get(entry.slug)
                     or canonical_promos.get(entry.slug)
                 )
                 if desired:
-                    translations = (
-                        await session.execute(
-                            select(CmsContentTranslation).where(
-                                CmsContentTranslation.entry_id == entry.id
-                            )
-                        )
-                    ).scalars().all()
-                    by_locale = {translation.locale: translation for translation in translations}
+                    by_locale = translations_by_entry.get(entry.id, {})
                     for locale, fields in desired.items():
                         translation = by_locale.get(locale)
                         if not translation:
@@ -411,18 +410,6 @@ async def seed():
                         if translation.title != fields["title"] or translation.body != fields["body"]:
                             translation.title = fields["title"]
                             translation.body = fields["body"]
-                            changed = True
-            created_visuals = await _seed_missing_department_visuals(session)
-            if created_visuals:
-                changed = True
-            if changed:
-                await session.commit()
-            print(
-                "cms seed: entries already exist, preserving them"
-                + (f"; added {created_visuals} department visuals" if created_visuals else "")
-            )
-            return
-
         created = 0
 
         async def add_entry(content_type, name, slug, translations, sort_order=0,
@@ -432,6 +419,18 @@ async def seed():
             key = (content_type, slug)
             existing_entry = existing_entries.get(key)
             if existing_entry:
+                entry_translations = translations_by_entry.setdefault(
+                    existing_entry.id, {}
+                )
+                for locale, fields in translations.items():
+                    if locale in entry_translations:
+                        continue
+                    translation = CmsContentTranslation(
+                        entry_id=existing_entry.id, locale=locale, **fields
+                    )
+                    session.add(translation)
+                    entry_translations[locale] = translation
+                    created += 1
                 return existing_entry
 
             entry = CmsContentEntry(
@@ -443,7 +442,11 @@ async def seed():
             session.add(entry)
             await session.flush()
             for locale, fields in translations.items():
-                session.add(CmsContentTranslation(entry_id=entry.id, locale=locale, **fields))
+                translation = CmsContentTranslation(
+                    entry_id=entry.id, locale=locale, **fields
+                )
+                session.add(translation)
+                translations_by_entry.setdefault(entry.id, {})[locale] = translation
             created += 1
             existing_entries[key] = entry
             return entry
@@ -584,7 +587,7 @@ async def seed():
 
         created += await _seed_missing_department_visuals(session)
         await session.commit()
-        print(f"cms seed: created {created} published entries")
+        print(f"cms seed: ensured defaults; created {created} entries/translations")
 
 
 if __name__ == "__main__":

@@ -19,6 +19,11 @@ ADMIN_PASSWORD = os.environ.get("SMOKE_ADMIN_PASSWORD", "")
 TIMEOUT = 10
 
 
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
 def check(response: requests.Response, expected: int = 200) -> dict:
     if response.status_code != expected:
         raise AssertionError(
@@ -36,23 +41,47 @@ def main() -> int:
 
     public = requests.Session()
     ready = check(public.get(f"{BASE}/api/ready", timeout=TIMEOUT))
-    assert ready["checks"]["payment"] == "disabled", ready
-    assert ready["checkout_enabled"] is False, ready
-    assert all(
-        value == "up" or (name == "payment" and value == "disabled")
-        for name, value in ready["checks"].items()
-    ), ready
-    schema = check(public.get(f"{BASE}/openapi.json", timeout=TIMEOUT))
-    assert not any(
-        path.startswith("/api/v1/payments/") for path in schema.get("paths", {})
+    require(
+        ready["checks"]["payment"] == "disabled",
+        f"payment readiness must be disabled: {ready}",
     )
-    assert not any(path.endswith("/refund") for path in schema.get("paths", {}))
+    require(
+        ready["checkout_enabled"] is False,
+        f"checkout must be disabled: {ready}",
+    )
+    require(
+        all(
+            value == "up" or (name == "payment" and value == "disabled")
+            for name, value in ready["checks"].items()
+        ),
+        f"all required readiness checks must be up: {ready}",
+    )
+    schema = check(public.get(f"{BASE}/openapi.json", timeout=TIMEOUT))
+    require(
+        not any(path.startswith("/api/v1/payments/") for path in schema.get("paths", {})),
+        "payment API routes must not be exposed while checkout is disabled",
+    )
+    require(
+        not any(path.endswith("/refund") for path in schema.get("paths", {})),
+        "refund API route must not be exposed while checkout is disabled",
+    )
     check(public.get(f"{BASE}/api/status", timeout=TIMEOUT), 404)
     check(public.get(f"{BASE}/api/v1/seller/dashboard", timeout=TIMEOUT), 404)
-    assert check(public.get(f"{BASE}/api/v1/catalog/departments", timeout=TIMEOUT))
-    assert check(public.get(f"{BASE}/api/v1/catalog/categories", timeout=TIMEOUT))
-    assert check(public.get(f"{BASE}/api/v1/cms/public/pages/about", timeout=TIMEOUT))["content_type"] == "page"
-    assert check(public.get(f"{BASE}/api/v1/cms/public/faq", timeout=TIMEOUT))["items"]
+    require(
+        bool(check(public.get(f"{BASE}/api/v1/catalog/departments", timeout=TIMEOUT))),
+        "catalog departments must be seeded",
+    )
+    require(
+        bool(check(public.get(f"{BASE}/api/v1/catalog/categories", timeout=TIMEOUT))),
+        "catalog categories must be seeded",
+    )
+    about = check(public.get(f"{BASE}/api/v1/cms/public/pages/about", timeout=TIMEOUT))
+    require(
+        about.get("content_type") == "page",
+        f"about CMS page must be available: {about}",
+    )
+    faq = check(public.get(f"{BASE}/api/v1/cms/public/faq", timeout=TIMEOUT))
+    require(bool(faq.get("items")), f"CMS FAQ defaults must be seeded: {faq}")
 
     products = check(
         public.get(
@@ -73,11 +102,17 @@ def main() -> int:
         ),
         201,
     )
-    assert cart["item_count"] == 1
+    require(cart["item_count"] == 1, f"cart should contain one item after add: {cart}")
     options = check(public.get(f"{BASE}/api/v1/checkout/options", timeout=TIMEOUT))
-    assert options["checkout_enabled"] is False
-    assert options["payment_methods"] == []
-    assert options["payment_mode"] == "disabled"
+    require(options["checkout_enabled"] is False, f"checkout must be disabled: {options}")
+    require(
+        options["payment_methods"] == [],
+        f"payment methods must be empty: {options}",
+    )
+    require(
+        options["payment_mode"] == "disabled",
+        f"payment mode must be disabled: {options}",
+    )
     check(
         public.post(
             f"{BASE}/api/v1/checkout/quote",
@@ -104,13 +139,23 @@ def main() -> int:
             timeout=TIMEOUT,
         )
     )
-    assert login["role"] == "admin"
+    require(
+        login.get("role") == "admin",
+        f"smoke account must authenticate as admin: {login}",
+    )
     csrf = admin.cookies.get("csrf_token")
-    assert csrf
+    require(bool(csrf), "admin login should issue the CSRF cookie")
     admin.headers.update({"X-CSRF-Token": csrf})
     settings = check(admin.get(f"{BASE}/api/v1/admin/settings", timeout=TIMEOUT))
-    assert settings["payment_status"] == "disabled"
-    assert check(admin.get(f"{BASE}/api/v1/admin/dashboard", timeout=TIMEOUT))["total_products"] > 0
+    require(
+        settings.get("payment_status") == "disabled",
+        f"payment status must be disabled: {settings}",
+    )
+    dashboard = check(admin.get(f"{BASE}/api/v1/admin/dashboard", timeout=TIMEOUT))
+    require(
+        dashboard.get("total_products", 0) > 0,
+        f"admin dashboard should include seeded products: {dashboard}",
+    )
 
     print("LOCAL SMOKE PASS: readiness, public catalog/CMS, cart, disabled checkout, admin")
     return 0
