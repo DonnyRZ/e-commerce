@@ -1,0 +1,175 @@
+name: Temporary read-only VPS push delivery audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    timeout-minutes: 10
+    steps:
+      - name: Prepare password authentication and pinned host key
+        env:
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq sshpass
+          for name in VPS_KNOWN_HOSTS VPS_HOST; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required production secret $name is missing."
+              exit 1
+            fi
+          done
+          install -m 0700 -d "$HOME/.ssh"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/known_hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+
+      - name: Read latest Telegram messages and push delivery state
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD_1 || secrets.VPS_ROOT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SSHPASS" ]]; then
+            echo "::error::The production root password secret is missing."
+            exit 1
+          fi
+          ssh_options=(-o BatchMode=no -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+          sshpass -e ssh "${ssh_options[@]}" "root@$VPS_HOST" 'bash -s' <<'REMOTE'
+          set -euo pipefail
+          printf 'audit_time_utc='; date -u -Is
+          printf 'active_release='; readlink -f /var/www/marketplace/current
+
+          echo 'service_health:'
+          docker inspect --format '{{.Name}} restart={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started={{.State.StartedAt}}' marketplace-backend-1 marketplace-cms-1 marketplace-redis-1
+
+          echo 'deployed_service_worker:'
+          docker exec marketplace-cms-1 sh -c 'if grep -Fq "renotify: true" /usr/share/nginx/html/cms-sw.js; then echo cms_sw_renotify=true; else echo cms_sw_renotify=false; fi'
+
+          echo 'push_configuration:'
+          docker exec marketplace-backend-1 python -c 'from admin_push import ADMIN_PUSH_ENABLED, public_key; print("enabled=%s vapid_key_ready=%s" % (ADMIN_PUSH_ENABLED, bool(public_key())))'
+
+          echo 'recent_telegram_push_events:'
+          docker exec -i marketplace-backend-1 python - <<'PY'
+          import asyncio
+          from datetime import timedelta
+          from zoneinfo import ZoneInfo
+          from sqlalchemy import func, select
+          from db.models import (
+              AdminPushDelivery,
+              AdminPushSubscription,
+              TelegramInboxMessage,
+              TelegramUpdateReceipt,
+              User,
+              utcnow,
+          )
+          from db.session import SessionLocal
+
+          WIB = ZoneInfo("Asia/Jakarta")
+
+          def stamp(value):
+              if value is None:
+                  return "none"
+              return value.isoformat()
+
+          async def main():
+              now = utcnow()
+              since = now - timedelta(hours=3)
+              async with SessionLocal() as session:
+                  eligible = await session.scalar(
+                      select(func.count())
+                      .select_from(AdminPushSubscription)
+                      .join(User, User.id == AdminPushSubscription.user_id)
+                      .where(
+                          AdminPushSubscription.enabled.is_(True),
+                          User.is_active.is_(True),
+                          User.role == "admin",
+                          AdminPushSubscription.token_version == User.token_version,
+                      )
+                  )
+                  rows = (await session.execute(
+                      select(
+                          TelegramInboxMessage.id,
+                          TelegramInboxMessage.created_at,
+                          TelegramInboxMessage.update_id,
+                      )
+                      .where(
+                          TelegramInboxMessage.direction == "inbound",
+                          TelegramInboxMessage.source == "telegram",
+                          TelegramInboxMessage.created_at >= since,
+                      )
+                      .order_by(TelegramInboxMessage.created_at.desc())
+                      .limit(20)
+                  )).all()
+                  print(f"eligible_admin_devices={eligible or 0}")
+                  if not rows:
+                      print("recent_telegram_inbound_messages=0")
+                  for index, (message_id, message_at, update_id) in enumerate(reversed(rows), 1):
+                      receipt = await session.get(TelegramUpdateReceipt, update_id) if update_id is not None else None
+                      deliveries = (await session.execute(
+                          select(
+                              AdminPushDelivery.created_at,
+                              AdminPushDelivery.status,
+                              AdminPushDelivery.attempts,
+                              AdminPushDelivery.last_status,
+                              AdminPushDelivery.next_attempt_at,
+                          )
+                          .where(AdminPushDelivery.event_key == f"telegram-message:{message_id}")
+                      )).all()
+                      if not deliveries:
+                          detail = "no_delivery_row"
+                      else:
+                          detail = ";".join(
+                              "queue_utc=%s queue_wib=%s queue_delay_s=%s status=%s attempts=%s provider_http=%s next_attempt_utc=%s"
+                              % (
+                                  stamp(item.created_at),
+                                  item.created_at.astimezone(WIB).strftime("%Y-%m-%dT%H:%M:%S%z"),
+                                  max(0, int((item.created_at - message_at).total_seconds())),
+                                  item.status,
+                                  item.attempts,
+                                  item.last_status,
+                                  stamp(item.next_attempt_at),
+                              )
+                              for item in deliveries
+                          )
+                      print(
+                          "telegram_event_%02d message_utc=%s message_wib=%s webhook_receipt=%s delivery=%s"
+                          % (
+                              index,
+                              stamp(message_at),
+                              message_at.astimezone(WIB).strftime("%Y-%m-%dT%H:%M:%S%z"),
+                              receipt.status if receipt else "missing",
+                              detail,
+                          )
+                      )
+                  pending = await session.execute(
+                      select(
+                          AdminPushDelivery.payload["kind"].as_string(),
+                          AdminPushDelivery.status,
+                          func.count(),
+                          func.min(AdminPushDelivery.created_at),
+                      )
+                      .where(AdminPushDelivery.created_at >= since)
+                      .group_by(AdminPushDelivery.payload["kind"].as_string(), AdminPushDelivery.status)
+                      .order_by(AdminPushDelivery.payload["kind"].as_string(), AdminPushDelivery.status)
+                  )
+                  for kind, status, count, oldest in pending.all():
+                      print("push_rows kind=%s status=%s count=%s oldest_utc=%s" % (kind, status, count, stamp(oldest)))
+
+          asyncio.run(main())
+          PY
+
+          echo 'filtered_push_error_counts_last_3h:'
+          for pattern in admin_push_delivery_failed admin_push_dispatch_unavailable telegram_webhook_processing_failed; do
+            count="$(docker logs --since 3h marketplace-backend-1 2>&1 | grep -F -c "$pattern" || true)"
+            printf '%s=%s\n' "$pattern" "$count"
+          done
+          REMOTE
