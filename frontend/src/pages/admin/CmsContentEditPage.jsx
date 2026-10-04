@@ -601,7 +601,7 @@ export default function CmsContentEditPage() {
           {!isNew && status === "archived" ? <section className="rounded-xl border border-red-200 bg-white p-5 shadow-sm"><h2 className="font-brand text-lg font-semibold text-red-900">Zona hapus</h2><p className="mt-1 text-xs leading-5 text-stone-500">Hanya konten archived yang bisa dihapus permanen. Riwayat revisi dan terjemahan ikut terhapus.</p><button type="button" onClick={removeContent} disabled={saving} className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-red-200 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50" data-testid="cms-delete"><Trash2 className="h-4 w-4" aria-hidden="true" />Hapus permanen</button></section> : null}
         </aside>
 
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-[#DED7C9] bg-[#FDFBF6]/95 px-4 py-3 shadow-[0_-8px_28px_rgba(20,30,20,0.08)] backdrop-blur sm:px-6 xl:left-56">
+        <div className="cms-save-bar fixed inset-x-0 bottom-0 z-30 border-t border-[#DED7C9] bg-[#FDFBF6]/95 px-4 py-3 shadow-[0_-8px_28px_rgba(20,30,20,0.08)] backdrop-blur sm:px-6 xl:left-56">
           <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
             <div className="hidden text-xs text-stone-500 sm:block">{dirty ? "Perubahan belum disimpan" : "Tersimpan"}{isNew ? ` · ${cmsTypeLabel(contentType)}` : ""}</div>
             <div className="ml-auto flex flex-wrap items-center gap-2">

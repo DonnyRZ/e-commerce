@@ -427,8 +427,8 @@ export default function AdminCategoriesPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               {LOCALES.map((locale) => (
                 <div key={locale}>
-                  <label className="mb-1 block text-xs font-medium text-neutral-500">Name ({locale}{locale === "en" ? " — required" : ""})</label>
-                  <input value={form.names[locale]} onChange={(e) => setName(locale, e.target.value)} required={locale === "en"} className={inputClass} data-testid={`category-name-${locale}`} />
+                  <label htmlFor={`category-name-${locale}`} className="mb-1 block text-xs font-medium text-neutral-500">Name ({locale}{locale === "en" ? " — required" : ""})</label>
+                  <input value={form.names[locale]} onChange={(e) => setName(locale, e.target.value)} required={locale === "en"} className={inputClass} id={`category-name-${locale}`} data-testid={`category-name-${locale}`} />
                 </div>
               ))}
             </div>
@@ -457,12 +457,12 @@ export default function AdminCategoriesPage() {
               {advancedOpen ? (
                 <div className="mt-3 grid gap-4 sm:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-neutral-500">Stable slug</label>
-                    <input value={form.slug || slugify(form.names.en)} onChange={(e) => setForm((current) => ({ ...current, slug: e.target.value }))} disabled={editing !== "new"} className={inputClass} data-testid="category-slug" />
+                    <label htmlFor="category-slug" className="mb-1 block text-xs font-medium text-neutral-500">Stable slug</label>
+                    <input value={form.slug || slugify(form.names.en)} onChange={(e) => setForm((current) => ({ ...current, slug: e.target.value }))} disabled={editing !== "new"} className={inputClass} id="category-slug" data-testid="category-slug" />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-neutral-500">Sort order</label>
-                    <input type="number" min="0" step="1" value={form.sort_order} onChange={(e) => setForm((current) => ({ ...current, sort_order: e.target.value }))} className={inputClass} data-testid="category-sort" />
+                    <label htmlFor="category-sort" className="mb-1 block text-xs font-medium text-neutral-500">Sort order</label>
+                    <input type="number" min="0" step="1" value={form.sort_order} onChange={(e) => setForm((current) => ({ ...current, sort_order: e.target.value }))} className={inputClass} id="category-sort" data-testid="category-sort" />
                   </div>
                 </div>
               ) : null}

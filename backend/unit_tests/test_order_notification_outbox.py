@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import HTTPException
+from starlette.requests import Request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault(
@@ -18,7 +19,6 @@ os.environ.setdefault("JWT_SECRET", "isolated-test-secret-never-used-for-real-au
 
 from routers import manual_orders
 from routers.manual_orders import (
-    FulfillmentIn,
     TelegramDeliveryError,
     _dispatch_one_order_notification,
     _admin_order_payload,
@@ -50,6 +50,12 @@ class SessionContext:
 
     async def __aexit__(self, *_args):
         return False
+
+
+def fulfillment_request(stage):
+    import json
+    body = json.dumps({"stage": stage}).encode()
+    return Request({"type": "http", "headers": [(b"content-type", b"application/json")]}, receive=AsyncMock(return_value={"type": "http.request", "body": body}))
 
 
 class OrderNotificationOutboxTests(unittest.IsolatedAsyncioTestCase):
@@ -94,7 +100,7 @@ class OrderNotificationOutboxTests(unittest.IsolatedAsyncioTestCase):
         ):
             result = await update_manual_fulfillment(
                 "MC-TEST-1",
-                FulfillmentIn(stage="received_by_admin"),
+                fulfillment_request("received_by_admin"),
                 SimpleNamespace(id="admin-1"),
                 session,
                 None,
@@ -130,7 +136,7 @@ class OrderNotificationOutboxTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as caught:
             await update_manual_fulfillment(
                 "MC-TEST-2",
-                FulfillmentIn(stage="received_by_admin"),
+                fulfillment_request("received_by_admin"),
                 SimpleNamespace(id="admin-1"),
                 session,
                 None,
@@ -221,6 +227,7 @@ class OrderNotificationOutboxTests(unittest.IsolatedAsyncioTestCase):
             received_at=datetime.now(timezone.utc),
             expected_at=None,
             note=None,
+            shipping_document_key=None,
         )
         order = SimpleNamespace(
             id="order-1",

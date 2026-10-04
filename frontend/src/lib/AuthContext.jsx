@@ -14,6 +14,7 @@ const PRIVATE_QUERY_ROOTS = new Set([
   "my-orders",
   "wishlist",
 ]);
+const isPrivateQuery = (query) => PRIVATE_QUERY_ROOTS.has(query.queryKey[0]) || String(query.queryKey[0]).startsWith("admin-") || String(query.queryKey[0]).startsWith("cms-");
 
 async function loadCurrentUser() {
   try {
@@ -41,6 +42,7 @@ async function loadCurrentUser() {
 }
 
 function removePrivateQueries(queryClient, userId) {
+  queryClient.removeQueries({ predicate: query => isPrivateQuery(query) && !PRIVATE_QUERY_ROOTS.has(query.queryKey[0]) });
   if (userId) {
     queryClient.removeQueries({ queryKey: ["cart", userId] });
     queryClient.removeQueries({ queryKey: ["wishlist", userId] });
@@ -51,7 +53,7 @@ function removePrivateQueries(queryClient, userId) {
   }
   queryClient.removeQueries({
     predicate: (query) =>
-      PRIVATE_QUERY_ROOTS.has(query.queryKey[0]) &&
+      isPrivateQuery(query) &&
       !(["cart", "wishlist"].includes(query.queryKey[0]) &&
         query.queryKey[1] === "guest"),
   });
@@ -60,7 +62,7 @@ function removePrivateQueries(queryClient, userId) {
 function removeAllPrivateQueries(queryClient) {
   queryClient.removeQueries({
     predicate: (query) =>
-      PRIVATE_QUERY_ROOTS.has(query.queryKey[0]) &&
+      isPrivateQuery(query) &&
       !(["cart", "wishlist"].includes(query.queryKey[0]) &&
         query.queryKey[1] === "guest"),
   });
@@ -151,7 +153,9 @@ export function AuthProvider({ children, mergeCustomerCartOnRestore = true }) {
   useEffect(() => {
     const currentUserId = user?.id || null;
     const previousId = previousUserId.current;
-    if (previousId !== undefined && previousId !== currentUserId) {
+    // Initial session restoration mounts admin queries in the same render.
+    // Removing them after a null -> admin transition strands their observers.
+    if (previousId && previousId !== currentUserId) {
       removePrivateQueries(queryClient, previousId);
       setCartMergeError(false);
       setCartMergeReadyUserId(null);
@@ -202,9 +206,10 @@ export function AuthProvider({ children, mergeCustomerCartOnRestore = true }) {
     async login(email, password) {
       await queryClient.cancelQueries({ queryKey: ["auth", "me"] });
       await queryClient.cancelQueries({
-        predicate: (query) => PRIVATE_QUERY_ROOTS.has(query.queryKey[0]),
+        predicate: isPrivateQuery,
       });
       const authenticatedUser = await authLogin(email, password);
+      removeAllPrivateQueries(queryClient);
       queryClient.setQueryData(["auth", "me"], authenticatedUser);
       if (mergeCustomerCartOnRestore && authenticatedUser.role === "customer") {
         await mergeCustomerCart(authenticatedUser.id);
@@ -214,9 +219,10 @@ export function AuthProvider({ children, mergeCustomerCartOnRestore = true }) {
     async register(data) {
       await queryClient.cancelQueries({ queryKey: ["auth", "me"] });
       await queryClient.cancelQueries({
-        predicate: (query) => PRIVATE_QUERY_ROOTS.has(query.queryKey[0]),
+        predicate: isPrivateQuery,
       });
       const authenticatedUser = await authRegister(data);
+      removeAllPrivateQueries(queryClient);
       queryClient.setQueryData(["auth", "me"], authenticatedUser);
       if (mergeCustomerCartOnRestore && authenticatedUser.role === "customer") {
         await mergeCustomerCart(authenticatedUser.id);
@@ -226,7 +232,7 @@ export function AuthProvider({ children, mergeCustomerCartOnRestore = true }) {
     async logout() {
       await queryClient.cancelQueries({ queryKey: ["auth", "me"] });
       await queryClient.cancelQueries({
-        predicate: (query) => PRIVATE_QUERY_ROOTS.has(query.queryKey[0]),
+        predicate: isPrivateQuery,
       });
       try {
         try {

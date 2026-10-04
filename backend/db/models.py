@@ -39,6 +39,40 @@ class TimestampMixin:
     )
 
 
+class AdminPushSubscription(TimestampMixin, Base):
+    __tablename__ = "admin_push_subscriptions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    endpoint_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    endpoint: Mapped[str] = mapped_column(Text)
+    p256dh: Mapped[str] = mapped_column(String(100))
+    auth: Mapped[str] = mapped_column(String(32))
+    token_version: Mapped[int] = mapped_column(Integer)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class AdminPushDelivery(Base):
+    __tablename__ = "admin_push_deliveries"
+    __table_args__ = (
+        UniqueConstraint("subscription_id", "event_key", name="uq_admin_push_delivery_event"),
+        Index("ix_admin_push_delivery_due", "status", "next_attempt_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    subscription_id: Mapped[str] = mapped_column(ForeignKey("admin_push_subscriptions.id", ondelete="CASCADE"))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    token_version: Mapped[int] = mapped_column(Integer)
+    event_key: Mapped[str] = mapped_column(String(160))
+    payload: Mapped[dict] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class User(TimestampMixin, Base):
     __tablename__ = "users"
 

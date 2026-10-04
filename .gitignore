@@ -95,5 +95,8 @@ memory/test_credentials.md
 # Mobile development
 android-sdk/
 credentials.json
+frontend/test-results/
+frontend/playwright-report/
+*.pem
 *.key
 .credentials

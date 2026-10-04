@@ -324,6 +324,8 @@ async def create_order(
     for seller_id in sorted({item["product"].seller_id for item in totals["items"]}):
         session.add(SellerOrderFulfillment(order_id=order.id, seller_id=seller_id))
     await session.flush()
+    from admin_push import enqueue_admin_notification
+    await enqueue_admin_notification(session, f"pending-order:{order.id}", "order", f"/admin/orders/{order.order_number}")
     return order, True
 
 

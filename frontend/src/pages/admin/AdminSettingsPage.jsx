@@ -12,12 +12,13 @@ import {
 } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fmtDate, fmtMoney } from "./adminUtils";
+import CmsDeviceSettings from "@/cms/CmsDeviceSettings";
 
 function Row({ label, value, testId }) {
   return (
     <div className="flex justify-between gap-4 border-b border-neutral-50 py-2.5 text-sm" data-testid={testId}>
-      <dt className="text-neutral-500">{label}</dt>
-      <dd className="text-right font-medium">{value}</dd>
+      <dt className="min-w-0 break-words text-neutral-500">{label}</dt>
+      <dd className="min-w-0 break-words text-right font-medium">{value}</dd>
     </div>
   );
 }
@@ -108,6 +109,7 @@ export default function AdminSettingsPage() {
   return (
     <div data-testid="admin-settings-page">
       <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
+      <CmsDeviceSettings />
 
       <section className="mt-6 border border-neutral-200 bg-white p-5" data-testid="settings-store">
         <h2 className="text-sm font-semibold">Store configuration</h2>
@@ -205,6 +207,16 @@ export default function AdminSettingsPage() {
 
       <section className="mt-6 border border-neutral-200 bg-white" data-testid="settings-audit">
         <h2 className="border-b border-neutral-200 px-5 py-3 text-sm font-semibold">Audit log</h2>
+        <div className="divide-y divide-neutral-100 sm:hidden" data-testid="audit-mobile-list">
+          {auditQuery.isLoading ? Array.from({ length: 3 }).map((_, index) => <div key={index} className="p-5"><Skeleton className="h-16 w-full" /></div>) : (auditQuery.data?.items || []).map((entry) => <dl key={entry.id} className="space-y-2 px-5 py-4 text-xs">
+            <div className="flex justify-between gap-3"><dt className="text-neutral-500">When</dt><dd className="text-right">{fmtDate(entry.created_at)}</dd></div>
+            <div><dt className="text-neutral-500">Actor</dt><dd className="mt-1 break-all text-neutral-700">{entry.actor || "system"}</dd></div>
+            <div><dt className="text-neutral-500">Action</dt><dd className="mt-1 break-all font-mono">{entry.action}</dd></div>
+            <div className="flex justify-between gap-3"><dt className="text-neutral-500">Target</dt><dd className="min-w-0 break-all text-right">{entry.target_type}</dd></div>
+          </dl>)}
+          {!auditQuery.isLoading && !(auditQuery.data?.items || []).length ? <p className="px-5 py-8 text-center text-sm text-neutral-500">No audit events yet.</p> : null}
+        </div>
+        <div className="hidden max-w-full overflow-x-auto sm:block">
         <table className="w-full text-sm">
           <thead><tr className="border-b border-neutral-100 text-left text-xs uppercase tracking-wider text-neutral-400"><th className="px-5 py-2 font-medium">When</th><th className="px-5 py-2 font-medium">Actor</th><th className="px-5 py-2 font-medium">Action</th><th className="px-5 py-2 font-medium">Target</th></tr></thead>
           <tbody>
@@ -212,6 +224,7 @@ export default function AdminSettingsPage() {
             {!auditQuery.isLoading && !(auditQuery.data?.items || []).length ? <tr><td colSpan={4} className="px-5 py-8 text-center text-sm text-neutral-400" data-testid="audit-empty">No audit events yet.</td></tr> : null}
           </tbody>
         </table>
+        </div>
       </section>
     </div>
   );

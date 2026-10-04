@@ -101,11 +101,11 @@ function EntryLink({ entry, createType = "homepage_section", createSlug = "", ch
 
 function HomepageRow({ icon: Icon, label, description, entry, createType, createSlug, number, testId, meta }) {
   return (
-    <div data-testid={testId} className="flex items-center gap-4 rounded-xl border border-[#E9E3D7] bg-white p-4">
+    <div data-testid={testId} className="flex flex-wrap items-center gap-3 rounded-xl border border-[#E9E3D7] bg-white p-4">
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#F4F1E9] text-[#8A6420]">
         <Icon className="h-4 w-4" aria-hidden="true" />
       </div>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 basis-[calc(100%-3rem)] sm:basis-0">
         <div className="flex items-center gap-2">
           {number ? <span className="text-xs font-semibold text-stone-400">{number}.</span> : null}
           <p className="font-semibold text-[#17392C]">{label}</p>
@@ -113,8 +113,10 @@ function HomepageRow({ icon: Icon, label, description, entry, createType, create
         <p className="mt-1 text-xs text-stone-500">{description}</p>
         {meta ? <p className="mt-1 text-xs font-medium text-[#8A6420]">{meta}</p> : null}
       </div>
-      {entry ? <StatusPill status={entry.status} /> : <span className="text-xs font-medium text-stone-400">Belum dibuat</span>}
-      <EntryLink entry={entry} createType={createType} createSlug={createSlug}>{entry ? "Edit" : "Buat"}</EntryLink>
+      <div className="ml-auto flex shrink-0 items-center gap-3">
+        {entry ? <StatusPill status={entry.status} /> : <span className="text-xs font-medium text-stone-400">Belum dibuat</span>}
+        <EntryLink entry={entry} createType={createType} createSlug={createSlug}>{entry ? "Edit" : "Buat"}</EntryLink>
+      </div>
     </div>
   );
 }

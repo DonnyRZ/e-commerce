@@ -3,7 +3,7 @@
 Target: `/var/www/marketplace`, `https://shanicantik.com`.
 
 This runbook deliberately keeps `junix.tech` and `/var/www/junix` separate. The
-Marketplace Compose file runs only `backend`, `frontend`, and `redis`; PostgreSQL
+Marketplace Compose file runs `backend`, `cms`, `storefront`, and `redis`; PostgreSQL
 is native on the host and is shared by database/role, never by a public port.
 
 ## Release layout
@@ -16,6 +16,8 @@ is native on the host and is shared by database/role, never by a public port.
 
 /var/lib/marketplace/media/
 /var/lib/marketplace/shipping-documents/
+/var/lib/marketplace/payment-evidence/
+/var/lib/marketplace/push-keys/  # persistent private VAPID key, encrypted backup
 /etc/marketplace/marketplace.env  # chmod 600
 ```
 
@@ -39,16 +41,16 @@ production release.
 From `/var/www/marketplace/current`:
 
 ```bash
-docker compose -f deploy/production/docker-compose.yml config
-docker compose -f deploy/production/docker-compose.yml up -d redis
-docker compose -f deploy/production/docker-compose.yml --profile migration run --rm migrate
-docker compose -f deploy/production/docker-compose.yml up -d backend frontend
-docker compose -f deploy/production/docker-compose.yml ps
+docker compose --env-file /etc/marketplace/marketplace.env -f deploy/production/docker-compose.yml config --quiet
+sudo bash deploy/production/deploy.sh "$PWD"
+docker compose --env-file /etc/marketplace/marketplace.env -f deploy/production/docker-compose.yml ps
 curl --fail http://127.0.0.1:8080/api/health
 curl --fail http://127.0.0.1:8080/api/ready
 ```
 
-The production backend command starts Uvicorn directly. Alembic is intentionally
+The deploy script first prepares the persistent admin Web Push key, then runs
+and verifies migrations before starting application services. The production
+backend command starts Uvicorn directly. Alembic is intentionally
 run by the one-shot `migrate` service and not on every backend restart.
 
 ## Required production environment
@@ -97,8 +99,11 @@ purchase is unavailable and that `/api/ready` remains 200 with
 ## Backup and rollback
 
 Before and after migration, create PostgreSQL custom-format and globals backups.
-Back up `/var/lib/marketplace/media` and `/var/lib/marketplace/shipping-documents`
-and copy backups outside the VPS. Application rollback is a symlink switch to the
+Back up `/var/lib/marketplace/media`, `/var/lib/marketplace/shipping-documents`,
+`/var/lib/marketplace/payment-evidence`, and `/var/lib/marketplace/push-keys`
+and copy backups outside the VPS. Encrypt the private notification key backup;
+preserve this key across releases to keep installed devices subscribed.
+Application rollback is a symlink switch to the
 previous release followed by a Compose rebuild and health check. Database rollback
 uses a verified backup restore, not Alembic downgrade.
 

@@ -21,12 +21,16 @@ services:
       dockerfile: backend/Dockerfile
     env_file:
       - /etc/marketplace/marketplace.env
+    environment:
+      ADMIN_PUSH_ENABLED: "${ADMIN_PUSH_ENABLED:-true}"
+      VAPID_PRIVATE_KEY_FILE: /app/push-keys/vapid-private.pem
     command: ["alembic", "upgrade", "head"]
     extra_hosts:
       # The VPS default bridge (the host-gateway target) is link-down. The
       # fixed private Marketplace bridge gateway is the host PostgreSQL hop.
       - "host.docker.internal:172.30.0.1"
     volumes:
+      - /var/lib/marketplace/push-keys:/app/push-keys
       - /var/lib/marketplace/media:/app/uploads
       - /var/lib/marketplace/payment-evidence:/var/lib/marketplace/payment-evidence
     depends_on:
@@ -44,6 +48,9 @@ services:
     restart: unless-stopped
     env_file:
       - /etc/marketplace/marketplace.env
+    environment:
+      ADMIN_PUSH_ENABLED: "${ADMIN_PUSH_ENABLED:-true}"
+      VAPID_PRIVATE_KEY_FILE: /app/push-keys/vapid-private.pem
     command:
       [
         "uvicorn",
@@ -63,6 +70,7 @@ services:
     extra_hosts:
       - "host.docker.internal:172.30.0.1"
     volumes:
+      - /var/lib/marketplace/push-keys:/app/push-keys:ro
       - /var/lib/marketplace/media:/app/uploads
       - /var/lib/marketplace/payment-evidence:/var/lib/marketplace/payment-evidence
       - /var/lib/marketplace/shipping-documents:/var/lib/marketplace/shipping-documents

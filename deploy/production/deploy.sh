@@ -5,6 +5,9 @@ release_dir="$(cd "${1:-.}" && pwd)"
 env_file="${MARKETPLACE_ENV_FILE:-/etc/marketplace/marketplace.env}"
 compose=(docker compose --env-file "$env_file" -f "$release_dir/deploy/production/docker-compose.yml")
 
+echo "Preparing the persistent admin notification key..."
+"${compose[@]}" --profile migration run --rm --build migrate python scripts/ensure_admin_push_keys.py
+
 echo "Running production migrations before starting application containers..."
 "${compose[@]}" --profile migration run --rm --build migrate
 

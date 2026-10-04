@@ -67,7 +67,8 @@
     "build:storefront": "node scripts/build-frontend.mjs storefront",
     "build:cms": "node scripts/build-frontend.mjs cms",
     "test": "craco test",
-    "test:ci": "craco test --watchAll=false --passWithNoTests"
+    "test:ci": "craco test --watchAll=false --passWithNoTests",
+    "test:browser": "playwright test"
   },
   "browserslist": {
     "production": [
@@ -82,9 +83,11 @@
     ]
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.11.1",
     "@babel/plugin-proposal-private-property-in-object": "7.21.11",
     "@craco/craco": "7.1.0",
     "@eslint/js": "9.23.0",
+    "@playwright/test": "1.58.2",
     "@types/lodash": "4.17.24",
     "autoprefixer": "10.4.20",
     "dotenv": "16.4.5",

@@ -70,7 +70,7 @@ jobs:
           set -euo pipefail
           for name in VPS_DEPLOY_KEY VPS_KNOWN_HOSTS VPS_HOST; do
             if [[ -z "${!name}" ]]; then
-              echo "::error::Repository secret $name is missing."
+              echo "::error::Deployment secret $name is missing (repository or production environment)."
               exit 1
             fi
           done
@@ -88,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$VPS_USER" ]]; then
-            echo "::error::Repository secret VPS_USER is missing."
+            echo "::error::Deployment secret VPS_USER is missing (repository or production environment)."
             exit 1
           fi
           ssh_options=(-i "$HOME/.ssh/marketplace_deploy_key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")

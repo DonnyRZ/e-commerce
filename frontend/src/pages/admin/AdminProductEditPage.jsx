@@ -748,8 +748,8 @@ export default function AdminProductEditPage() {
           <h2 className="text-sm font-semibold">Basics</h2>
           <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-500">Category</label>
-              <select value={form.category_id} onChange={setCategory} required className={inputClass} data-testid="editor-category">
+              <label htmlFor="editor-category" className="mb-1 block text-xs font-medium text-neutral-500">Category</label>
+              <select value={form.category_id} onChange={setCategory} required className={inputClass} id="editor-category" data-testid="editor-category">
                 <option value="" disabled>—</option>
                 {catItems.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -760,20 +760,20 @@ export default function AdminProductEditPage() {
               <p className="mt-1 text-[11px] text-neutral-400">Product details follow the selected category automatically.</p>
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-500">Brand</label>
-              <input value={form.brand} onChange={setF("brand")} className={inputClass} data-testid="editor-brand" maxLength={120} />
+              <label htmlFor="editor-brand" className="mb-1 block text-xs font-medium text-neutral-500">Brand</label>
+              <input value={form.brand} onChange={setF("brand")} className={inputClass} id="editor-brand" data-testid="editor-brand" maxLength={120} />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-500">Base price (UZS)</label>
-              <input type="number" min="0" step="1" required value={form.base_price} onChange={setF("base_price")} className={inputClass} data-testid="editor-base-price" />
+              <label htmlFor="editor-base-price" className="mb-1 block text-xs font-medium text-neutral-500">Base price (UZS)</label>
+              <input type="number" min="0" step="1" required value={form.base_price} onChange={setF("base_price")} className={inputClass} id="editor-base-price" data-testid="editor-base-price" />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-500">Compare-at price (UZS)</label>
-              <input type="number" min="0" step="1" value={form.compare_at_price} onChange={setF("compare_at_price")} className={inputClass} data-testid="editor-compare-at" />
+              <label htmlFor="editor-compare-at" className="mb-1 block text-xs font-medium text-neutral-500">Compare-at price (UZS)</label>
+              <input type="number" min="0" step="1" value={form.compare_at_price} onChange={setF("compare_at_price")} className={inputClass} id="editor-compare-at" data-testid="editor-compare-at" />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-500">Status</label>
-              <select value={form.status} onChange={setF("status")} className={inputClass} data-testid="editor-status">
+              <label htmlFor="editor-status" className="mb-1 block text-xs font-medium text-neutral-500">Status</label>
+              <select value={form.status} onChange={setF("status")} className={inputClass} id="editor-status" data-testid="editor-status">
                 <option value="draft">Draft</option>
                 <option value="active">Active</option>
                 <option value="inactive">Inactive</option>
@@ -788,13 +788,13 @@ export default function AdminProductEditPage() {
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
               {(ATTRIBUTE_FIELDS[form.product_type] || []).map(([key, label]) => (
                 <div key={key}>
-                  <label className="mb-1 block text-xs font-medium text-neutral-500">{label}</label>
+                  <label htmlFor={`editor-attribute-${key}`} className="mb-1 block text-xs font-medium text-neutral-500">{label}</label>
                   <textarea
                     value={attributes[key] || ""}
                     onChange={(e) => setAttribute(key, e.target.value)}
                     rows={key === "care" || key === "ingredients" || key === "benefits" || key === "directions" || key === "notes" || key === "usage" ? 3 : 2}
                     className="w-full border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#145A46]"
-                    data-testid={`editor-attribute-${key}`}
+                    id={`editor-attribute-${key}`} data-testid={`editor-attribute-${key}`}
                   />
                 </div>
               ))}
@@ -933,7 +933,7 @@ export default function AdminProductEditPage() {
           </div>
           <div className="mt-4 grid gap-4">
             <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-500">
+              <label htmlFor={`editor-name-${activeLocale}`} className="mb-1 block text-xs font-medium text-neutral-500">
                 Name ({activeLocale}{activeLocale === "en" ? " — required" : ""})
               </label>
               <input
@@ -941,17 +941,17 @@ export default function AdminProductEditPage() {
                 onChange={setT("name")}
                 required={activeLocale === "en"}
                 className={inputClass}
-                data-testid={`editor-name-${activeLocale}`}
+                id={`editor-name-${activeLocale}`} data-testid={`editor-name-${activeLocale}`}
                 maxLength={255}
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-500">Short description</label>
-              <input value={tab.short_description || ""} onChange={setT("short_description")} className={inputClass} data-testid={`editor-short-${activeLocale}`} maxLength={500} />
+              <label htmlFor={`editor-short-${activeLocale}`} className="mb-1 block text-xs font-medium text-neutral-500">Short description</label>
+              <input value={tab.short_description || ""} onChange={setT("short_description")} className={inputClass} id={`editor-short-${activeLocale}`} data-testid={`editor-short-${activeLocale}`} maxLength={500} />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-neutral-500">Description</label>
-              <textarea value={tab.description || ""} onChange={setT("description")} rows={4} className="w-full border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#145A46]" data-testid={`editor-desc-${activeLocale}`} />
+              <label htmlFor={`editor-desc-${activeLocale}`} className="mb-1 block text-xs font-medium text-neutral-500">Description</label>
+              <textarea value={tab.description || ""} onChange={setT("description")} rows={4} className="w-full border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-[#145A46]" id={`editor-desc-${activeLocale}`} data-testid={`editor-desc-${activeLocale}`} />
             </div>
           </div>
         </section>
@@ -979,11 +979,11 @@ export default function AdminProductEditPage() {
               <div key={idx} className="grid items-end gap-3 border border-neutral-100 p-3 sm:grid-cols-2 xl:grid-cols-[1fr_1.4fr_0.6fr_0.7fr_0.7fr_auto_auto]" data-testid={`editor-variant-${idx}`}>
                 <div>
                   <label className="mb-1 block text-[11px] font-medium text-neutral-500">SKU <span className="font-normal text-neutral-400">(optional)</span></label>
-                  <input value={v.sku} onChange={(e) => setV(idx, "sku", e.target.value)} className={inputClass} data-testid={`variant-sku-${idx}`} maxLength={80} placeholder="Generated if blank" />
+                  <input value={v.sku} onChange={(e) => setV(idx, "sku", e.target.value)} className={inputClass} id={`variant-sku-${idx}`} aria-label={`SKU · variant ${idx + 1}`} data-testid={`variant-sku-${idx}`} maxLength={80} placeholder="Generated if blank" />
                 </div>
                 <div>
                   <label className="mb-1 block text-[11px] font-medium text-neutral-500">Size</label>
-                  <input value={v.size} onChange={(e) => setV(idx, "size", e.target.value)} className={inputClass} data-testid={`variant-size-${idx}`} placeholder="e.g. S, M, XL, 50ml" />
+                  <input value={v.size} onChange={(e) => setV(idx, "size", e.target.value)} className={inputClass} id={`variant-size-${idx}`} aria-label={`Size / options · variant ${idx + 1}`} data-testid={`variant-size-${idx}`} placeholder="e.g. S, M, XL, 50ml" />
                   {Object.keys(v.preservedOptions || {}).length ? (
                     <p className="mt-1 truncate text-[10px] text-neutral-500" data-testid={`variant-preserved-options-${idx}`}>
                       {Object.entries(v.preservedOptions).map(([key, value]) => `${key}: ${value}`).join(" · ")}
@@ -994,15 +994,15 @@ export default function AdminProductEditPage() {
                   <label className="mb-1 block text-[11px] font-medium text-neutral-500">
                     Stock{v.active_reserved ? ` (reserved ${v.active_reserved})` : ""}
                   </label>
-                  <input type="number" min="0" step="1" value={v.stock} onChange={(e) => setV(idx, "stock", e.target.value)} className={inputClass} data-testid={`variant-stock-${idx}`} />
+                  <input type="number" min="0" step="1" value={v.stock} onChange={(e) => setV(idx, "stock", e.target.value)} className={inputClass} id={`variant-stock-${idx}`} aria-label={`Stock · variant ${idx + 1}`} data-testid={`variant-stock-${idx}`} />
                 </div>
                 <div>
                   <label className="mb-1 block text-[11px] font-medium text-neutral-500">Price override</label>
-                  <input type="number" min="0" step="1" value={v.price_override} onChange={(e) => setV(idx, "price_override", e.target.value)} className={inputClass} data-testid={`variant-price-${idx}`} />
+                  <input type="number" min="0" step="1" value={v.price_override} onChange={(e) => setV(idx, "price_override", e.target.value)} className={inputClass} id={`variant-price-${idx}`} aria-label={`Price override · variant ${idx + 1}`} data-testid={`variant-price-${idx}`} />
                 </div>
                 <div>
                   <label className="mb-1 block text-[11px] font-medium text-neutral-500">Sale override</label>
-                  <input type="number" min="0" step="1" value={v.sale_price_override} onChange={(e) => setV(idx, "sale_price_override", e.target.value)} className={inputClass} data-testid={`variant-sale-${idx}`} />
+                  <input type="number" min="0" step="1" value={v.sale_price_override} onChange={(e) => setV(idx, "sale_price_override", e.target.value)} className={inputClass} id={`variant-sale-${idx}`} aria-label={`Sale price override · variant ${idx + 1}`} data-testid={`variant-sale-${idx}`} />
                 </div>
                 <label className="flex h-10 items-center gap-2 text-xs" data-testid={`variant-active-label-${idx}`}>
                   <input type="checkbox" checked={Boolean(v.is_active)} onChange={(e) => setV(idx, "is_active", e.target.checked)} className="accent-[#145A46]" data-testid={`variant-active-${idx}`} />

@@ -123,8 +123,10 @@ export default function AdminCustomersPage() {
                       data-testid={`customer-row-${c.id}`}
                     >
                       <td className="px-5 py-3">
+                        <button type="button" className="w-full text-left" aria-expanded={openId === c.id} onClick={(event) => { event.stopPropagation(); setOpenId(openId === c.id ? null : c.id); }}>
                         <p className="font-medium">{c.first_name} {c.last_name}</p>
                         <p className="text-xs text-neutral-400">{c.email}</p>
+                        </button>
                       </td>
                       <td className="px-5 py-3 uppercase text-neutral-500">{c.preferred_locale}</td>
                       <td className="px-5 py-3"><StatusPill value={c.is_active ? "active" : "inactive"} /></td>

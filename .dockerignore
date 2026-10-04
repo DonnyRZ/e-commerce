@@ -18,6 +18,8 @@ backend/.pytest_cache/**
 **/*.log
 frontend/build
 frontend/coverage
+frontend/test-results
+frontend/playwright-report
 backend/uploads
 test_reports
 memory

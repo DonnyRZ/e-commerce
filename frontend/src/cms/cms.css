@@ -1,0 +1,32 @@
+.cms-app {
+  --cms-header-height: calc(3.5rem + env(safe-area-inset-top));
+  --cms-viewport-height: 100dvh;
+}
+.cms-app body { overscroll-behavior-y: none; }
+.cms-app main .grid > * { min-width: 0; }
+.cms-app main :is(h1, h2, h3, p) { overflow-wrap: anywhere; }
+.cms-app .text-neutral-400, .cms-app .text-stone-400 { color: #666; }
+.cms-app .text-neutral-500 { color: #666; }
+.cms-app .text-stone-500 { color: #6b625d; }
+.cms-app [class~="text-[#CD9B3A]"] { color: #84601d; }
+.cms-app :is(button, a, input, textarea, select):focus-visible { outline: 2px solid #145A46; outline-offset: 3px; }
+.cms-app .cms-header {
+  height: var(--cms-header-height);
+  padding-top: env(safe-area-inset-top);
+}
+.cms-app .cms-chat {
+  height: calc(var(--cms-viewport-height) - var(--cms-header-height));
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.cms-app .cms-product-panel { top: var(--cms-header-height); padding-bottom: env(safe-area-inset-bottom); }
+.cms-app .cms-save-bar { padding-bottom: max(.75rem, env(safe-area-inset-bottom)); }
+.cms-app [data-testid="forgot-password-page"],
+.cms-app [data-testid="reset-password-page"] { padding-left: 1rem; padding-right: 1rem; }
+@media (max-width: 639px) {
+  .cms-app label:has(> input[type="checkbox"]), .cms-app label:has(> input[type="radio"]) { min-height: 44px; cursor: pointer; }
+  .cms-app button:not([role="checkbox"]):not([role="switch"]) { min-height: 44px; min-width: 44px; touch-action: manipulation; }
+  .cms-app input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not(.sr-only),
+  .cms-app select, .cms-app textarea { font-size: 16px; min-height: 44px; }
+  .cms-app main a.inline-flex { min-height: 44px; }
+  .cms-app .brand-wordmark { white-space: normal; font-size: .875rem; letter-spacing: .12em; }
+}

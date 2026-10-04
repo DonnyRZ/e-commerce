@@ -1,0 +1,22 @@
+{
+  "id": "/admin/",
+  "name": "MUSLIMAH CANTIK CMS",
+  "short_name": "Cantik CMS",
+  "description": "Kelola chat Telegram, pesanan, katalog dan konten toko.",
+  "lang": "id",
+  "start_url": "/admin/?source=installed",
+  "scope": "/admin/",
+  "display": "standalone",
+  "display_override": ["standalone"],
+  "background_color": "#FAFAFA",
+  "theme_color": "#02422C",
+  "icons": [
+    {"src": "/admin/pwa/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+    {"src": "/admin/pwa/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+    {"src": "/admin/pwa/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+  ],
+  "shortcuts": [
+    {"name": "Inbox Telegram", "url": "/admin/telegram-inbox", "icons": [{"src": "/admin/pwa/icon-192.png", "sizes": "192x192"}]},
+    {"name": "Orders", "url": "/admin/orders", "icons": [{"src": "/admin/pwa/icon-192.png", "sizes": "192x192"}]}
+  ]
+}

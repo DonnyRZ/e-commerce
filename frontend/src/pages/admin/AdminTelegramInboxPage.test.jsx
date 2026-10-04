@@ -66,6 +66,11 @@ jest.mock("@tanstack/react-query", () => ({
 }));
 jest.mock("react-router-dom", () => ({
   Link: ({ children, to }) => <a href={to}>{children}</a>,
+  useSearchParams: () => {
+    const React = require("react");
+    const [params, setParams] = React.useState(new URLSearchParams());
+    return [params, setParams];
+  },
 }), { virtual: true });
 jest.mock("@/lib/api", () => ({
   addAdminTelegramCandidatesToPendingOrders: jest.fn(),
@@ -144,8 +149,8 @@ test("shows a conversation once with related orders linked from the selected thr
   const relatedOrders = container.querySelector('[data-testid="telegram-conversation-orders"]');
   expect(relatedOrders.textContent).toContain("Order terkait · 2");
   expect([...relatedOrders.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
-    "/admin/orders/MC-LATEST-1",
-    "/admin/orders/MC-OLDER-1",
+    "/orders/MC-LATEST-1",
+    "/orders/MC-OLDER-1",
   ]);
 });
 

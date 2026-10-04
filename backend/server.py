@@ -44,6 +44,8 @@ from routers.cms_public import router as cms_public_router
 from routers.telegram import router as telegram_router
 from routers.telegram import telegram_inquiry_cleanup_loop
 from routers.telegram_inbox import router as telegram_inbox_router
+from routers.admin_push import router as admin_push_router
+from admin_push import admin_push_dispatch_loop
 
 
 class JsonFormatter(logging.Formatter):
@@ -84,6 +86,7 @@ async def lifespan(_app: FastAPI):
         payment_notification_dispatch_loop()
     )
     order_notification_task = asyncio.create_task(order_notification_dispatch_loop())
+    admin_push_task = asyncio.create_task(admin_push_dispatch_loop())
     try:
         yield
     finally:
@@ -91,6 +94,7 @@ async def lifespan(_app: FastAPI):
             cleanup_task,
             payment_notification_task,
             order_notification_task,
+            admin_push_task,
         ):
             task.cancel()
             try:
@@ -209,6 +213,7 @@ app.include_router(cms_admin_router)
 app.include_router(cms_public_router)
 app.include_router(telegram_router)
 app.include_router(telegram_inbox_router)
+app.include_router(admin_push_router)
 
 
 @app.middleware("http")

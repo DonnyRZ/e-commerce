@@ -23,6 +23,9 @@ TRUSTED_HOSTS = tuple(
 )
 ENFORCE_HTTPS = os.environ.get("ENFORCE_HTTPS", "false").lower() == "true"
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+ADMIN_PUSH_ENABLED = os.environ.get("ADMIN_PUSH_ENABLED", "true" if APP_ENV == "production" else "false").strip().lower() == "true"
+VAPID_PRIVATE_KEY_FILE = os.environ.get("VAPID_PRIVATE_KEY_FILE", "/app/push-keys/vapid-private.pem")
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", FRONTEND_URL if FRONTEND_URL.startswith("https://") else "https://shanicantik.com")
 COOKIE_SECURE = os.environ.get(
     "SESSION_COOKIE_SECURE", "true" if APP_ENV == "production" else "false"
 ).lower() == "true"
@@ -117,6 +120,18 @@ def validate_runtime_config(*, strict: bool | None = None) -> list[str]:
     if strict is None:
         strict = production
     errors: list[str] = []
+
+    if ADMIN_PUSH_ENABLED:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        try:
+            key = serialization.load_pem_private_key(Path(VAPID_PRIVATE_KEY_FILE).read_bytes(), password=None)
+            if not isinstance(key, ec.EllipticCurvePrivateKey) or not isinstance(key.curve, ec.SECP256R1):
+                errors.append("Admin push requires a persistent EC P-256 VAPID key")
+        except (OSError, ValueError, TypeError):
+            errors.append("Admin push VAPID key is missing or invalid")
+        if not (VAPID_SUBJECT.startswith("https://") or VAPID_SUBJECT.startswith("mailto:")):
+            errors.append("VAPID_SUBJECT must be an HTTPS URL or mailto contact")
 
     if APP_ENV not in {"development", "test", "staging", "production"}:
         errors.append("APP_ENV must be development, test, staging, or production")

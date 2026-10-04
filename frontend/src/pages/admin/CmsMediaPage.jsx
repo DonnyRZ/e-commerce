@@ -71,25 +71,25 @@ function MediaEditor({ asset, onClose }) {
       </div>
       <div className="mt-4 flex flex-wrap gap-5">
         <ImageWithFallback src={mediaUrl(asset.url)} alt="" className="h-32 w-32 border border-neutral-200 object-cover" />
-        <div className="min-w-0 flex-1 space-y-3">
+        <div className="min-w-0 w-full flex-none space-y-3 sm:flex-1">
           {LOCALES.map((loc) => (
             <div key={loc} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-[11px] font-medium text-neutral-600">Teks alternatif · {({ en: "English", id: "Indonesia", uz: "O'zbek", ru: "Русский" })[loc]}</label>
+                <label htmlFor={`media-alt-${loc}`} className="mb-1 block text-[11px] font-medium text-neutral-600">Teks alternatif · {({ en: "English", id: "Indonesia", uz: "O'zbek", ru: "Русский" })[loc]}</label>
                 <input
                   value={tr[loc].alt_text}
                   onChange={(e) => setTr({ ...tr, [loc]: { ...tr[loc], alt_text: e.target.value } })}
                   className={inputClass}
-                  data-testid={`media-alt-${loc}`}
+                  id={`media-alt-${loc}`} data-testid={`media-alt-${loc}`}
                 />
               </div>
               <div>
-                <label className="mb-1 block text-[11px] font-medium text-neutral-600">Keterangan · {({ en: "English", id: "Indonesia", uz: "O'zbek", ru: "Русский" })[loc]}</label>
+                <label htmlFor={`media-caption-${loc}`} className="mb-1 block text-[11px] font-medium text-neutral-600">Keterangan · {({ en: "English", id: "Indonesia", uz: "O'zbek", ru: "Русский" })[loc]}</label>
                 <input
                   value={tr[loc].caption}
                   onChange={(e) => setTr({ ...tr, [loc]: { ...tr[loc], caption: e.target.value } })}
                   className={inputClass}
-                  data-testid={`media-caption-${loc}`}
+                  id={`media-caption-${loc}`} data-testid={`media-caption-${loc}`}
                 />
               </div>
             </div>
@@ -168,7 +168,7 @@ export default function CmsMediaPage() {
         <label className="flex min-w-0 w-full flex-1 items-center gap-2 text-sm text-neutral-500 sm:min-w-60 sm:w-auto">
           <Search className="h-4 w-4" aria-hidden="true" />
           <span className="sr-only">Cari media</span>
-          <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className={`${inputClass} border-0 p-0 shadow-none focus:ring-0`} placeholder="Cari nama file…" data-testid="media-search" />
+          <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} className={`${inputClass} border-0 p-0 shadow-none focus:ring-0`} placeholder="Cari nama file…" aria-label="Cari media" data-testid="media-search" />
         </label>
         <span className="text-xs text-stone-500">{data?.total || 0} media</span>
       </div>

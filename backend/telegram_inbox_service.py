@@ -18,6 +18,7 @@ from db.models import (
     utcnow,
 )
 from telegram_inquiries import TelegramDeliveryError, bot_request
+from admin_push import enqueue_admin_notification
 
 
 SUPPORTED_TELEGRAM_LOCALES = {"id", "en", "uz", "ru"}
@@ -307,6 +308,10 @@ async def persist_business_message(
     text = message.get("text") or message.get("caption") or ""
     if not isinstance(text, str):
         text = ""
+    other_media = next((kind for kind in ("voice", "audio", "video", "video_note", "document", "sticker", "animation", "contact", "location", "poll") if isinstance(message.get(kind), dict)), None)
+    if other_media and not text.strip():
+        labels = {"voice": "Pesan suara", "audio": "Audio", "video": "Video", "video_note": "Pesan video", "document": "Dokumen", "sticker": "Stiker", "animation": "Animasi", "contact": "Kontak", "location": "Lokasi", "poll": "Polling"}
+        text = f"{labels[other_media]} · buka Telegram untuk melihat isi pesan."
     if not photo and not text.strip() and not rich_content:
         return None
 
@@ -326,7 +331,8 @@ async def persist_business_message(
             TelegramInboxMessage.telegram_message_id == message_id,
         )
     )
-    if row is None:
+    is_new_message = row is None
+    if is_new_message:
         row = TelegramInboxMessage(
             conversation_id=conversation.id,
             connection_id=connection_id,
@@ -341,7 +347,7 @@ async def persist_business_message(
         session.add(row)
     if update_id is not None:
         row.update_id = update_id
-    row.message_type = "rich" if rich_content else "photo" if photo else "text"
+    row.message_type = "rich" if rich_content else "photo" if photo else other_media or "text"
     row.text = text[:4096]
     row.rich_content = rich_content
     row.media_group_id = str(message.get("media_group_id") or "")[:255] or None
@@ -351,6 +357,8 @@ async def persist_business_message(
     row.deleted_at = None
     row.edited_at = utcnow() if edited else row.edited_at
     await session.flush()
+    if is_new_message and sender_is_customer and not edited:
+        await enqueue_admin_notification(session, f"telegram-message:{row.id}", "telegram", f"/admin/telegram-inbox?conversation={conversation.id}")
     return row
 
 

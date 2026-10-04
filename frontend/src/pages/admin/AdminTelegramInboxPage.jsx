@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
@@ -18,7 +19,7 @@ import {
   ShoppingBag,
   X,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ORDER_STEPS, workflowStageForStatus } from "./OrderProgress";
 import { formatOrderItemOptions } from "./orderItemUtils";
@@ -123,9 +124,9 @@ function SlideCarousel({ slides, label, testId }) {
       </div>
       {slide.caption ? <p className="whitespace-pre-wrap break-words border-t border-neutral-100 px-3 py-2 text-xs leading-5 text-neutral-700">{slide.caption}</p> : null}
       {slides.length > 1 ? <div className="flex items-center justify-between gap-2 border-t border-neutral-100 px-3 py-2">
-        <span className="text-[10px] tabular-nums text-neutral-500">{index + 1} / {slides.length}</span>
-        <div className="flex items-center gap-1" role="group" aria-label={`${label} · pilih slide`}>
-          {slides.map((item, itemIndex) => <button key={`${itemIndex}-${item.image_url || "slide"}`} type="button" onClick={() => setActiveIndex(itemIndex)} aria-label={`Tampilkan produk ${itemIndex + 1}`} aria-current={itemIndex === index ? "true" : undefined} className={`h-2 w-2 rounded-full ${itemIndex === index ? "bg-[#145A46]" : "bg-neutral-300 hover:bg-neutral-400"}`} />)}
+        <span className="shrink-0 whitespace-nowrap text-[10px] tabular-nums text-neutral-500">{index + 1} / {slides.length}</span>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1" role="group" aria-label={`${label} · pilih slide`}>
+          {slides.map((item, itemIndex) => <button key={`${itemIndex}-${item.image_url || "slide"}`} type="button" onClick={() => setActiveIndex(itemIndex)} aria-label={`Tampilkan produk ${itemIndex + 1}`} aria-current={itemIndex === index ? "true" : undefined} className="inline-flex h-11 w-11 items-center justify-center"><span className={`h-2 w-2 rounded-full ${itemIndex === index ? "bg-[#145A46]" : "bg-neutral-300"}`} /></button>)}
         </div>
       </div> : null}
     </div>
@@ -343,22 +344,39 @@ function ProductWorkspace({ conversation, detail, onInvalidate, onPendingOrderAd
 }
 
 export default function AdminTelegramInboxPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedId = searchParams.get("conversation") || null;
+  const setSelectedId = (id) => setSearchParams(current => {
+    const next = new URLSearchParams(current);
+    if (id) next.set("conversation", id); else next.delete("conversation");
+    return next;
+  });
   const [filter, setFilter] = useState("all");
   const [chatStatus, setChatStatus] = useState("all");
   const [q, setQ] = useState("");
   const [extraItems, setExtraItems] = useState([]);
   const [nextCursor, setNextCursor] = useState(null);
   const [loadCursor, setLoadCursor] = useState(null);
-  const [selectedId, setSelectedId] = useState(null);
   const [text, setText] = useState("");
   const [photo, setPhoto] = useState(null);
   const [photoCaption, setPhotoCaption] = useState("");
   const [productPanelOpen, setProductPanelOpen] = useState(false);
   const [sourceMessageId, setSourceMessageId] = useState(null);
-  const [mobileThread, setMobileThread] = useState(false);
+  const [mobileThread, setMobileThread] = useState(Boolean(selectedId));
   const [sending, setSending] = useState(false);
-  const bottomRef = useRef(null);
+  const messagesRef = useRef(null);
+  const autoScrollRef = useRef(true);
+  const currentConversationRef = useRef(selectedId);
+  currentConversationRef.current = selectedId;
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const desktop = window.matchMedia("(min-width: 1024px)");
+    const closeMobilePanel = () => { if (desktop.matches) setProductPanelOpen(false); };
+    desktop.addEventListener("change", closeMobilePanel);
+    return () => desktop.removeEventListener("change", closeMobilePanel);
+  }, []);
 
   const inboxQuery = useQuery({
     queryKey: ["admin-telegram-inbox", filter, chatStatus, q.trim(), "first"],
@@ -420,8 +438,23 @@ export default function AdminTelegramInboxPage() {
     setLoadCursor(null);
   }, [inboxQuery.data?.items, loadCursor, olderQuery.data, olderQuery.isFetching]);
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    setMobileThread(Boolean(selectedId));
+    setText(""); setPhoto(null); setPhotoCaption("");
+    setProductPanelOpen(false); setSourceMessageId(null);
+    autoScrollRef.current = true;
+  }, [selectedId]);
+  useEffect(() => {
+    const list = messagesRef.current;
+    if (list && autoScrollRef.current) list.scrollTop = list.scrollHeight;
   }, [detail?.messages?.length, selectedId]);
+  useEffect(() => {
+    const keepLatestVisible = () => {
+      const list = messagesRef.current;
+      if (list && autoScrollRef.current) list.scrollTop = list.scrollHeight;
+    };
+    window.visualViewport?.addEventListener("resize", keepLatestVisible);
+    return () => window.visualViewport?.removeEventListener("resize", keepLatestVisible);
+  }, []);
 
   const invalidate = () => {
     setExtraItems([]);
@@ -434,17 +467,18 @@ export default function AdminTelegramInboxPage() {
     event.preventDefault();
     if (!detail?.can_send || sending) return;
     if (!text.trim() && !photo) return;
+    const conversationId = selectedId;
     setSending(true);
     try {
       if (photo) {
-        await sendAdminTelegramPhoto(selectedId, photo, photoCaption.trim());
-        setPhoto(null);
-        setPhotoCaption("");
+        await sendAdminTelegramPhoto(conversationId, photo, photoCaption.trim());
+        if (currentConversationRef.current === conversationId) { setPhoto(null); setPhotoCaption(""); }
       } else {
-        await sendAdminTelegramText(selectedId, text.trim());
-        setText("");
+        await sendAdminTelegramText(conversationId, text.trim());
+        if (currentConversationRef.current === conversationId) setText("");
       }
-      invalidate();
+      queryClient.invalidateQueries({ queryKey: ["admin-telegram-inbox"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-telegram-conversation", conversationId] });
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
@@ -508,7 +542,7 @@ export default function AdminTelegramInboxPage() {
   );
 
   return (
-    <div className="-m-4 flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden bg-white lg:-m-8" data-testid="admin-telegram-inbox-page">
+    <div className="cms-chat -m-4 flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col overflow-hidden bg-white lg:-m-8" data-testid="admin-telegram-inbox-page">
       <header className={`${mobileThread ? "hidden lg:flex" : "flex"} min-h-[62px] shrink-0 items-center justify-between border-b border-neutral-200 px-4 py-3 lg:px-6`}>
         <div><p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#CD9B3A]">Sales · Telegram Business</p><h1 className="mt-0.5 text-lg font-semibold tracking-tight text-[#02422C]">Inbox Telegram</h1></div>
         <span className="hidden items-center gap-1.5 text-[11px] text-neutral-500 sm:inline-flex"><span className="h-2 w-2 rounded-full bg-emerald-500" />Tampilan diperbarui otomatis</span>
@@ -541,6 +575,7 @@ export default function AdminTelegramInboxPage() {
         ) : null}
         {selectedId ? (
           <section className={`${mobileThread ? "flex" : "hidden lg:flex"} min-h-0 min-w-0 flex-1 flex-col bg-[#F7F8F7] lg:col-start-2 lg:col-end-3`} data-testid="telegram-inbox-thread">
+            {!detail ? <button type="button" onClick={() => setSelectedId(null)} className="inline-flex min-h-11 shrink-0 items-center gap-2 px-4 text-sm text-[#145A46] lg:hidden"><ArrowLeft className="h-4 w-4" />Kembali ke daftar chat</button> : null}
             {detailQuery.isError && !detail ? (
               <div className="flex flex-1 flex-col items-center justify-center px-6 text-center" role="alert">
                 <p className="text-sm font-medium text-neutral-700">Percakapan gagal dimuat.</p>
@@ -549,15 +584,15 @@ export default function AdminTelegramInboxPage() {
               </div>
             ) : detailQuery.isLoading || !detail ? <div className="flex flex-1 items-center justify-center text-sm text-neutral-400"><LoaderCircle className="mr-2 h-4 w-4 animate-spin" />Memuat chat…</div> : <>
               <div className="flex shrink-0 items-center gap-2 border-b border-neutral-200 bg-white px-2 py-2 sm:px-3 lg:justify-between lg:px-4 lg:py-3">
-                <button type="button" className="inline-flex h-10 w-10 shrink-0 items-center justify-center hover:bg-neutral-50 lg:hidden" onClick={() => setMobileThread(false)} aria-label="Kembali ke daftar chat"><ArrowLeft className="h-5 w-5" /></button>
+                <button type="button" className="inline-flex h-10 w-10 shrink-0 items-center justify-center hover:bg-neutral-50 lg:hidden" onClick={() => setSelectedId(null)} aria-label="Kembali ke daftar chat"><ArrowLeft className="h-5 w-5" /></button>
                 <div className="flex min-w-0 flex-1 items-center gap-2">
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#EAF3EF] text-xs font-semibold text-[#145A46]">{detail.customer_name?.slice(0, 1)?.toUpperCase() || "T"}</div>
                   <div className="min-w-0 flex-1"><h2 className="truncate text-sm font-semibold text-[#02422C]">{detail.customer_name}</h2><div className="flex min-w-0 items-center gap-1.5"><p className="truncate text-[10px] text-neutral-500">{detail.customer_username ? `@${detail.customer_username}` : `ID ${detail.chat_id}`} · {detail.locale.toUpperCase()}</p><StatusBadge value={detail.status} /></div></div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5 lg:gap-2"><select aria-label="Bahasa konfirmasi" value={detail.locale} onChange={async (event) => { try { await updateAdminTelegramConversation(selectedId, { locale: event.target.value }); invalidate(); } catch (error) { toast.error(errorMessage(error)); } }} className="h-9 border border-neutral-200 bg-white px-1.5 text-[11px] uppercase text-neutral-600 sm:px-2"><option value="id">ID</option><option value="en">EN</option><option value="uz">UZ</option><option value="ru">RU</option></select><button type="button" onClick={() => setConversationStatus(detail.status === "archived" ? "needs_admin" : "archived")} className="inline-flex h-9 w-9 items-center justify-center border border-neutral-200 text-neutral-600 hover:bg-neutral-50 sm:w-auto sm:gap-1 sm:px-2.5" title={detail.status === "archived" ? "Buka kembali" : "Arsipkan chat"} aria-label={detail.status === "archived" ? "Buka kembali" : "Arsipkan chat"}>{detail.status === "archived" ? <MessageCircle className="h-3.5 w-3.5" /> : <Archive className="h-3.5 w-3.5" />}<span className="hidden text-xs sm:inline">{detail.status === "archived" ? "Buka kembali" : "Arsipkan"}</span></button></div>
               </div>
-              {detail.orders?.length ? <div className="shrink-0 border-b border-neutral-200 bg-white px-3 py-2 lg:px-5" data-testid="telegram-conversation-orders"><p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Order terkait · {detail.order_count}</p><div className="flex flex-nowrap gap-2 overflow-x-auto overscroll-x-contain pb-0.5">{detail.orders.map((order) => <Link key={order.order_number} to={`/admin/orders/${encodeURIComponent(order.order_number)}`} className="inline-flex min-h-8 shrink-0 items-center gap-1.5 whitespace-nowrap border border-neutral-200 px-2 text-[10px] font-medium text-[#145A46] hover:bg-[#F2F7F4]">{order.order_number}<WorkflowBadge stage={order.stage || workflowStageForStatus(order.status, "inquiry")} />{order.archived_at ? <span className="text-neutral-500">Diarsipkan</span> : null}</Link>)}</div></div> : null}
-              <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-4 lg:px-5" data-testid="telegram-inbox-messages">
+              {detail.orders?.length ? <div className="shrink-0 border-b border-neutral-200 bg-white px-3 py-2 lg:px-5" data-testid="telegram-conversation-orders"><p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">Order terkait · {detail.order_count}</p><div className="flex flex-nowrap gap-2 overflow-x-auto overscroll-x-contain pb-0.5">{detail.orders.map((order) => <Link key={order.order_number} to={`/orders/${encodeURIComponent(order.order_number)}`} className="inline-flex min-h-8 shrink-0 items-center gap-1.5 whitespace-nowrap border border-neutral-200 px-2 text-[10px] font-medium text-[#145A46] hover:bg-[#F2F7F4]">{order.order_number}<WorkflowBadge stage={order.stage || workflowStageForStatus(order.status, "inquiry")} />{order.archived_at ? <span className="text-neutral-500">Diarsipkan</span> : null}</Link>)}</div></div> : null}
+              <div ref={messagesRef} onScroll={(event) => { const list = event.currentTarget; autoScrollRef.current = list.scrollHeight - list.scrollTop - list.clientHeight < 80; }} className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-4 lg:px-5" data-testid="telegram-inbox-messages">
                 {!detail.messages?.length ? <div className="py-10 text-center text-xs text-neutral-400">Belum ada transkrip tersimpan untuk chat ini.</div> : null}
                 {groupMediaAlbums(detail.messages || []).map((message) => (
                   <div key={message.id} className={`flex ${message.direction === "outbound" ? "justify-end" : "justify-start"}`}>
@@ -574,7 +609,6 @@ export default function AdminTelegramInboxPage() {
                     </div>
                   </div>
                 ))}
-                <div ref={bottomRef} />
               </div>
               <div className="shrink-0 border-t border-neutral-200 bg-white p-2 lg:hidden"><button type="button" onClick={() => setProductPanelOpen(true)} className="flex min-h-10 w-full items-center justify-center gap-2 text-sm font-semibold text-[#145A46] hover:bg-[#F5FAF7]"><PackageSearch className="h-4 w-4" />Cari produk / Pending Order</button></div>
               {detail.can_send ? (
@@ -589,7 +623,7 @@ export default function AdminTelegramInboxPage() {
             </>}
           </section>
         ) : null}
-        {productPanelOpen && selectedId && detail ? <section className="fixed inset-x-0 bottom-0 top-14 z-40 overflow-hidden bg-white lg:hidden" aria-label="Panel produk dan Pending Order" onKeyDown={(event) => { if (event.key === "Escape") setProductPanelOpen(false); }}><ProductWorkspace conversation={detail} detail={detail} onInvalidate={invalidate} onPendingOrderAdded={handlePendingOrderAdded} sourceMessageId={sourceMessageId} setSourceMessageId={setSourceMessageId} compact onClose={() => setProductPanelOpen(false)} /></section> : null}
+        {selectedId && detail ? <Dialog.Root open={productPanelOpen} onOpenChange={setProductPanelOpen}><Dialog.Portal><Dialog.Content className="cms-product-panel fixed inset-x-0 bottom-0 top-14 z-40 overflow-hidden bg-white lg:hidden" aria-label="Panel produk dan Pending Order"><Dialog.Title className="sr-only">Panel produk dan Pending Order</Dialog.Title><Dialog.Description className="sr-only">Cari produk dan kelola produk terkonfirmasi untuk percakapan ini.</Dialog.Description><ProductWorkspace conversation={detail} detail={detail} onInvalidate={invalidate} onPendingOrderAdded={handlePendingOrderAdded} sourceMessageId={sourceMessageId} setSourceMessageId={setSourceMessageId} compact onClose={() => setProductPanelOpen(false)} /></Dialog.Content></Dialog.Portal></Dialog.Root> : null}
         {selectedId && detail ? <div className="hidden min-h-0 lg:col-start-3 lg:col-end-4 lg:flex"><ProductWorkspace conversation={detail} detail={detail} onInvalidate={invalidate} onPendingOrderAdded={handlePendingOrderAdded} sourceMessageId={sourceMessageId} setSourceMessageId={setSourceMessageId} /></div> : null}
       </div>
     </div>

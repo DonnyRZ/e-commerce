@@ -21,6 +21,7 @@ import AdminTelegramInboxPage from "@/pages/admin/AdminTelegramInboxPage";
 import ForgotPasswordPage from "@/pages/ForgotPasswordPage";
 import ResetPasswordPage from "@/pages/ResetPasswordPage";
 import { Skeleton } from "@/components/ui/skeleton";
+import CmsDeviceProvider from "./CmsDeviceProvider";
 
 function AdminLoading() {
   return (
@@ -108,9 +109,11 @@ export default function CmsApp() {
   return (
     <I18nProvider>
       <AuthProvider mergeCustomerCartOnRestore={false}>
-        <BrowserRouter basename="/admin">
-          <CmsRoutes />
-        </BrowserRouter>
+        <CmsDeviceProvider>
+          <BrowserRouter basename="/admin/">
+            <CmsRoutes />
+          </BrowserRouter>
+        </CmsDeviceProvider>
         <Toaster position="top-center" richColors />
       </AuthProvider>
     </I18nProvider>

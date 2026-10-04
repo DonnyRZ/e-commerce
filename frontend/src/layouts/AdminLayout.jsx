@@ -1,4 +1,6 @@
 import { useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { toast } from "sonner";
 import { NavLink, Outlet } from "react-router-dom";
 import {
   ClipboardList,
@@ -17,6 +19,7 @@ import {
 import { useAuth } from "@/lib/AuthContext";
 import { useI18n } from "@/i18n";
 import BrandLogo from "@/components/brand/BrandLogo";
+import { stopDeviceNotifications } from "@/cms/device";
 
 function NavItem({ to, icon: Icon, label, end, onClick, testId }) {
   return (
@@ -76,6 +79,8 @@ export default function AdminLayout() {
   const handleLogout = async () => {
     setLoggingOut(true);
     try {
+      try { await stopDeviceNotifications(); }
+      catch { toast.error("Notifikasi perangkat belum dapat disinkronkan dengan server."); }
       await logout();
     } finally {
       setLoggingOut(false);
@@ -105,8 +110,10 @@ export default function AdminLayout() {
   );
 
   return (
+    <Dialog.Root open={drawer} onOpenChange={setDrawer}>
     <div className="min-h-dvh bg-neutral-50 text-neutral-900" data-testid="admin-layout">
-      <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-neutral-200 bg-white px-2 sm:gap-3 sm:px-4 lg:px-6">
+      <header className="cms-header sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-neutral-200 bg-white px-2 sm:gap-3 sm:px-4 lg:px-6">
+        <Dialog.Trigger asChild>
         <button
           className="inline-flex h-10 w-10 shrink-0 items-center justify-center lg:hidden"
           onClick={() => setDrawer(true)}
@@ -117,6 +124,7 @@ export default function AdminLayout() {
         >
           <Menu className="h-5 w-5" />
         </button>
+        </Dialog.Trigger>
         <div className="flex min-w-0 items-center gap-2">
           <BrandLogo size="sm" to="/" wordmarkClassName="hidden sm:inline" testId="admin-brand" priority />
           <span className="hidden text-xs font-medium text-neutral-400 sm:inline">Admin</span>
@@ -149,23 +157,25 @@ export default function AdminLayout() {
           {nav()}
         </aside>
         {drawer ? (
-          <div className="fixed inset-0 z-40 lg:hidden" data-testid="admin-drawer">
-            <button type="button" className="absolute inset-0 bg-black/30" onClick={() => setDrawer(false)} aria-label="Tutup menu navigasi CMS" />
-            <aside id="admin-mobile-drawer" aria-label="Navigasi CMS" className="absolute inset-y-0 left-0 flex h-dvh max-h-dvh w-64 flex-col overflow-y-auto overscroll-contain bg-white pb-[env(safe-area-inset-bottom)] shadow-lg">
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-40 bg-black/30 lg:hidden" />
+            <Dialog.Content id="admin-mobile-drawer" aria-label="Navigasi CMS" data-testid="admin-drawer" className="fixed inset-y-0 left-0 z-50 flex h-dvh max-h-dvh w-64 flex-col overflow-y-auto overscroll-contain bg-white pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-lg lg:hidden">
               <div className="sticky top-0 z-10 flex h-14 shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-4">
-                <span className="text-sm font-bold">Admin</span>
+                <Dialog.Title className="text-sm font-bold">Navigasi CMS</Dialog.Title>
                 <button className="inline-flex h-11 w-11 items-center justify-center" onClick={() => setDrawer(false)} aria-label="Tutup menu" data-testid="admin-menu-close">
                   <X className="h-5 w-5" />
                 </button>
               </div>
+              <Dialog.Description className="sr-only">Pilih halaman untuk mengelola toko.</Dialog.Description>
               {nav(() => setDrawer(false))}
-            </aside>
-          </div>
+            </Dialog.Content>
+          </Dialog.Portal>
         ) : null}
-        <main className="min-w-0 flex-1 p-4 lg:p-8">
+        <main className="min-w-0 flex-1 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] lg:p-8">
           <Outlet />
         </main>
       </div>
     </div>
+    </Dialog.Root>
   );
 }

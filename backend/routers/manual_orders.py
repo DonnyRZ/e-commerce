@@ -1594,6 +1594,8 @@ async def create_manual_order(
     # The order items now contain the immutable commercial snapshot. Remove
     # the temporary Telegram copy after conversion for retention/privacy.
     inquiry.snapshot = None
+    from admin_push import enqueue_admin_notification
+    await enqueue_admin_notification(session, f"pending-order:{order.id}", "order", f"/admin/orders/{order.order_number}")
     await audit(
         session,
         user.id,

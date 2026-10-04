@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import "@/index.css";
+import "./cms.css";
 import CmsApp from "./App";
 import ErrorBoundary from "@/components/common/ErrorBoundary";
 import { subscribeToProductUpdates } from "@/lib/productUpdateEvents";
@@ -29,6 +30,7 @@ function ProductUpdateCacheBridge() {
 }
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
+document.documentElement.classList.add("cms-app");
 root.render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>

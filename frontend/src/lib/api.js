@@ -339,6 +339,10 @@ export const getAdminAudit = (params) =>
   api.get("/v1/admin/audit", { params }).then((r) => r.data);
 export const getAdminSettings = () =>
   api.get("/v1/admin/settings").then((r) => r.data);
+export const getAdminPushConfig = () => api.get("/v1/admin/push/config").then((r) => r.data);
+export const registerAdminPushDevice = (subscription) => api.post("/v1/admin/push/subscriptions", subscription).then((r) => r.data);
+export const removeAdminPushDevice = (endpoint) => api.delete("/v1/admin/push/subscriptions", { data: { endpoint } }).then((r) => r.data);
+export const testAdminPushDevice = (endpoint) => api.post("/v1/admin/push/test", { endpoint }).then((r) => r.data);
 export const getAdminPaymentDestinations = () =>
   api.get("/v1/admin/payment-destinations").then((r) => r.data);
 export const getAdminPaymentDestination = (id) =>

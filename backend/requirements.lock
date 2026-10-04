@@ -5,7 +5,9 @@ aiohappyeyeballs==2.7.1
     #   -r backend/requirements.txt
     #   aiohttp
 aiohttp==3.14.3
-    # via -r backend/requirements.txt
+    # via
+    #   -r backend/requirements.txt
+    #   pywebpush
 aiosignal==1.4.0
     # via
     #   -r backend/requirements.txt
@@ -67,19 +69,16 @@ charset-normalizer==3.5.1
     #   requests
 click==8.5.0
     # via
-    #   -r backend/requirements.txt
     #   black
     #   huggingface-hub
     #   uvicorn
-colorama==0.4.6
-    # via
-    #   pytest
-    #   tqdm
-    #   typer
 cryptography==50.0.1
     # via
     #   -r backend/requirements.txt
     #   google-auth
+    #   http-ece
+    #   py-vapid
+    #   pywebpush
 distro==1.9.0
     # via
     #   -r backend/requirements.txt
@@ -176,6 +175,8 @@ hf-xet==1.6.0
     # via
     #   -r backend/requirements.txt
     #   huggingface-hub
+http-ece==1.2.1
+    # via pywebpush
 httpcore==1.0.9
     # via
     #   -r backend/requirements.txt
@@ -322,6 +323,8 @@ protobuf==5.29.6
     #   googleapis-common-protos
     #   grpcio-status
     #   proto-plus
+py-vapid==1.9.4
+    # via pywebpush
 pyasn1==0.6.4
     # via
     #   -r backend/requirements.txt
@@ -387,6 +390,8 @@ pytokens==0.4.1
     # via
     #   -r backend/requirements.txt
     #   black
+pywebpush==2.5.0
+    # via -r backend/requirements.txt
 pyyaml==6.0.3
     # via
     #   -r backend/requirements.txt
@@ -408,6 +413,7 @@ requests==2.34.2
     #   google-api-core
     #   google-auth
     #   google-genai
+    #   pywebpush
     #   requests-oauthlib
     #   stripe
     #   tiktoken
@@ -497,9 +503,7 @@ typing-inspection==0.4.4
     #   -r backend/requirements.txt
     #   pydantic
 tzdata==2026.3
-    # via
-    #   -r backend/requirements.txt
-    #   pandas
+    # via -r backend/requirements.txt
 uritemplate==4.2.0
     # via
     #   -r backend/requirements.txt

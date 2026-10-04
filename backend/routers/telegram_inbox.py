@@ -1234,6 +1234,8 @@ async def add_conversation_candidates_to_pending_orders(
         delivered_at=utcnow(),
     )
     session.add(inquiry)
+    from admin_push import enqueue_admin_notification
+    await enqueue_admin_notification(session, f"pending-inquiry:{reference}", "order", f"/admin/orders/inquiry/{reference}")
     for candidate in candidates:
         candidate.status = "pending_order"
     conversation.status = "waiting_customer"

@@ -93,11 +93,8 @@ export default function AdminDashboardPage() {
               className="flex items-center justify-between gap-3 border border-neutral-200 px-3 py-2 text-xs hover:border-[#145A46]"
               data-testid={`status-count-${stage}`}
             >
-              <span className="flex min-w-0 items-center gap-2">
-                {stage === "payment" ? <span className="inline-flex whitespace-nowrap bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-800">{t("seller.dashboard.status.payment")}</span> : <StatusPill value={stage} />}
-                <span className="truncate">{t(`seller.dashboard.status.${stage}`)}</span>
-              </span>
-              <span className="font-semibold">{workflowCounts[stage] ?? 0}</span>
+              <span className="min-w-0 text-neutral-700">{t(`seller.dashboard.status.${stage}`)}</span>
+              <span className="shrink-0 font-semibold">{workflowCounts[stage] ?? 0}</span>
             </Link>
           ))}
         </div>

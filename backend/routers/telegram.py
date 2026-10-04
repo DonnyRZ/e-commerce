@@ -577,6 +577,8 @@ async def _handle_business_message(session: AsyncSession, message: dict, update_
         raise
     inquiry.status = "sent"
     inquiry.delivered_at = utcnow()
+    from admin_push import enqueue_admin_notification
+    await enqueue_admin_notification(session, f"pending-inquiry:{inquiry.reference}", "order", f"/admin/orders/inquiry/{inquiry.reference}")
     if inquiry.cart_id:
         await _remove_submitted_cart_quantities(
             session, inquiry.cart_id, snapshot.get("items", [])

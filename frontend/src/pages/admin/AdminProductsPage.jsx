@@ -129,13 +129,13 @@ export default function AdminProductsPage() {
             className={`${inputClass} w-full pl-9`}
           />
         </form>
-        <select value={status} onChange={(e) => setFilter("status", e.target.value)} className={`${inputClass} w-full sm:w-44`} data-testid="products-status-filter">
+        <select value={status} onChange={(e) => setFilter("status", e.target.value)} className={`${inputClass} w-full sm:w-44`} aria-label="Filter product status" data-testid="products-status-filter">
           <option value="">All statuses</option>
           <option value="active">Active</option>
           <option value="draft">Draft</option>
           <option value="inactive">Inactive</option>
         </select>
-        <select value={inventory} onChange={(e) => setFilter("inventory", e.target.value)} className={`${inputClass} w-full sm:w-44`} data-testid="products-inventory-filter">
+        <select value={inventory} onChange={(e) => setFilter("inventory", e.target.value)} className={`${inputClass} w-full sm:w-44`} aria-label="Filter product inventory" data-testid="products-inventory-filter">
           <option value="">All inventory</option>
           <option value="in_stock">In stock</option>
           <option value="low_stock">Low stock</option>
