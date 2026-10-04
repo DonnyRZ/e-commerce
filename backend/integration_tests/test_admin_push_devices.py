@@ -5,7 +5,7 @@ import os
 import secrets
 import tempfile
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -345,6 +345,12 @@ class AdminDeviceIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("notification_show_resolved", output)
         self.assertIn(delivery_id, output)
         self.assertNotIn(ack_token, output)
+        async with SessionLocal() as session:
+            saved = await session.get(AdminPushDelivery, delivery_id)
+            stage = saved.payload["_audit"]["device_stages"][
+                "notification_show_resolved"
+            ]
+            self.assertIsNotNone(datetime.fromisoformat(stage).tzinfo)
 
         invalid = await self.clients[0].post(
             "/api/v1/admin/push/delivery-ack",
@@ -355,6 +361,173 @@ class AdminDeviceIntegrationTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(invalid.status_code, 204)
+
+    async def test_unacknowledged_chat_sends_one_generic_telegram_backup(self):
+        await self.register_devices()
+        event_key = "telegram-message:" + self.prefix
+        created_at = utcnow() - timedelta(seconds=30)
+        async with SessionLocal() as session:
+            subscriptions = list(
+                (
+                    await session.scalars(
+                        select(AdminPushSubscription).where(
+                            AdminPushSubscription.enabled.is_(True),
+                            AdminPushSubscription.user_id.in_(
+                                [user.id for user in self.users[:2]]
+                            ),
+                        )
+                    )
+                ).all()
+            )
+            for subscription in subscriptions:
+                delivery_id = secrets.token_hex(16)
+                session.add(
+                    AdminPushDelivery(
+                        id=delivery_id,
+                        subscription_id=subscription.id,
+                        user_id=subscription.user_id,
+                        token_version=subscription.token_version,
+                        event_key=event_key,
+                        payload={
+                            "kind": "telegram",
+                            "url": "/admin/telegram-inbox?conversation=" + "a" * 32,
+                            "_audit": {
+                                "delivery_id": delivery_id,
+                                "ack_token": secrets.token_urlsafe(32),
+                            },
+                        },
+                        status="sent",
+                        attempts=1,
+                        last_status=201,
+                        created_at=created_at,
+                        next_attempt_at=created_at,
+                        expires_at=created_at + timedelta(hours=24),
+                    )
+                )
+            await session.commit()
+
+        with patch.object(admin_push, "TELEGRAM_BOT_TOKEN", "isolated-fake-token"), patch.object(
+            admin_push, "FRONTEND_URL", "https://shanicantik.com"
+        ), patch.object(admin_push, "bot_request", new_callable=AsyncMock) as send_bot:
+            async with SessionLocal() as session:
+                sent = await admin_push.dispatch_telegram_fallbacks(session)
+            async with SessionLocal() as session:
+                duplicate_sent = await admin_push.dispatch_telegram_fallbacks(session)
+
+        self.assertEqual(sent, 1)
+        self.assertEqual(duplicate_sent, 0)
+        send_bot.assert_awaited_once()
+        token, method, payload = send_bot.await_args.args
+        self.assertEqual(token, "isolated-fake-token")
+        self.assertEqual(method, "sendMessage")
+        self.assertEqual(payload["chat_id"], 999999)
+        self.assertEqual(payload["text"], "📩 Pesan Telegram baru menunggu balasan di CMS.")
+        self.assertEqual(
+            payload["reply_markup"]["inline_keyboard"][0][0]["url"],
+            "https://shanicantik.com/admin/telegram-inbox?conversation=" + "a" * 32,
+        )
+        self.assertNotIn("customer", str(payload).lower())
+        async with SessionLocal() as session:
+            saved = list(
+                (
+                    await session.scalars(
+                        select(AdminPushDelivery).where(
+                            AdminPushDelivery.event_key == event_key
+                        )
+                    )
+                ).all()
+            )
+        self.assertTrue(saved)
+        self.assertTrue(
+            all(
+                row.payload["_audit"]["telegram_fallback"]["status"] == "sent"
+                for row in saved
+            )
+        )
+
+    async def test_chat_fallback_is_skipped_after_every_device_confirms_display(self):
+        await self.register_devices()
+        event_key = "telegram-message-acked:" + self.prefix
+        created_at = utcnow() - timedelta(seconds=30)
+        async with SessionLocal() as session:
+            subscriptions = list(
+                (
+                    await session.scalars(
+                        select(AdminPushSubscription).where(
+                            AdminPushSubscription.enabled.is_(True),
+                            AdminPushSubscription.user_id.in_(
+                                [user.id for user in self.users[:2]]
+                            ),
+                        )
+                    )
+                ).all()
+            )
+            for subscription in subscriptions:
+                delivery_id = secrets.token_hex(16)
+                audit = {"delivery_id": delivery_id, "ack_token": secrets.token_urlsafe(32)}
+                audit["device_stages"] = {
+                    "notification_show_resolved": created_at.isoformat()
+                }
+                session.add(
+                    AdminPushDelivery(
+                        id=delivery_id,
+                        subscription_id=subscription.id,
+                        user_id=subscription.user_id,
+                        token_version=subscription.token_version,
+                        event_key=event_key,
+                        payload={"kind": "telegram", "url": "/admin/telegram-inbox", "_audit": audit},
+                        status="sent",
+                        attempts=1,
+                        last_status=201,
+                        created_at=created_at,
+                        next_attempt_at=created_at,
+                        expires_at=created_at + timedelta(hours=24),
+                    )
+                )
+            await session.commit()
+
+        with patch.object(admin_push, "TELEGRAM_BOT_TOKEN", "isolated-fake-token"), patch.object(
+            admin_push, "bot_request", new_callable=AsyncMock
+        ) as send_bot:
+            async with SessionLocal() as session:
+                sent = await admin_push.dispatch_telegram_fallbacks(session)
+        self.assertEqual(sent, 0)
+        send_bot.assert_not_awaited()
+        async with SessionLocal() as session:
+            saved = list(
+                (
+                    await session.scalars(
+                        select(AdminPushDelivery).where(
+                            AdminPushDelivery.event_key == event_key
+                        )
+                    )
+                ).all()
+            )
+        self.assertTrue(
+            all(
+                row.payload["_audit"]["telegram_fallback"]["status"] == "skipped"
+                for row in saved
+            )
+        )
+
+    async def test_dead_subscription_requests_client_renewal(self):
+        await self.register_devices()
+        endpoint = self.endpoints[0]
+        async with SessionLocal() as session:
+            subscription = await session.scalar(
+                select(AdminPushSubscription).where(
+                    AdminPushSubscription.endpoint_hash
+                    == admin_push.endpoint_hash(endpoint)
+                )
+            )
+            subscription.enabled = False
+            await session.commit()
+
+        response = await self.mutate(
+            self.clients[0], "POST", "/subscriptions", {"endpoint": endpoint, "keys": self.keys}
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"enabled": False, "replace": True})
 
     async def test_webhook_fanout_duplicate_edit_outbound_and_unsubscribe(self):
         await self.register_devices()

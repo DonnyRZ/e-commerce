@@ -2,6 +2,7 @@
 
 import hmac
 import logging
+import re
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from auth import csrf_protect, require_roles
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_BOT_USERNAME
 from admin_push import (
     endpoint_hash,
     enqueue_admin_notification,
@@ -58,11 +60,19 @@ async def delivery_ack(payload: DeliveryAckIn, session=Depends(get_session)):
         and isinstance(saved_token, str)
         and hmac.compare_digest(saved_token, payload.ack_token)
     ):
+        observed_at = utcnow().isoformat()
+        device_stages = dict(audit.get("device_stages", {}))
+        # Keep the first observation for each stage so delivery timing stays
+        # useful even if a service worker retries its acknowledgment.
+        device_stages.setdefault(payload.stage, observed_at)
+        audit = {**audit, "device_stages": device_stages}
+        delivery.payload = {**(delivery.payload or {}), "_audit": audit}
+        await session.commit()
         logger.info(
             "admin_push_device_stage delivery_id=%s stage=%s observed_at_utc=%s",
             delivery.id,
             payload.stage,
-            utcnow().isoformat(),
+            observed_at,
         )
     # Keep invalid and unknown delivery IDs indistinguishable. The token is
     # random, single-delivery scope, and never written to logs.
@@ -72,7 +82,17 @@ async def delivery_ack(payload: DeliveryAckIn, session=Depends(get_session)):
 @router.get("/config")
 async def config(_user: User = Depends(require_admin)):
     key = public_key()
-    return {"enabled": bool(key), "public_key": key}
+    bot_username = TELEGRAM_BOT_USERNAME.strip().lstrip("@").lower()
+    telegram_backup_url = (
+        f"https://t.me/{bot_username}?start=cms_push_backup"
+        if TELEGRAM_BOT_TOKEN and re.fullmatch(r"[a-z0-9_]{5,32}", bot_username)
+        else None
+    )
+    return {
+        "enabled": bool(key),
+        "public_key": key,
+        "telegram_backup_url": telegram_backup_url,
+    }
 
 
 @router.post("/subscriptions", dependencies=[Depends(csrf_protect)])
@@ -95,6 +115,10 @@ async def subscribe(
             AdminPushSubscription.endpoint_hash == hashed
         )
     )
+    if existing and not existing.enabled:
+        # The push service returned 404/410 for this endpoint. Reusing it would
+        # silently revive a dead subscription, so ask the client to renew it.
+        return {"enabled": False, "replace": True}
     if not existing:
         count = await session.scalar(
             select(func.count())

@@ -15,16 +15,33 @@ from urllib.parse import urlparse
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from pywebpush import WebPushException, webpush
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 
-from config import ADMIN_PUSH_ENABLED, VAPID_PRIVATE_KEY_FILE, VAPID_SUBJECT
-from db.models import AdminPushDelivery, AdminPushSubscription, User, uid, utcnow
+from config import (
+    ADMIN_PUSH_ENABLED,
+    FRONTEND_URL,
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_STORE_USERNAME,
+    VAPID_PRIVATE_KEY_FILE,
+    VAPID_SUBJECT,
+)
+from db.models import (
+    AdminPushDelivery,
+    AdminPushSubscription,
+    TelegramBusinessConnection,
+    User,
+    uid,
+    utcnow,
+)
 from db.session import SessionLocal
+from telegram_inquiries import TelegramDeliveryError, bot_request
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 6
 RETRY_SECONDS = (15, 60, 300, 900, 3600, 7200)
+TELEGRAM_BACKUP_DELAY = timedelta(seconds=15)
+TELEGRAM_BACKUP_BATCH_SIZE = 20
 
 
 def public_key() -> str | None:
@@ -172,7 +189,9 @@ def send_delivery(subscription: AdminPushSubscription, payload: dict):
         data=json.dumps(payload, ensure_ascii=False),
         vapid_private_key=VAPID_PRIVATE_KEY_FILE,
         vapid_claims={"sub": VAPID_SUBJECT},
-        ttl=86400,
+        # Keep alerts useful: after one minute, the Telegram backup is the
+        # recovery path instead of a stale push arriving hours later.
+        ttl=60,
         timeout=10,
         headers={"Urgency": "high"},
     )
@@ -275,6 +294,194 @@ async def dispatch_pending(session) -> int:
     return len(rows)
 
 
+def _telegram_backup_payload(urls: str | list[str]) -> dict:
+    """Create a content-free Bot API alert with validated CMS deep links."""
+    urls = [urls] if isinstance(urls, str) else urls
+    targets = []
+    frontend = urlparse(FRONTEND_URL)
+    for url in dict.fromkeys(urls):
+        parsed = urlparse(url)
+        if (
+            parsed.scheme == ""
+            and parsed.netloc == ""
+            and parsed.path.startswith("/admin/")
+            and frontend.scheme == "https"
+            and frontend.netloc
+        ):
+            target = urlparse(FRONTEND_URL + "/" + url.lstrip("/"))
+            if target.scheme == "https" and target.netloc == frontend.netloc:
+                targets.append(target.geturl())
+    message = {
+        "text": (
+            "📩 Pesan Telegram baru menunggu balasan di CMS."
+            if len(targets) <= 1
+            else "📩 Ada beberapa pesan Telegram baru yang menunggu balasan di CMS."
+        )
+    }
+    if targets:
+        message["reply_markup"] = {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "Buka chat di CMS"
+                        if len(targets) == 1
+                        else f"Buka chat {index + 1}",
+                        "url": target,
+                    }
+                ]
+                for index, target in enumerate(targets[:TELEGRAM_BACKUP_BATCH_SIZE])
+            ]
+        }
+    return message
+
+
+async def _send_telegram_backup(recipient_id: str, urls: list[str]) -> None:
+    if not recipient_id.isdecimal() or len(recipient_id) > 20:
+        raise TelegramDeliveryError("telegram_backup_recipient_unavailable")
+    await bot_request(
+        TELEGRAM_BOT_TOKEN,
+        "sendMessage",
+        {"chat_id": int(recipient_id), **_telegram_backup_payload(urls)},
+        timeout_seconds=8.0,
+    )
+
+
+async def dispatch_telegram_fallbacks(session, *, now=None) -> int:
+    """Send one free Telegram alert if no device confirmed showing the Web Push.
+
+    The existing delivery JSON is the durable outbox state, so this does not
+    require a schema migration. Every delivery for an event is marked together
+    under row locks, which prevents duplicate fallback messages across workers.
+    """
+    now = now or utcnow()
+    eligible = await session.scalars(
+        select(AdminPushDelivery.event_key)
+        .where(
+            AdminPushDelivery.created_at <= now - TELEGRAM_BACKUP_DELAY,
+            AdminPushDelivery.expires_at > now,
+            AdminPushDelivery.payload["kind"].as_string() == "telegram",
+            AdminPushDelivery.payload["_audit"]["telegram_fallback"]
+            .as_string()
+            .is_(None),
+        )
+        .group_by(AdminPushDelivery.event_key)
+        .order_by(func.min(AdminPushDelivery.created_at))
+        .limit(TELEGRAM_BACKUP_BATCH_SIZE)
+    )
+    event_keys = list(eligible.all())
+    if not event_keys:
+        return 0
+
+    recipient_id = None
+    if TELEGRAM_BOT_TOKEN:
+        recipient_id = await session.scalar(
+            select(TelegramBusinessConnection.business_user_id)
+            .where(
+                TelegramBusinessConnection.username == TELEGRAM_STORE_USERNAME,
+                TelegramBusinessConnection.is_enabled.is_(True),
+                TelegramBusinessConnection.can_reply.is_(True),
+                TelegramBusinessConnection.can_read_messages.is_(True),
+            )
+            .order_by(TelegramBusinessConnection.updated_at.desc())
+            .limit(1)
+        )
+
+    claimed: list[tuple[str, str]] = []
+    for event_key in event_keys:
+        result = await session.scalars(
+            select(AdminPushDelivery)
+            .where(AdminPushDelivery.event_key == event_key)
+            .order_by(AdminPushDelivery.created_at, AdminPushDelivery.id)
+            .with_for_update()
+        )
+        deliveries = list(result.all())
+        if not deliveries:
+            continue
+        audits = [
+            (delivery.payload or {}).get("_audit", {}) for delivery in deliveries
+        ]
+        if any(audit.get("telegram_fallback") for audit in audits):
+            continue
+
+        displayed_on_every_device = bool(audits) and all(
+            "notification_show_resolved"
+            in (audit.get("device_stages") or {})
+            for audit in audits
+        )
+        status = "skipped" if displayed_on_every_device else "unavailable"
+        if not displayed_on_every_device and recipient_id and TELEGRAM_BOT_TOKEN:
+            status = "queued"
+            url = next(
+                (
+                    str(delivery.payload.get("url"))
+                    for delivery in deliveries
+                    if isinstance(delivery.payload, dict)
+                    and delivery.payload.get("url")
+                ),
+                "/admin/telegram-inbox",
+            )
+            claimed.append((event_key, url))
+
+        marker = {"status": status, "attempted_at_utc": now.isoformat()}
+        for delivery in deliveries:
+            audit = dict((delivery.payload or {}).get("_audit", {}))
+            audit["telegram_fallback"] = marker
+            delivery.payload = {**(delivery.payload or {}), "_audit": audit}
+    await session.commit()
+
+    outcomes = []
+    if claimed:
+        try:
+            # Batch alerts generated in the same worker pass into one Telegram
+            # message. This stays within ordinary Bot API rate limits and puts
+            # a direct CMS link for each affected conversation in that alert.
+            await _send_telegram_backup(
+                str(recipient_id), [url for _, url in claimed]
+            )
+            status, error_code = "sent", None
+        except TelegramDeliveryError as exc:
+            status, error_code = "failed", exc.safe_code
+        except TimeoutError:
+            # The Bot API outcome may be ambiguous; do not blindly duplicate.
+            status, error_code = "unknown", "telegram_delivery_outcome_unknown"
+        except Exception:
+            status, error_code = "failed", "telegram_backup_unavailable"
+        outcomes = [
+            (event_key, status, error_code) for event_key, _ in claimed
+        ]
+    sent = 0
+    for event_key, status, error_code in outcomes:
+        result = await session.scalars(
+            select(AdminPushDelivery).where(
+                AdminPushDelivery.event_key == event_key
+            )
+        )
+        for delivery in result.all():
+            payload = dict(delivery.payload or {})
+            audit = dict(payload.get("_audit", {}))
+            audit["telegram_fallback"] = {
+                "status": status,
+                "attempted_at_utc": now.isoformat(),
+                "completed_at_utc": utcnow().isoformat(),
+                **({"error_code": error_code} if error_code else {}),
+            }
+            payload["_audit"] = audit
+            delivery.payload = payload
+        if status == "sent":
+            sent += 1
+            logger.info("admin_push_telegram_backup_sent event_key=%s", event_key)
+        else:
+            logger.warning(
+                "admin_push_telegram_backup_failed event_key=%s status=%s code=%s",
+                event_key,
+                status,
+                error_code or "telegram_backup_unavailable",
+            )
+    if outcomes:
+        await session.commit()
+    return sent
+
+
 async def admin_push_dispatch_loop():
     if not public_key():
         return
@@ -282,6 +489,7 @@ async def admin_push_dispatch_loop():
         try:
             async with SessionLocal() as session:
                 count = await dispatch_pending(session)
+                await dispatch_telegram_fallbacks(session)
         except Exception:
             # Do not log provider response bodies or subscription endpoints.
             logger.warning("admin_push_dispatch_unavailable")

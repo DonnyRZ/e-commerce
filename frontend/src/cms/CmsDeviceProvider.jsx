@@ -1,8 +1,8 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/AuthContext";
-import { getAdminPushConfig, registerAdminPushDevice, testAdminPushDevice } from "@/lib/api";
-import { cmsServiceWorker, decodePublicKey, isInstalled, matchesPublicKey, pushSupported, stopDeviceNotifications } from "./device";
+import { getAdminPushConfig, testAdminPushDevice } from "@/lib/api";
+import { cmsServiceWorker, decodePublicKey, isInstalled, isPushAutoEnrollDisabled, matchesPublicKey, pushSupported, registerDeviceSubscription, setPushAutoEnrollDisabled, stopDeviceNotifications } from "./device";
 
 const DeviceContext = createContext(null);
 
@@ -47,21 +47,23 @@ export default function CmsDeviceProvider({ children }) {
     if (user?.role !== "admin" || !config.data?.enabled || !pushSupported()) return;
     const sync = async () => {
       if (Notification.permission !== "granted") return;
+      if (isPushAutoEnrollDisabled()) return;
       const registration = await cmsServiceWorker();
-      const subscription = await registration.pushManager.getSubscription();
-      if (!subscription || !active) return;
+      let subscription = await registration.pushManager.getSubscription();
+      if (!active) return;
       if (!matchesPublicKey(subscription, config.data.public_key)) {
         await subscription.unsubscribe();
-        return;
+        subscription = null;
       }
-      await registerAdminPushDevice(subscription.toJSON());
+      if (!subscription) subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: decodePublicKey(config.data.public_key) });
+      subscription = await registerDeviceSubscription(registration, subscription, config.data.public_key);
       if (active) setRegistered(true);
     };
-    sync().catch(() => { if (active) setRegistered(false); });
+    sync().catch(() => { if (active) { setRegistered(false); setWorkerError(true); } });
     const refresh = () => {
       setPermission(Notification.permission);
       if (Notification.permission !== "granted") setRegistered(false);
-      else sync().catch(() => { if (active) setRegistered(false); });
+      else sync().catch(() => { if (active) { setRegistered(false); setWorkerError(true); } });
     };
     window.addEventListener("focus", refresh);
     return () => { active = false; window.removeEventListener("focus", refresh); };
@@ -94,6 +96,7 @@ export default function CmsDeviceProvider({ children }) {
       const granted = await Notification.requestPermission();
       setPermission(granted);
       if (granted !== "granted") return false;
+      setPushAutoEnrollDisabled(false);
       const registration = await cmsServiceWorker();
       let subscription = await registration.pushManager.getSubscription();
       if (subscription && !matchesPublicKey(subscription, config.data.public_key)) {
@@ -101,12 +104,13 @@ export default function CmsDeviceProvider({ children }) {
         subscription = null;
       }
       if (!subscription) subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: decodePublicKey(config.data.public_key) });
-      await registerAdminPushDevice(subscription.toJSON());
+      await registerDeviceSubscription(registration, subscription, config.data.public_key);
       setRegistered(true);
       setWorkerError(false);
       return true;
     },
     async disable() {
+      setPushAutoEnrollDisabled(true);
       try { await stopDeviceNotifications(); } finally { setRegistered(false); }
     },
     async test() {

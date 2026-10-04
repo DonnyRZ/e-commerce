@@ -1,8 +1,22 @@
-import { removeAdminPushDevice } from "@/lib/api";
+import { registerAdminPushDevice, removeAdminPushDevice } from "@/lib/api";
 
 let registrationPromise;
 export const pushSupported = () => Boolean(window.isSecureContext && "serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
 export const isInstalled = () => window.matchMedia("(display-mode: standalone)").matches || window.matchMedia("(display-mode: fullscreen)").matches || navigator.standalone === true;
+
+const AUTO_ENROLL_DISABLED_KEY = "cms-push-auto-enroll-disabled";
+
+export function isPushAutoEnrollDisabled() {
+  try { return window.localStorage.getItem(AUTO_ENROLL_DISABLED_KEY) === "1"; }
+  catch { return false; }
+}
+
+export function setPushAutoEnrollDisabled(disabled) {
+  try {
+    if (disabled) window.localStorage.setItem(AUTO_ENROLL_DISABLED_KEY, "1");
+    else window.localStorage.removeItem(AUTO_ENROLL_DISABLED_KEY);
+  } catch { /* Push enrollment can still be controlled from the settings button. */ }
+}
 
 export function decodePublicKey(value) {
   const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
@@ -15,6 +29,23 @@ export function matchesPublicKey(subscription, value) {
   const actual = new Uint8Array(previous);
   const expected = decodePublicKey(value);
   return actual.length === expected.length && actual.every((byte, index) => byte === expected[index]);
+}
+
+export async function registerDeviceSubscription(registration, subscription, publicKey) {
+  let current = subscription;
+  let result = await registerAdminPushDevice(current.toJSON());
+  if (result?.replace) {
+    // The provider previously returned 404/410 for this endpoint. Unsubscribe
+    // locally and get a fresh endpoint instead of re-enabling a dead one.
+    await current.unsubscribe();
+    current = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: decodePublicKey(publicKey),
+    });
+    result = await registerAdminPushDevice(current.toJSON());
+  }
+  if (!result?.enabled || result?.replace) throw new Error("push_subscription_not_registered");
+  return current;
 }
 
 export async function cmsServiceWorker() {

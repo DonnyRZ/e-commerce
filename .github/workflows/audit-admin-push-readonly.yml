@@ -88,13 +88,15 @@ jobs:
                               AdminPushDelivery.status,
                               AdminPushDelivery.attempts,
                               AdminPushDelivery.last_status,
+                              AdminPushDelivery.payload["_audit"]["device_stages"],
+                              AdminPushDelivery.payload["_audit"]["telegram_fallback"],
                           ).where(AdminPushDelivery.event_key == f"telegram-message:{message_id}")
                       )).all()
                       if not deliveries:
                           detail = "no_delivery_row"
                       else:
                           detail = ";".join(
-                              "delivery_id=%s queue_utc=%s queue_delay_s=%s status=%s attempts=%s provider_http=%s"
+                              "delivery_id=%s queue_utc=%s queue_delay_s=%s status=%s attempts=%s provider_http=%s device_stages=%s telegram_fallback=%s"
                               % (
                                   item.id,
                                   stamp(item.created_at),
@@ -102,6 +104,8 @@ jobs:
                                   item.status,
                                   item.attempts,
                                   item.last_status,
+                                  item.device_stages or {},
+                                  item.telegram_fallback or {},
                               )
                               for item in deliveries
                           )
@@ -120,5 +124,5 @@ jobs:
           PY
 
           echo 'push_dispatch_provider_and_device_stages:'
-          docker logs --since 3h --timestamps marketplace-backend-1 2>&1 | grep -E 'admin_push_(dispatch_started|provider_accepted|device_stage|delivery_failed)' | tail -n 300 || true
+          docker logs --since 3h --timestamps marketplace-backend-1 2>&1 | grep -E 'admin_push_(dispatch_started|provider_accepted|device_stage|delivery_failed|telegram_backup_sent|telegram_backup_failed)' | tail -n 300 || true
           REMOTE

@@ -259,6 +259,25 @@ class PushTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(decoded), payload)
         self.assertTrue(sent["headers"]["Authorization"].startswith("vapid "))
         self.assertEqual(sent["headers"]["Urgency"], "high")
+        self.assertEqual(sent["headers"]["TTL"], "60")
+
+    def test_telegram_backup_is_content_free_and_keeps_the_chat_deep_link(self):
+        with patch.object(admin_push, "FRONTEND_URL", "https://shanicantik.com"):
+            payload = admin_push._telegram_backup_payload(
+                "/admin/telegram-inbox?conversation=" + "a" * 32
+            )
+            unsafe = admin_push._telegram_backup_payload(
+                "https://attacker.example/admin/telegram-inbox"
+            )
+        self.assertEqual(
+            payload["text"], "📩 Pesan Telegram baru menunggu balasan di CMS."
+        )
+        self.assertEqual(
+            payload["reply_markup"]["inline_keyboard"][0][0]["url"],
+            "https://shanicantik.com/admin/telegram-inbox?conversation=" + "a" * 32,
+        )
+        self.assertNotIn("reply_markup", unsafe)
+        self.assertNotIn("customer", json.dumps(payload).lower())
 
 
 if __name__ == "__main__":
