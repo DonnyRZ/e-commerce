@@ -37,6 +37,35 @@ test("notification click navigates and focuses an existing CMS app", async () =>
   expect(instance.opened).toEqual([]);
 });
 
+test("a Telegram push carries its conversation link through notification click", async () => {
+  const navigated = [];
+  const conversation = "a".repeat(32);
+  const client = {
+    url: "https://cms.example.com/admin/",
+    postMessage() {},
+    navigate: async url => { navigated.push(url); return { focus: async () => {} }; },
+  };
+  const instance = worker([client]);
+  await instance.emit("push", { data: { json: () => ({
+    title: "Chat Telegram baru",
+    body: "Pesan baru perlu dibalas.",
+    url: "/admin/telegram-inbox?conversation=" + conversation,
+    kind: "telegram",
+  }) } });
+
+  expect(instance.notifications[0]).toMatchObject({
+    title: "Chat Telegram baru",
+    body: "Pesan baru perlu dibalas.",
+    data: { url: "https://cms.example.com/admin/telegram-inbox?conversation=" + conversation },
+  });
+  await instance.emit("notificationclick", {
+    notification: { ...instance.notifications[0], close() {} },
+  });
+  expect(navigated).toEqual([
+    "https://cms.example.com/admin/telegram-inbox?conversation=" + conversation,
+  ]);
+});
+
 test("closed app opens safely and foreign/out-of-scope notification URLs return to inbox", async () => {
   for (const url of ["https://attacker.example/admin/", "/checkout", "javascript:alert(1)", "/admin/../account"]) {
     const instance = worker();
