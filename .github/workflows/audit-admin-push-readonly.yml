@@ -88,8 +88,8 @@ jobs:
                               AdminPushDelivery.status,
                               AdminPushDelivery.attempts,
                               AdminPushDelivery.last_status,
-                              AdminPushDelivery.payload["_audit"]["device_stages"],
-                              AdminPushDelivery.payload["_audit"]["telegram_fallback"],
+                              AdminPushDelivery.payload["_audit"]["device_stages"].label("device_stages"),
+                              AdminPushDelivery.payload["_audit"]["telegram_fallback"].label("telegram_fallback"),
                           ).where(AdminPushDelivery.event_key == f"telegram-message:{message_id}")
                       )).all()
                       if not deliveries:
