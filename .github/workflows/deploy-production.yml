@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       backup_confirmed:
-        description: Confirm that database and media backups are verified off-server
+        description: Confirm off-server backups when this release changes database or media storage
         type: boolean
-        required: true
+        required: false
         default: false
 
 permissions:
@@ -30,16 +30,11 @@ jobs:
       url: https://shanicantik.com
     timeout-minutes: 35
     steps:
-      - name: Require verified off-server backups
-        if: ${{ inputs.backup_confirmed != true }}
-        run: |
-          echo "::error::Verify and copy the database and media backups off-server before deployment."
-          exit 1
-
       - name: Check out selected commit
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Prepare immutable release archive
@@ -79,6 +74,55 @@ jobs:
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           chmod 0600 "$HOME/.ssh/marketplace_deploy_key" "$HOME/.ssh/known_hosts"
           ssh-keygen -F "$VPS_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+
+      - name: Detect database and media changes
+        id: data_changes
+        env:
+          DEPLOY_SHA: ${{ steps.release.outputs.sha }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          ssh_options=(-i "$HOME/.ssh/marketplace_deploy_key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+          target="$VPS_USER@$VPS_HOST"
+          current_release="$(ssh "${ssh_options[@]}" "$target" "readlink -f /var/www/marketplace/current")"
+          current_sha="${current_release##*/}"
+          if [[ ! "$current_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Cannot identify the currently deployed release; refusing to skip the data-backup check."
+            exit 1
+          fi
+          if ! git cat-file -e "$current_sha^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin "$current_sha"
+          fi
+          if ! git cat-file -e "$current_sha^{commit}" 2>/dev/null; then
+            echo "::error::The currently deployed commit is unavailable for change comparison."
+            exit 1
+          fi
+          sensitive_paths=(backend/alembic backend/db/models.py backend/storage deploy/production/docker-compose.yml deploy/production/deploy.sh backend/scripts/ensure_admin_push_keys.py)
+          changed_paths="$(git diff --name-only "$current_sha" "$DEPLOY_SHA" -- "${sensitive_paths[@]}")"
+          if [[ -n "$changed_paths" ]]; then
+            echo "requires_backup=true" >> "$GITHUB_OUTPUT"
+            echo "Database or media storage files changed since the deployed release:"
+            printf '%s\n' "$changed_paths"
+          else
+            echo "requires_backup=false" >> "$GITHUB_OUTPUT"
+            echo "No database or media storage changes; an off-server backup confirmation is not required for this release."
+          fi
+
+      - name: Require verified off-server backups for data changes
+        env:
+          REQUIRES_BACKUP: ${{ steps.data_changes.outputs.requires_backup }}
+          BACKUP_CONFIRMED: ${{ inputs.backup_confirmed }}
+        run: |
+          set -euo pipefail
+          if [[ "$REQUIRES_BACKUP" != "true" ]]; then
+            echo "Skipping manual backup confirmation; this release has no database or media storage changes."
+          elif [[ "$BACKUP_CONFIRMED" != "true" ]]; then
+            echo "::error::This release changes database or media storage. Verify off-server backups before deploying it."
+            exit 1
+          else
+            echo "Off-server backup confirmation received for database or media storage changes."
+          fi
 
       - name: Upload release and deploy
         env:
