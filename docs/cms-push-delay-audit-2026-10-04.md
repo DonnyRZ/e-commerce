@@ -42,8 +42,12 @@ Subscription kedaluwarsa atau instalasi baru tidak menjelaskan tiga pesan ini.
    menggantikan pertama. Tag kini berdasarkan hash event pesan, stabil untuk retry,
    berbeda untuk pesan berbeda. Timestamp memakai waktu antrean pesan.
 3. Dua ACK paralel dan pembaruan fallback dapat saling menimpa JSON. Merge kini
-   dilindungi row lock. Tes integrasi mengirim ACK bersamaan dan memeriksa seluruh
-   tahap tetap tersimpan.
+   dilindungi row lock dan pembacaan ulang `populate_existing=True`. Session
+   memakai `expire_on_commit=False`, sehingga lock saja masih mengembalikan
+   objek lama setelah API Telegram ditunggu. Tes regresi mengirim ACK selama
+   request Bot API berlangsung: versi sebelum refresh kehilangan `device_stages`
+   (KeyError), versi setelah refresh mempertahankan tahap dan timing. Tes lain
+   mengirim ACK bersamaan dan memeriksa seluruh tahap tetap tersimpan.
 4. Loop push lama menunggu hingga 5 detik setelah idle dan ikut menunggu API
    Telegram cadangan. Commit transaksi kini membangunkan dispatcher langsung;
    fallback berjalan di task terpisah. Poll 1 detik menjadi pemulihan untuk proses
@@ -100,3 +104,22 @@ paksa, atau Android menahan proses/jaringan.
   diunduh; versi lama tertahan, versi baru tampil tanpa permintaan ikon.
 - Worker click: membuka/fokus percakapan yang dituju, termasuk aplikasi tertutup.
 - Frontend tests, lint, production build, dan CI penuh sebelum deploy.
+
+## Verifikasi deployment dan kontrol perangkat
+
+Release aplikasi `697f768adbedf0fcef98305ad050d21d6b2914c5` berhasil deploy melalui
+Actions `37223172094`. Audit `37224546971` memastikan backend/CMS healthy,
+restart 0, TTL 24 jam, serta byte worker sama dengan source:
+`ffa11b4eaff84fee14dd952c7df283b4143cbdd8401396d88dba2441e25bdf80`.
+
+Dua notifikasi diagnostik ke subscription yang mengalami masalah:
+
+| Antrean UTC | ACK display UTC | Selisih | Format worker HP |
+| --- | --- | --- | --- |
+| 18:17:59.948 | 18:18:02.246 | 2,30 detik | lama, tanpa client timing |
+| 18:28:26.989 | 18:28:28.565 | 1,58 detik | lama, tanpa client timing |
+
+Ini kontrol bahwa jalur VPS/provider/perangkat dapat cepat, bukan validasi worker
+baru atau keadaan HP diam 30 menit. Tidak ada akses untuk membaca status layar,
+Doze, atau model HP dari VPS. Perlu CMS dinavigasi/dimuat ulang sekali di HP agar
+Chrome mengaktifkan worker baru; verifikasi dari ACK `worker_version`.

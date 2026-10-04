@@ -469,6 +469,43 @@ class AdminDeviceIntegrationTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    async def test_telegram_fallback_completion_preserves_ack_received_during_bot_request(self):
+        await self.register_devices()
+        event_key = "fallback-ack-race:" + self.prefix
+        async with SessionLocal() as session:
+            await admin_push.enqueue_admin_notification(session, event_key, "telegram", "/admin/telegram-inbox")
+            rows = list((await session.scalars(select(AdminPushDelivery).where(AdminPushDelivery.event_key == event_key))).all())
+            for row in rows:
+                row.created_at = utcnow() - timedelta(seconds=30)
+                row.status = "sent"
+                row.last_status = 201
+            target_id = rows[0].id
+            ack_token = rows[0].payload["_audit"]["ack_token"]
+            await session.commit()
+
+        async def bot_request_with_concurrent_device_ack(*args, **kwargs):
+            response = await self.clients[0].post("/api/v1/admin/push/delivery-ack", json={
+                "delivery_id": target_id, "ack_token": ack_token,
+                "stage": "notification_show_resolved",
+                "client_started_at": utcnow().isoformat(),
+                "client_observed_at": utcnow().isoformat(),
+                "event_elapsed_ms": 20, "worker_version": "inline-icons-v2",
+            })
+            self.assertEqual(response.status_code, 204)
+            return {"ok": True}
+
+        with patch.object(admin_push, "TELEGRAM_BOT_TOKEN", "isolated-fake-token"), patch.object(
+            admin_push, "bot_request", side_effect=bot_request_with_concurrent_device_ack
+        ):
+            async with SessionLocal() as session:
+                self.assertEqual(await admin_push.dispatch_telegram_fallbacks(session), 1)
+        async with SessionLocal() as session:
+            saved = await session.get(AdminPushDelivery, target_id)
+            audit = saved.payload["_audit"]
+            self.assertEqual(audit["telegram_fallback"]["status"], "sent")
+            self.assertIn("notification_show_resolved", audit["device_stages"])
+            self.assertEqual(audit["device_timings"]["notification_show_resolved"]["event_elapsed_ms"], 20)
+
     async def test_chat_fallback_is_skipped_after_every_device_confirms_display(self):
         await self.register_devices()
         event_key = "telegram-message-acked:" + self.prefix

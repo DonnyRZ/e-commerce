@@ -208,7 +208,7 @@ def send_delivery(subscription: AdminPushSubscription, payload: dict):
         vapid_private_key=VAPID_PRIVATE_KEY_FILE,
         vapid_claims={"sub": VAPID_SUBJECT},
         # Chat alerts remain useful after the phone wakes. A 60-second TTL
-        # discarded undelivered messages during the observed idle delay.
+        # can discard queued messages before the observed idle delay ends.
         # Timestamp and per-event tag preserve which message was queued.
         ttl=86400,
         timeout=10,
@@ -473,8 +473,11 @@ async def dispatch_telegram_fallbacks(session, *, now=None) -> int:
         result = await session.scalars(
             select(AdminPushDelivery).where(
                 AdminPushDelivery.event_key == event_key
-            ).with_for_update()
+            ).with_for_update().execution_options(populate_existing=True)
         )
+        # The same session loaded these rows before awaiting the Bot API.
+        # expire_on_commit=False keeps that old JSON in the identity map, so
+        # the locked query must refresh it before merging a concurrent ACK.
         for delivery in result.all():
             payload = dict(delivery.payload or {})
             audit = dict(payload.get("_audit", {}))
