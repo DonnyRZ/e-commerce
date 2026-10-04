@@ -138,6 +138,7 @@ test("native Chromium service worker displays a Telegram push while page is in b
   const session = await context.newCDPSession(page);
   let registrationId;
   let activated = false;
+  const workerErrors = [];
   session.on("ServiceWorker.workerRegistrationUpdated", ({ registrations }) => {
     const registration = registrations.find(item => item.scopeURL === baseURL + "/admin/");
     if (registration) registrationId = registration.registrationId;
@@ -145,16 +146,26 @@ test("native Chromium service worker displays a Telegram push while page is in b
   session.on("ServiceWorker.workerVersionUpdated", ({ versions }) => {
     activated = versions.some(item => item.scriptURL === baseURL + "/admin/cms-sw.js" && item.status === "activated");
   });
+  session.on("ServiceWorker.workerErrorReported", error => workerErrors.push(error));
   await session.send("ServiceWorker.enable");
   await page.goto("/admin/settings");
   await expect.poll(() => registrationId).toBeTruthy();
   await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller?.scriptURL)).toContain("/admin/cms-sw.js");
   await expect.poll(() => activated).toBeTruthy();
   expect(await page.evaluate(() => Notification.permission)).toBe("granted");
+  await page.evaluate(async () => (await navigator.serviceWorker.ready).showNotification("Notifikasi browser", { tag: "notification-preflight" }));
+  await expect.poll(() => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(item => item.title))).toContain("Notifikasi browser");
+  await page.evaluate(async () => {
+    const registration = await navigator.serviceWorker.ready;
+    (await registration.getNotifications({ tag: "notification-preflight" })).forEach(item => item.close());
+  });
   const background = await context.newPage();
   await background.goto("about:blank");
   await session.send("ServiceWorker.deliverPushMessage", { origin: baseURL, registrationId, data: JSON.stringify({ title: "Chat Telegram baru", body: "Pesan baru perlu dibalas.", url: "/admin/telegram-inbox?conversation=" + "a".repeat(32), tag: "telegram-test", kind: "telegram" }) });
-  await expect.poll(() => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(item => item.title)), { timeout: 15000 }).toContain("Chat Telegram baru");
+  await expect.poll(async () => ({
+    notificationTitles: await page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(item => item.title)),
+    workerErrors,
+  }), { timeout: 15000 }).toMatchObject({ notificationTitles: expect.arrayContaining(["Chat Telegram baru"]) });
   const notification = await page.evaluate(async () => {
     const [item] = await (await navigator.serviceWorker.ready).getNotifications();
     return { title: item.title, url: item.data.url };
