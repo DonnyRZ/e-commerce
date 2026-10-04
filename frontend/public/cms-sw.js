@@ -31,7 +31,7 @@ self.addEventListener("push", event => {
     self.registration.showNotification(String(data.title || "CMS memerlukan perhatian").slice(0, 200), {
       body: String(data.body || "Buka CMS untuk melihat pesan dan order terbaru.").slice(0, 500),
       icon: "/admin/pwa/icon-192.png", badge: "/admin/pwa/badge-96.png",
-      tag: String(data.tag || "cantik-cms"), data: {url},
+      tag: String(data.tag || "cantik-cms"), renotify: true, data: {url},
     }),
     self.clients.matchAll({type: "window", includeUncontrolled: true}).then(clients => {
       clients.filter(client => new URL(client.url).pathname.startsWith("/admin/")).forEach(client => client.postMessage({type: "CMS_PUSH", kind: data.kind || "telegram"}));

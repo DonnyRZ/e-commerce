@@ -171,5 +171,10 @@ test("native Chromium service worker displays a Telegram push while page is in b
     return { title: item.title, url: item.data.url };
   });
   expect(notification.url).toBe(baseURL + "/admin/telegram-inbox?conversation=" + "a".repeat(32));
+  await session.send("ServiceWorker.deliverPushMessage", { origin: baseURL, registrationId, data: JSON.stringify({ title: "Chat Telegram baru", body: "Pesan susulan perlu dibalas.", url: notification.url, tag: "telegram-test", kind: "telegram" }) });
+  await expect.poll(async () => page.evaluate(async () => {
+    const notifications = await (await navigator.serviceWorker.ready).getNotifications({ tag: "telegram-test" });
+    return notifications.map(item => item.body);
+  })).toEqual(["Pesan susulan perlu dibalas."]);
   await background.close();
 });
