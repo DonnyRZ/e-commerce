@@ -331,7 +331,7 @@ class AdminDeviceIntegrationTests(unittest.IsolatedAsyncioTestCase):
             )
             await session.commit()
 
-        async with self.assertLogs("routers.admin_push", level="INFO") as captured:
+        with self.assertLogs("routers.admin_push", level="INFO") as captured:
             response = await self.clients[0].post(
                 "/api/v1/admin/push/delivery-ack",
                 json={
