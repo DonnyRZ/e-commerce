@@ -53,10 +53,12 @@ jobs:
           echo 'recent_telegram_push_events:'
           docker exec -i marketplace-backend-1 python - <<'PY'
           import asyncio
+          import hashlib
           from datetime import timedelta
+          from urllib.parse import urlparse
           from zoneinfo import ZoneInfo
           from sqlalchemy import select
-          from db.models import AdminPushDelivery, TelegramInboxMessage, TelegramUpdateReceipt, utcnow
+          from db.models import AdminPushDelivery, AdminPushSubscription, TelegramInboxMessage, TelegramUpdateReceipt, utcnow
           from db.session import SessionLocal
 
           WIB = ZoneInfo("Asia/Jakarta")
@@ -88,17 +90,24 @@ jobs:
                               AdminPushDelivery.status,
                               AdminPushDelivery.attempts,
                               AdminPushDelivery.last_status,
+                              AdminPushDelivery.subscription_id,
+                              AdminPushSubscription.endpoint,
+                              AdminPushDelivery.payload["tag"].as_string().label("notification_tag"),
                               AdminPushDelivery.payload["_audit"]["device_stages"].label("device_stages"),
                               AdminPushDelivery.payload["_audit"]["telegram_fallback"].label("telegram_fallback"),
-                          ).where(AdminPushDelivery.event_key == f"telegram-message:{message_id}")
+                          ).join(AdminPushSubscription, AdminPushSubscription.id == AdminPushDelivery.subscription_id)
+                          .where(AdminPushDelivery.event_key == f"telegram-message:{message_id}")
                       )).all()
                       if not deliveries:
                           detail = "no_delivery_row"
                       else:
                           detail = ";".join(
-                              "delivery_id=%s queue_utc=%s queue_delay_s=%s status=%s attempts=%s provider_http=%s device_stages=%s telegram_fallback=%s"
+                              "delivery_id=%s device=%s provider_host=%s tag_hash=%s queue_utc=%s queue_delay_s=%s status=%s attempts=%s provider_http=%s device_stages=%s telegram_fallback=%s"
                               % (
                                   item.id,
+                                  item.subscription_id[:12],
+                                  urlparse(item.endpoint).hostname,
+                                  hashlib.sha256((item.notification_tag or "").encode()).hexdigest()[:12],
                                   stamp(item.created_at),
                                   max(0, int((item.created_at - message_at).total_seconds())),
                                   item.status,
@@ -125,4 +134,49 @@ jobs:
 
           echo 'push_dispatch_provider_and_device_stages:'
           docker logs --since 3h --timestamps marketplace-backend-1 2>&1 | grep -E 'admin_push_(dispatch_started|provider_accepted|device_stage|delivery_failed|telegram_backup_sent|telegram_backup_failed)' | tail -n 300 || true
+
+          echo 'notification_resource_and_worker_requests:'
+          python3 - <<'PY'
+          from collections import deque
+          from datetime import datetime, timedelta, timezone
+          from pathlib import Path
+          import re
+          import subprocess
+
+          paths = {
+              "/api/v1/admin/push/delivery-ack",
+              "/admin/cms-sw.js",
+              "/admin/pwa/icon-192.png",
+              "/admin/pwa/badge-96.png",
+              "/admin/settings",
+              "/admin/telegram-inbox",
+          }
+          since = datetime.now(timezone.utc) - timedelta(hours=2)
+          pattern = re.compile(r'\[([^\]]+)\] "(?:GET|POST) ([^ ]+) [^"]+" (\d{3}) \S+ "[^"]*" "([^"]*)"')
+          sources = []
+          host_log = Path("/var/log/nginx/access.log")
+          if host_log.is_file():
+              with host_log.open(errors="replace") as stream:
+                  sources.append(("host", deque(stream, maxlen=20000)))
+          for name in ("marketplace-storefront-1", "marketplace-cms-1"):
+              result = subprocess.run(["docker", "logs", "--since", "2h", name], capture_output=True, text=True)
+              sources.append((name, result.stdout.splitlines()))
+          for source, lines in sources:
+              found = []
+              for line in lines:
+                  match = pattern.search(line)
+                  if not match:
+                      continue
+                  at, url, status, agent = match.groups()
+                  path = url.split("?", 1)[0]
+                  if path not in paths:
+                      continue
+                  try:
+                      stamp = datetime.strptime(at, "%d/%b/%Y:%H:%M:%S %z")
+                  except ValueError:
+                      continue
+                  if stamp >= since:
+                      found.append("http_source=%s at_utc=%s path=%s status=%s agent=%s" % (source, stamp.astimezone(timezone.utc).isoformat(), path, status, agent[:180]))
+              print("\n".join(found[-80:]) if found else "http_source=%s relevant_requests=0" % source)
+          PY
           REMOTE
