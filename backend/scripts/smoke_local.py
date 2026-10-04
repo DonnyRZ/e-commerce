@@ -147,9 +147,15 @@ def main() -> int:
     require(bool(csrf), "admin login should issue the CSRF cookie")
     admin.headers.update({"X-CSRF-Token": csrf})
     settings = check(admin.get(f"{BASE}/api/v1/admin/settings", timeout=TIMEOUT))
+    active_payment_destinations = settings.get("active_payment_destinations", 0)
+    expected_payment_status = (
+        "manual_transfer_ready"
+        if active_payment_destinations > 0
+        else "manual_transfer_needs_configuration"
+    )
     require(
-        settings.get("payment_status") == "disabled",
-        f"payment status must be disabled: {settings}",
+        settings.get("payment_status") == expected_payment_status,
+        f"payment status should match active destinations ({active_payment_destinations}): {settings}",
     )
     dashboard = check(admin.get(f"{BASE}/api/v1/admin/dashboard", timeout=TIMEOUT))
     require(
