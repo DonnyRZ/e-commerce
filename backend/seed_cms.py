@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from db.models import (
     Category,
@@ -358,11 +358,13 @@ async def _seed_missing_department_visuals(session) -> int:
 async def seed():
     strings = _load_translations()
     async with SessionLocal() as session:
-        existing = await session.scalar(select(func.count(CmsContentEntry.id)))
-        if existing:
+        entries = (await session.execute(select(CmsContentEntry))).scalars().all()
+        existing_entries = {
+            (entry.content_type, entry.slug): entry for entry in entries
+        }
+        if ("hero", "home-hero") in existing_entries:
             # Remove only legacy remote image fallbacks. CMS-linked/local media
             # remains authoritative and is never overwritten by a seed rerun.
-            entries = (await session.execute(select(CmsContentEntry))).scalars().all()
             changed = False
             canonical_pages = {
                 slug: {loc: {"title": value[0], "body": value[1]} for loc, value in content.items()}
@@ -427,6 +429,11 @@ async def seed():
                             placement="", cta_url=None, secondary_cta_url=None,
                             payload=None, status="published", media_id=None):
             nonlocal created
+            key = (content_type, slug)
+            existing_entry = existing_entries.get(key)
+            if existing_entry:
+                return existing_entry
+
             entry = CmsContentEntry(
                 content_type=content_type, internal_name=name, slug=slug,
                 status=status, placement=placement, sort_order=sort_order,
@@ -438,6 +445,7 @@ async def seed():
             for locale, fields in translations.items():
                 session.add(CmsContentTranslation(entry_id=entry.id, locale=locale, **fields))
             created += 1
+            existing_entries[key] = entry
             return entry
 
         # announcement bar
