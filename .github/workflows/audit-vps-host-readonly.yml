@@ -1,0 +1,70 @@
+name: Read-only VPS host audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    timeout-minutes: 5
+    steps:
+      - name: Configure pinned SSH access
+        env:
+          VPS_DEPLOY_KEY: ${{ secrets.VPS_DEPLOY_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          set -euo pipefail
+          for name in VPS_DEPLOY_KEY VPS_KNOWN_HOSTS VPS_HOST; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required production secret $name is missing."
+              exit 1
+            fi
+          done
+          install -m 0700 -d "$HOME/.ssh"
+          printf '%s\n' "$VPS_DEPLOY_KEY" > "$HOME/.ssh/audit_key"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 0600 "$HOME/.ssh/audit_key" "$HOME/.ssh/known_hosts"
+          ssh-keygen -F "$VPS_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
+
+      - name: Read host resources, local health checks and access policy
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          test -n "$VPS_USER"
+          ssh_options=(-i "$HOME/.ssh/audit_key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+          target="$VPS_USER@$VPS_HOST"
+          ssh "${ssh_options[@]}" "$target" 'bash -s' <<'REMOTE'
+          set -u
+          printf 'audit_time='; date -Is
+          printf 'host='; hostname
+          printf 'active_release='; readlink -f /var/www/marketplace/current || true
+          printf 'uptime='; uptime -p
+          echo 'memory:'; free -h
+          echo 'root_disk:'; df -hP / | tail -n 1
+          printf 'ssh_user='; id -un
+          printf 'ssh_groups='; id -nG
+          echo 'sudo_allowlist:'
+          sudo -n -l 2>&1 || true
+          docker_service="$(systemctl is-active docker 2>/dev/null || true)"
+          printf 'docker_service=%s\n' "${docker_service:-unknown}"
+          if docker ps >/dev/null 2>&1; then
+            echo 'docker_read_access=available'
+            docker ps --filter name=marketplace --format '{{.Names}} | {{.Status}}'
+          else
+            echo 'docker_read_access=denied'
+          fi
+          for endpoint in health ready; do
+            code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 8 \
+              -H 'Host: shanicantik.com' -H 'X-Forwarded-Proto: https' \
+              "http://127.0.0.1:8080/api/$endpoint" || true)"
+            printf 'local_api_%s_http=%s\n' "$endpoint" "${code:-000}"
+          done
+          REMOTE
