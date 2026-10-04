@@ -6,6 +6,11 @@ name: Diagnostic CMS push to one device
         description: "12\u201332 hex characters identifying exactly one active admin subscription"
         type: string
         required: true
+      queue_test:
+        description: Queue one labeled test push (false only reads VPS health/resource usage)
+        type: boolean
+        required: false
+        default: true
 permissions:
   contents: read
 concurrency:
@@ -22,40 +27,90 @@ jobs:
       env:
         VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
         VPS_HOST: ${{ secrets.VPS_HOST }}
-      run: "set -euo pipefail\nsudo apt-get update -qq\nsudo apt-get install -y -qq sshpass\nfor name in VPS_KNOWN_HOSTS VPS_HOST;\
-        \ do\n  if [[ -z \"${!name}\" ]]; then\n    echo \"::error::Required production secret $name is missing.\"\n    exit\
-        \ 1\n  fi\ndone\ninstall -m 0700 -d \"$HOME/.ssh\"\nprintf '%s\\n' \"$VPS_KNOWN_HOSTS\" > \"$HOME/.ssh/known_hosts\"\
-        \nchmod 0600 \"$HOME/.ssh/known_hosts\"\nssh-keygen -F \"$VPS_HOST\" -f \"$HOME/.ssh/known_hosts\" >/dev/null\n"
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq sshpass
+        for name in VPS_KNOWN_HOSTS VPS_HOST; do
+          if [[ -z "${!name}" ]]; then
+            echo "::error::Required production secret $name is missing."
+            exit 1
+          fi
+        done
+        install -m 0700 -d "$HOME/.ssh"
+        printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+        chmod 0600 "$HOME/.ssh/known_hosts"
+        ssh-keygen -F "$VPS_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null
     - name: Queue one clearly labeled diagnostic notification and read acknowledgments
       env:
         VPS_HOST: ${{ secrets.VPS_HOST }}
         SSHPASS: ${{ secrets.VPS_ROOT_PASSWORD_1 || secrets.VPS_ROOT_PASSWORD }}
         DEVICE_PREFIX: ${{ inputs.device_prefix }}
-      run: "set -euo pipefail\nif [[ -z \"$SSHPASS\" || ! \"$DEVICE_PREFIX\" =~ ^[a-f0-9]{12,32}$ ]]; then\n  echo \"::error::A\
-        \ password secret and a valid exact device prefix are required.\"\n  exit 1\nfi\nssh_options=(-o BatchMode=no -o PubkeyAuthentication=no\
-        \ -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o StrictHostKeyChecking=yes\
-        \ -o UserKnownHostsFile=\"$HOME/.ssh/known_hosts\")\nsshpass -e ssh \"${ssh_options[@]}\" \"root@$VPS_HOST\" \"DEVICE_PREFIX=$DEVICE_PREFIX\
-        \ bash -s\" <<'REMOTE'\nset -euo pipefail\ndocker exec -i -e DEVICE_PREFIX=\"$DEVICE_PREFIX\" marketplace-backend-1\
-        \ python - <<'PYTHON'\nimport asyncio\nimport json\nimport os\nfrom sqlalchemy import select\nfrom admin_push import\
-        \ enqueue_admin_notification\nfrom db.models import AdminPushDelivery, AdminPushSubscription, User, uid, utcnow\n\
-        from db.session import SessionLocal\n\nasync def main():\n    async with SessionLocal() as session:\n        devices\
-        \ = (await session.scalars(\n            select(AdminPushSubscription).join(User, User.id == AdminPushSubscription.user_id)\n\
-        \            .where(AdminPushSubscription.id.startswith(os.environ[\"DEVICE_PREFIX\"]),\n                   AdminPushSubscription.enabled.is_(True),\
-        \ User.is_active.is_(True),\n                   User.role == \"admin\", AdminPushSubscription.token_version == User.token_version)\n\
-        \        )).all()\n        if len(devices) != 1:\n            raise RuntimeError(\"The prefix must identify exactly\
-        \ one active admin device\")\n        event_key = \"diagnostic:\" + uid()\n        count = await enqueue_admin_notification(session,\
-        \ event_key, \"test\", \"/admin/settings\", subscription_id=devices[0].id)\n        if count != 1:\n            raise\
-        \ RuntimeError(\"Push is not configured for the selected device\")\n        row = await session.scalar(select(AdminPushDelivery).where(AdminPushDelivery.event_key\
-        \ == event_key))\n        row.payload = {**row.payload, \"title\": \"Uji notifikasi CMS\", \"body\": \"Uji audit pada\
-        \ \" + utcnow().strftime(\"%H:%M:%S UTC\") + \". Ini notifikasi diagnostik.\"}\n        delivery_id = row.id\n   \
-        \     queued = row.created_at\n        await session.commit()\n        print(\"diagnostic_delivery_id=\" + delivery_id\
-        \ + \" queued_at_utc=\" + queued.isoformat(), flush=True)\n    previous = None\n    for attempt in range(70):\n  \
-        \      async with SessionLocal() as session:\n            row = await session.get(AdminPushDelivery, delivery_id)\n\
-        \            audit = (row.payload or {}).get(\"_audit\", {})\n            safe = {\"status\": row.status, \"provider_http\"\
-        : row.last_status,\n                    \"device_stages\": audit.get(\"device_stages\", {}),\n                   \
-        \ \"device_timings\": audit.get(\"device_timings\", {})}\n            report = json.dumps(safe, sort_keys=True)\n\
-        \            if report != previous:\n                print(\"diagnostic_observed_at_utc=\" + utcnow().isoformat()\
-        \ + \" \" + report, flush=True)\n                previous = report\n            if \"notification_show_resolved\"\
-        \ in safe[\"device_stages\"]:\n                print(\"display_ack_elapsed_s=\" + str(round((utcnow() - queued).total_seconds(),\
-        \ 3)), flush=True)\n                return\n        await asyncio.sleep(1)\n    print(\"display_ack_missing_after_70s=true;\
-        \ provider acceptance is not proof of device display\", flush=True)\n\nasyncio.run(main())\nPYTHON\nREMOTE\n"
+        QUEUE_TEST: ${{ inputs.queue_test }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$SSHPASS" || ! "$DEVICE_PREFIX" =~ ^[a-f0-9]{12,32}$ ]]; then
+          echo "::error::A password secret and a valid exact device prefix are required."
+          exit 1
+        fi
+        if [[ "$QUEUE_TEST" != "true" && "$QUEUE_TEST" != "false" ]]; then exit 1; fi
+        ssh_options=(-o BatchMode=no -o PubkeyAuthentication=no -o PreferredAuthentications=password -o NumberOfPasswordPrompts=1 -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+        sshpass -e ssh "${ssh_options[@]}" "root@$VPS_HOST" "DEVICE_PREFIX=$DEVICE_PREFIX QUEUE_TEST=$QUEUE_TEST bash -s" <<'REMOTE'
+        set -euo pipefail
+        printf 'active_release='; readlink -f /var/www/marketplace/current
+        uptime
+        free -m
+        df -h /
+        docker stats --no-stream --format '{{.Name}} cpu={{.CPUPerc}} mem={{.MemUsage}}'
+        ps -eo comm,%cpu,%mem --sort=-%cpu | head -n 12
+        if [[ "$QUEUE_TEST" == "false" ]]; then exit 0; fi
+        docker exec -i -e DEVICE_PREFIX="$DEVICE_PREFIX" marketplace-backend-1 python - <<'PYTHON'
+        import asyncio
+        import json
+        import os
+        from sqlalchemy import select
+        from admin_push import enqueue_admin_notification
+        from db.models import AdminPushDelivery, AdminPushSubscription, User, uid, utcnow
+        from db.session import SessionLocal
+
+        async def main():
+            async with SessionLocal() as session:
+                devices = (await session.scalars(
+                    select(AdminPushSubscription).join(User, User.id == AdminPushSubscription.user_id)
+                    .where(AdminPushSubscription.id.startswith(os.environ["DEVICE_PREFIX"]),
+                           AdminPushSubscription.enabled.is_(True), User.is_active.is_(True),
+                           User.role == "admin", AdminPushSubscription.token_version == User.token_version)
+                )).all()
+                if len(devices) != 1:
+                    raise RuntimeError("The prefix must identify exactly one active admin device")
+                event_key = "diagnostic:" + uid()
+                count = await enqueue_admin_notification(session, event_key, "test", "/admin/settings", subscription_id=devices[0].id)
+                if count != 1:
+                    raise RuntimeError("Push is not configured for the selected device")
+                row = await session.scalar(select(AdminPushDelivery).where(AdminPushDelivery.event_key == event_key))
+                row.payload = {**row.payload, "title": "Uji notifikasi CMS", "body": "Uji audit pada " + utcnow().strftime("%H:%M:%S UTC") + ". Ini notifikasi diagnostik."}
+                delivery_id = row.id
+                queued = row.created_at
+                await session.commit()
+                print("diagnostic_delivery_id=" + delivery_id + " queued_at_utc=" + queued.isoformat(), flush=True)
+            previous = None
+            for attempt in range(70):
+                async with SessionLocal() as session:
+                    row = await session.get(AdminPushDelivery, delivery_id)
+                    audit = (row.payload or {}).get("_audit", {})
+                    safe = {"status": row.status, "provider_http": row.last_status,
+                            "device_stages": audit.get("device_stages", {}),
+                            "device_timings": audit.get("device_timings", {})}
+                    report = json.dumps(safe, sort_keys=True)
+                    if report != previous:
+                        print("diagnostic_observed_at_utc=" + utcnow().isoformat() + " " + report, flush=True)
+                        previous = report
+                    if "notification_show_resolved" in safe["device_stages"]:
+                        print("display_ack_elapsed_s=" + str(round((utcnow() - queued).total_seconds(), 3)), flush=True)
+                        return
+                await asyncio.sleep(1)
+            print("display_ack_missing_after_70s=true; provider acceptance is not proof of device display", flush=True)
+
+        asyncio.run(main())
+        PYTHON
+        REMOTE
