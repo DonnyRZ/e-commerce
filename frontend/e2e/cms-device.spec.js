@@ -131,7 +131,9 @@ test("denied notification permission is explained and never reports enabled", as
 });
 
 test("native Chromium service worker displays a Telegram push while page is in background", async ({ page, context, baseURL }) => {
-  await context.grantPermissions(["notifications"]);
+  // Explicitly scope the Chromium notification grant; GitHub Actions defaults
+  // this browser permission to denied when it is not tied to an origin.
+  await context.grantPermissions(["notifications"], { origin: new URL(baseURL).origin });
   const session = await context.newCDPSession(page);
   let registrationId;
   let activated = false;
