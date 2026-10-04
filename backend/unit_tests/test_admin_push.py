@@ -288,7 +288,7 @@ class PushTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(decoded), payload)
         self.assertTrue(sent["headers"]["Authorization"].startswith("vapid "))
         self.assertEqual(sent["headers"]["Urgency"], "high")
-        self.assertEqual(sent["headers"]["TTL"], "60")
+        self.assertEqual(sent["headers"]["TTL"], "86400")
 
     def test_telegram_backup_is_content_free_and_keeps_the_chat_deep_link(self):
         with patch.object(admin_push, "FRONTEND_URL", "https://shanicantik.com"):

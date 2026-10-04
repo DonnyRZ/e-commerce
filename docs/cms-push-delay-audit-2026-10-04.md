@@ -49,6 +49,28 @@ Subscription kedaluwarsa atau instalasi baru tidak menjelaskan tiga pesan ini.
    fallback berjalan di task terpisah. Poll 1 detik menjadi pemulihan untuk proses
    lain. Rollback tidak membangunkan dispatcher; diuji di PostgreSQL.
 
+5. TTL lama hanya 60 detik. Push yang belum dikirim provider dapat dibuang
+   ketika perangkat diam lebih lama, sekalipun API sebelumnya mengembalikan 201.
+   TTL kini 24 jam, sejalan dengan usia outbox. Ini mencegah kehilangan akibat
+   masa simpan pendek; tidak mempercepat Android yang belum menjalankan worker.
+   Log lama tidak memuat tanda kedaluwarsa dari FCM, jadi hilangnya pesan kedua
+   tidak boleh dipastikan disebabkan TTL saja.
+
+## Jalur Android dari sumber Chromium
+
+`chrome/android/java/src/org/chromium/chrome/browser/services/gcm/ChromeGcmListenerServiceImpl.java`
+menjelaskan bahwa ketika jalur bypass scheduler tidak tersedia atau gagal,
+Chrome memakai Android JobScheduler; komentar kode menyebut pengiriman bisa
+tertunda dalam Doze. `components/gcm_driver/instance_id/InstanceIDBridge.java`
+menyimpan flags subscription di aplikasi Chrome, bukan di API website.
+`chrome/browser/push_messaging/push_messaging_service_impl.cc` juga mengantrekan
+push satu per satu per worker hingga proses pesan sebelumnya selesai.
+
+Sumber ini menunjukkan mekanisme yang sesuai dengan pola idle dan hambatan ikon.
+VPS tidak dapat membaca prioritas yang benar-benar diterima Google Play Services,
+flags subscription lokal Chrome, atau status Doze/OEM di HP. Bukti source Android
+adalah penjelasan mekanisme, bukan verifikasi bahwa HP pengguna masuk jalur itu.
+
 ## Membedakan sisa keterlambatan secara faktual
 
 ACK baru membawa versi worker, waktu awal event dan waktu tahap dari HP, serta
@@ -71,7 +93,7 @@ paksa, atau Android menahan proses/jaringan.
 
 ## Pengujian
 
-- Backend unit: event tag, actual encrypted push HTTP high/TTL, commit wake signal.
+- Backend unit: event tag, actual encrypted push HTTP high/TTL 24 jam, commit wake signal.
 - PostgreSQL integration: ACK bersamaan, client timing, commit/rollback wake,
   fanout, revoked admin, dedup webhook, unsubscribe, fallback.
 - Chromium native: worker dihentikan, tidak ada halaman CMS, ikon tidak dapat

@@ -207,9 +207,10 @@ def send_delivery(subscription: AdminPushSubscription, payload: dict):
         data=json.dumps(payload, ensure_ascii=False),
         vapid_private_key=VAPID_PRIVATE_KEY_FILE,
         vapid_claims={"sub": VAPID_SUBJECT},
-        # Keep alerts useful: after one minute, the Telegram backup is the
-        # recovery path instead of a stale push arriving hours later.
-        ttl=60,
+        # Chat alerts remain useful after the phone wakes. A 60-second TTL
+        # discarded undelivered messages during the observed idle delay.
+        # Timestamp and per-event tag preserve which message was queued.
+        ttl=86400,
         timeout=10,
         headers={"Urgency": "high"},
     )
