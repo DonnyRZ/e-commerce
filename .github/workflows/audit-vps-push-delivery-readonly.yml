@@ -150,17 +150,18 @@ jobs:
                               detail,
                           )
                       )
-                  pending = await session.execute(
-                      select(
-                          AdminPushDelivery.payload["kind"].as_string(),
-                          AdminPushDelivery.status,
-                          func.count(),
-                          func.min(AdminPushDelivery.created_at),
-                      )
-                      .where(AdminPushDelivery.created_at >= since)
-                      .group_by(AdminPushDelivery.payload["kind"].as_string(), AdminPushDelivery.status)
-                      .order_by(AdminPushDelivery.payload["kind"].as_string(), AdminPushDelivery.status)
+              kind_expr = AdminPushDelivery.payload["kind"].as_string()
+              pending = await session.execute(
+                  select(
+                      kind_expr,
+                      AdminPushDelivery.status,
+                      func.count(),
+                      func.min(AdminPushDelivery.created_at),
                   )
+                  .where(AdminPushDelivery.created_at >= since)
+                  .group_by(kind_expr, AdminPushDelivery.status)
+                  .order_by(kind_expr, AdminPushDelivery.status)
+              )
                   for kind, status, count, oldest in pending.all():
                       print("push_rows kind=%s status=%s count=%s oldest_utc=%s" % (kind, status, count, stamp(oldest)))
 
