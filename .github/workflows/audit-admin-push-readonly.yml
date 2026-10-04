@@ -48,6 +48,9 @@ jobs:
           printf 'audit_time_utc='; date -u -Is
           printf 'active_release='; readlink -f /var/www/marketplace/current
           docker inspect --format '{{.Name}} restart={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started={{.State.StartedAt}}' marketplace-backend-1 marketplace-cms-1
+          docker exec marketplace-cms-1 sha256sum /usr/share/nginx/html/cms-sw.js
+          docker exec marketplace-cms-1 sh -c 'grep -q "inline-icons-v2" /usr/share/nginx/html/cms-sw.js && echo live_worker_inline_version=true'
+          docker exec marketplace-backend-1 python -c 'import inspect; from admin_push import send_delivery; print("live_push_ttl_24h=" + str("ttl=86400" in inspect.getsource(send_delivery)))'
           docker exec marketplace-backend-1 python -c 'from admin_push import ADMIN_PUSH_ENABLED, public_key; print("push_enabled=%s vapid_key_ready=%s" % (ADMIN_PUSH_ENABLED, bool(public_key())))'
 
           echo 'recent_telegram_push_events:'
