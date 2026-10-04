@@ -10,7 +10,7 @@ module.exports = defineConfig({
     baseURL: process.env.CMS_BASE_URL || "http://localhost:8080",
     viewport: { width: 390, height: 844 },
     hasTouch: true,
-    launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined, args: ["--no-sandbox", "--disable-dev-shm-usage"] },
+    launchOptions: { headless: false, executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined, args: ["--no-sandbox", "--disable-dev-shm-usage"] },
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },

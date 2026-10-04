@@ -130,9 +130,10 @@ test("denied notification permission is explained and never reports enabled", as
   await expect(page.getByTestId("cms-push-enable")).toBeDisabled();
 });
 
+// Chromium 145 headless reports Notification.permission as denied, and its
+// service worker refuses showNotification, even after CDP grants permission.
+// Run this suite in a virtual display to exercise the actual notification API.
 test("native Chromium service worker displays a Telegram push while page is in background", async ({ page, context, baseURL }) => {
-  // Explicitly scope the Chromium notification grant; GitHub Actions defaults
-  // this browser permission to denied when it is not tied to an origin.
   await context.grantPermissions(["notifications"], { origin: new URL(baseURL).origin });
   const session = await context.newCDPSession(page);
   let registrationId;

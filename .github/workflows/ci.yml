@@ -101,7 +101,7 @@ jobs:
         working-directory: frontend
         env:
           CMS_AUDIT_WIDTHS: "390,320"
-        run: npm run test:browser
+        run: xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:browser
       - name: Save CMS screenshots and browser traces
         if: always()
         uses: actions/upload-artifact@v4
