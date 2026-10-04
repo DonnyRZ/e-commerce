@@ -162,8 +162,8 @@ jobs:
                   .group_by(kind_expr, AdminPushDelivery.status)
                   .order_by(kind_expr, AdminPushDelivery.status)
               )
-                  for kind, status, count, oldest in pending.all():
-                      print("push_rows kind=%s status=%s count=%s oldest_utc=%s" % (kind, status, count, stamp(oldest)))
+              for kind, status, count, oldest in pending.all():
+                  print("push_rows kind=%s status=%s count=%s oldest_utc=%s" % (kind, status, count, stamp(oldest)))
 
           asyncio.run(main())
           PY
