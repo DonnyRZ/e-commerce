@@ -52,6 +52,7 @@ jobs:
           docker exec marketplace-cms-1 sh -c 'grep -q "inline-icons-v2" /usr/share/nginx/html/cms-sw.js && echo live_worker_inline_version=true'
           docker exec marketplace-backend-1 python -c 'import inspect; from admin_push import send_delivery; print("live_push_ttl_24h=" + str("ttl=86400" in inspect.getsource(send_delivery)))'
           docker exec marketplace-backend-1 python -c 'from admin_push import ADMIN_PUSH_ENABLED, public_key; print("push_enabled=%s vapid_key_ready=%s" % (ADMIN_PUSH_ENABLED, bool(public_key())))'
+          docker exec marketplace-backend-1 python -c 'from routers.admin_push import DeliveryAckIn; print("live_ack_client_timing_fields=" + str(all(name in DeliveryAckIn.model_fields for name in ("client_started_at", "client_observed_at", "event_elapsed_ms", "worker_version"))))'
 
           echo 'worker_delivery_path:'
           python3 - <<'PY'
@@ -106,6 +107,9 @@ jobs:
           async def main():
               since = utcnow() - timedelta(hours=3)
               async with SessionLocal() as session:
+                  devices = (await session.scalars(select(AdminPushSubscription).where(AdminPushSubscription.enabled.is_(True)).order_by(AdminPushSubscription.updated_at.desc()).limit(20))).all()
+                  for device in devices:
+                      print("active_device=%s created_at_utc=%s updated_at_utc=%s provider_host=%s" % (device.id[:12], stamp(device.created_at), stamp(device.updated_at), urlparse(device.endpoint).hostname))
                   rows = (await session.execute(
                       select(TelegramInboxMessage.id, TelegramInboxMessage.created_at, TelegramInboxMessage.update_id)
                       .where(
@@ -185,6 +189,7 @@ jobs:
           paths = {
               "/api/v1/admin/push/delivery-ack",
               "/admin/cms-sw.js",
+              "/admin/offline.html",
               "/admin/pwa/icon-192.png",
               "/admin/pwa/badge-96.png",
               "/admin/settings",
