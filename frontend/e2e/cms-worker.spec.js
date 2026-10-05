@@ -3,11 +3,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-function worker(clients = []) {
+function worker(clients = [], overrides = {}) {
   const handlers = {}, notifications = [], opened = [];
   const cache = { add: async () => {} };
   const scope = {
-    URL, Date, performance, fetch: async () => { throw new Error("offline"); },
+    URL, Date, performance, AbortController, setTimeout, clearTimeout,
+    fetch: async () => { throw new Error("offline"); },
     caches: { open: async () => cache, keys: async () => [], match: async () => "offline page", delete: async () => true },
     self: {
       location: { origin: "https://cms.example.com" },
@@ -17,6 +18,7 @@ function worker(clients = []) {
       skipWaiting: async () => {},
     },
   };
+  Object.assign(scope, overrides);
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../public/cms-sw.js"), "utf8"), scope);
   async function emit(name, values) {
     let completion;
@@ -126,4 +128,23 @@ test("API, media and store requests are never cached; only CMS navigation has an
   let response;
   instance.handlers.fetch({ request: { mode: "navigate", url: "https://cms.example.com/admin/orders" }, respondWith: promise => { response = promise; } });
   expect(await response).toBe("offline page");
+});
+
+test("an unresponsive delivery ACK cannot hold the Telegram push event open", async () => {
+  const pending = [];
+  const instance = worker([], {fetch: (_url, options) => new Promise((resolve, reject) => {
+    pending.push(resolve);
+    options.signal.addEventListener("abort", () => reject(new Error("timeout")), {once: true});
+  })});
+  const push = instance.emit("push", {data: {json: () => ({
+    title: "Chat Telegram baru", kind: "telegram",
+    _audit: {delivery_id: "a".repeat(32), ack_token: "b".repeat(43)},
+  })}});
+  try {
+    await Promise.race([push, new Promise((_, reject) => setTimeout(() => reject(new Error("push waits for ACK network")), 300))]);
+    expect(instance.notifications).toHaveLength(1);
+    expect(pending).toHaveLength(2);
+  } finally {
+    pending.forEach(resolve => resolve({status: 204}));
+  }
 });

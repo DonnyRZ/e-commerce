@@ -49,7 +49,7 @@ jobs:
           printf 'active_release='; readlink -f /var/www/marketplace/current
           docker inspect --format '{{.Name}} restart={{.RestartCount}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started={{.State.StartedAt}}' marketplace-backend-1 marketplace-cms-1
           docker exec marketplace-cms-1 sha256sum /usr/share/nginx/html/cms-sw.js
-          docker exec marketplace-cms-1 sh -c 'grep -q "inline-icons-v2" /usr/share/nginx/html/cms-sw.js && echo live_worker_inline_version=true'
+          docker exec marketplace-cms-1 sh -c 'grep "^const PUSH_WORKER_VERSION =" /usr/share/nginx/html/cms-sw.js'
           docker exec marketplace-backend-1 python -c 'import inspect; from admin_push import send_delivery; print("live_push_ttl_24h=" + str("ttl=86400" in inspect.getsource(send_delivery)))'
           docker exec marketplace-backend-1 python -c 'from admin_push import ADMIN_PUSH_ENABLED, public_key; print("push_enabled=%s vapid_key_ready=%s" % (ADMIN_PUSH_ENABLED, bool(public_key())))'
           docker exec marketplace-backend-1 python -c 'from routers.admin_push import DeliveryAckIn; print("live_ack_client_timing_fields=" + str(all(name in DeliveryAckIn.model_fields for name in ("client_started_at", "client_observed_at", "event_elapsed_ms", "worker_version"))))'
@@ -84,7 +84,8 @@ jobs:
                   "worker_path": name, "status_line": headers.splitlines()[0].decode() if headers else "missing",
                   "headers": safe_headers, "sha256": hashlib.sha256(body).hexdigest(),
                   "matches_cms_file": bool(separator) and body == expected,
-                  "inline_version": b"inline-icons-v2" in body,
+                  "inline_notification_assets": b"data:image/png;base64," in body,
+                  "durable_ack_version": b"durable-acks-v3" in body,
               }, sort_keys=True))
           PY
 

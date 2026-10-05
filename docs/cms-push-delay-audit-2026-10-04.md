@@ -123,3 +123,56 @@ Ini kontrol bahwa jalur VPS/provider/perangkat dapat cepat, bukan validasi worke
 baru atau keadaan HP diam 30 menit. Tidak ada akses untuk membaca status layar,
 Doze, atau model HP dari VPS. Perlu CMS dinavigasi/dimuat ulang sekali di HP agar
 Chrome mengaktifkan worker baru; verifikasi dari ACK `worker_version`.
+
+## Bukti tambahan 5 Oktober: tampilan dan laporan adalah dua kejadian berbeda
+
+Worker `inline-icons-v2` terkonfirmasi dari tiga chat Telegram nyata pada
+00:29:32, 00:30:33, dan 00:37:33 UTC. Catatan perangkat menunjukkan biaya display
+218, 86, dan 220 ms. ACK display tiba di VPS sekitar 2,23, 1,58, dan 2,93 detik
+setelah waktu pesan Telegram. Jam perangkat berada sedikit di depan jam VPS;
+waktu monotonic mengukur biaya display tanpa menganggap kedua jam identik.
+Audit `37248270776` memuat bukti ini. Tidak ada verifikasi kondisi Doze HP.
+
+Tes pengguna sekitar **14.02 WIB** cocok dengan kejadian terdekat berikut
+(audit `37275862393`, `37276186843`, `37276672801`):
+
+| Tahap | WIB |
+| --- | --- |
+| Tanggal pesan Telegram | 14:03:06 |
+| Antrean dibuat | 14:03:07.560 |
+| Pengiriman mulai | 14:03:07.592 |
+| FCM menerima HTTP 201 | 14:03:07.976 |
+| API Telegram cadangan menerima | 14:03:23.524 |
+| ACK worker/display hingga audit 14:15 | tidak ada |
+
+Pengguna melaporkan notifikasi CMS sudah tampil, diperkirakan **14.04**, tetapi
+lupa waktu tepatnya. Estimasi ini tidak membuktikan delay dengan angka pasti.
+Yang terbukti adalah **tampilan dapat terjadi tanpa ACK tercatat**. Tidak ada ACK
+tidak boleh ditafsirkan sebagai worker belum berjalan atau notifikasi belum tampil.
+
+Worker sebelumnya menunggu HTTP ACK maksimal 3 detik, mengabaikan kegagalan,
+dan tidak menyimpan laporan untuk retry. HTTP error juga tidak diperiksa.
+Karena Chromium mengantrekan push per registration sampai event selesai,
+menunggu jaringan ACK turut menahan penyelesaian event walaupun display selesai.
+
+Worker `durable-acks-v3` menyimpan receipt di IndexedDB sebelum upload, dengan
+batas 256 catatan dan usia 24 jam. Isinya hanya ID delivery, token ACK untuk satu
+delivery, tahap, versi worker, dan waktu asli; tanpa pesan customer, nama, URL
+percakapan, atau response API. Upload HTTP tidak ditunggu oleh event push.
+Receipt dihapus hanya sesudah HTTP 204, dan server mempertahankan pengamatan
+pertama. Retry memakai Background Sync, push berikutnya, klik notifikasi, serta
+resume/online CMS. Retry tidak memanggil showNotification atau mengganti waktu
+perangkat menjadi waktu upload. Tanpa Background Sync, resume/push tetap memulihkan.
+
+Tes Chromium native menghentikan worker sesudah receipt tersimpan saat API
+HTTP 503 atau koneksi tidak menjawab; receipt asli dikirim sesudah resume.
+Emulasi native SyncEvent juga memulihkan receipt dengan seluruh halaman CMS
+tertutup. Biaya display pada pengujian 13–130 ms. Tes lain membuktikan event push
+selesai ketika jaringan ACK belum menjawab, dan deep link chat tetap benar.
+Tes ini menguji handler browser, bukan FCM atau Doze Android.
+
+Perbaikan ini menutup kehilangan bukti dan hambatan antrean akibat menunggu ACK.
+Penyebab lengkap delay sekitar satu menit pada HP tetap belum teratribusi:
+untuk kejadian lama, waktu awal event dan display sudah hilang. Data receipt
+dari worker baru diperlukan untuk membedakan jeda sebelum worker, display
+native, dan upload laporan yang terlambat. Tidak ada klaim seluruh delay selesai.

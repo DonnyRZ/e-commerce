@@ -72,7 +72,7 @@ test("closed CMS and stopped worker display push without notification image netw
       }
       await expect.poll(() => acks.some(ack => ack.stage === "notification_show_resolved"), { timeout: 3000 }).toBeTruthy();
       const display = acks.find(ack => ack.stage === "notification_show_resolved");
-      expect(display.worker_version).toBe("inline-icons-v2");
+      expect(display.worker_version).toBe("durable-acks-v3");
       expect(Date.parse(display.client_started_at)).toBeGreaterThan(0);
       expect(display.event_elapsed_ms).toBeGreaterThanOrEqual(0);
       if (!legacy) {

@@ -35,11 +35,21 @@ export default function CmsDeviceProvider({ children }) {
     window.addEventListener("beforeinstallprompt", capturePrompt);
     window.addEventListener("appinstalled", installedEvent);
     display.addEventListener("change", refreshDisplay);
-    cmsServiceWorker().catch(() => setWorkerError(true));
+    const resume = () => cmsServiceWorker().then(registration => {
+      registration.active?.postMessage({ type: "CMS_FLUSH_PUSH_ACKS" });
+    }).catch(() => setWorkerError(true));
+    const visible = () => { if (document.visibilityState === "visible") resume(); };
+    resume();
+    window.addEventListener("focus", resume);
+    window.addEventListener("online", resume);
+    document.addEventListener("visibilitychange", visible);
     return () => {
       window.removeEventListener("beforeinstallprompt", capturePrompt);
       window.removeEventListener("appinstalled", installedEvent);
       display.removeEventListener("change", refreshDisplay);
+      window.removeEventListener("focus", resume);
+      window.removeEventListener("online", resume);
+      document.removeEventListener("visibilitychange", visible);
     };
   }, []);
 
