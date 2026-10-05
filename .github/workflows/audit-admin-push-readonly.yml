@@ -53,6 +53,40 @@ jobs:
           docker exec marketplace-backend-1 python -c 'import inspect; from admin_push import send_delivery; print("live_push_ttl_24h=" + str("ttl=86400" in inspect.getsource(send_delivery)))'
           docker exec marketplace-backend-1 python -c 'from admin_push import ADMIN_PUSH_ENABLED, public_key; print("push_enabled=%s vapid_key_ready=%s" % (ADMIN_PUSH_ENABLED, bool(public_key())))'
 
+          echo 'worker_delivery_path:'
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import subprocess
+
+          expected = subprocess.check_output([
+              "docker", "exec", "marketplace-cms-1", "cat", "/usr/share/nginx/html/cms-sw.js"
+          ])
+          for name, options, url in (
+              ("gateway", ["-H", "Host: shanicantik.com", "-H", "X-Forwarded-Proto: https"], "http://127.0.0.1:8080/admin/cms-sw.js"),
+              ("public_tls", ["--resolve", "shanicantik.com:443:127.0.0.1"], "https://shanicantik.com/admin/cms-sw.js"),
+          ):
+              result = subprocess.run([
+                  "curl", "--silent", "--show-error", "--max-time", "15", "--dump-header", "-",
+                  *options, url,
+              ], capture_output=True)
+              if result.returncode:
+                  print("worker_path=" + name + " curl_exit=" + str(result.returncode))
+                  continue
+              headers, separator, body = result.stdout.partition(b"\r\n\r\n")
+              safe_headers = {}
+              for line in headers.decode(errors="replace").splitlines():
+                  key, colon, value = line.partition(":")
+                  if colon and key.lower() in {"content-type", "cache-control", "service-worker-allowed", "location"}:
+                      safe_headers[key.lower()] = value.strip()
+              print(json.dumps({
+                  "worker_path": name, "status_line": headers.splitlines()[0].decode() if headers else "missing",
+                  "headers": safe_headers, "sha256": hashlib.sha256(body).hexdigest(),
+                  "matches_cms_file": bool(separator) and body == expected,
+                  "inline_version": b"inline-icons-v2" in body,
+              }, sort_keys=True))
+          PY
+
           echo 'recent_telegram_push_events:'
           docker exec -i marketplace-backend-1 python - <<'PY'
           import asyncio
@@ -174,6 +208,8 @@ jobs:
                       continue
                   at, url, status, agent = match.groups()
                   path = url.split("?", 1)[0]
+                  if source == "marketplace-cms-1":
+                      path = "/admin" + path
                   if path not in paths:
                       continue
                   try:
